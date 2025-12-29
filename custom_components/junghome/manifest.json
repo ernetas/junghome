@@ -1,0 +1,9 @@
+{
+  "domain": "junghome",
+  "name": "Jung Home",
+  "config_flow": true,
+  "version": "1.0.0",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": []
+}

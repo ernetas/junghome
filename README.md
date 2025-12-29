@@ -1,46 +1,36 @@
-# Notice
+# What?
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+This is a custom Jung Home integration based on WebSocket communication with Jung Home Gateway. A gateway is required.
 
-HAVE FUN! 😎
+Currently functional things:
+- On/Off light switches.
+- BT S1 B2 U switch actuators.
+- Dimmers (DALI, etc.) - color and brightness as well as On/Off.
+- Sockets - On/Off, energy statistics, etc.
+- IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.
+- Button LED On/Off (unfortunately, color can only be configured via app or BT Mesh/NRF).
 
-## Why?
+All communication is via WebSockets. I've managed to reliably automate:
+- Single click
+- Double click
+- Triple click
+- Hold
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+Any feedback is welcome, this is my first integration with HomeAssistant.
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+# How
+When adding the integration, you will need to know your Jung Home gateway address and get an API token from https://<JUNGHOME>/api/junghome/swagger/ (using User Registration action).
 
-## What?
+You will need to confirm the token in the Jung Home mobile app.
 
-This repository contains multiple files, here is a overview:
+# TODO
+- Make setup easier.
+- Bring back binary sensors (motion/presence, which was previously removed).
+- Puck support.
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/integration_blueprint/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+Unlikely to be completed by me, since I don't have the devices:
+- Curtain control.
+- Thermostats.
 
-## How?
-
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `integration_blueprint` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `Integration Blueprint` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
-
-## Next steps
-
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon) to https://github.com/home-assistant/brands.
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+# Coffee
+If you've enjoyed this integration, feel free to buy me a cup of coffee. My BTC address is `bc1qlpvgqzr0y09a4zhez94sjl6539ptk0l9rdy2jm`.

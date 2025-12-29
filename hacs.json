@@ -1,5 +1,5 @@
 {
-    "name": "Integration blueprint",
-    "homeassistant": "2025.2.4",
+    "name": "Jung HOME",
+    "homeassistant": "2025.12.4",
     "hacs": "2.0.5"
 }
