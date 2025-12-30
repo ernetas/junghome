@@ -19,7 +19,7 @@ All communication is via WebSockets. I've managed to reliably automate:
 Any feedback is welcome, this is my first integration with HomeAssistant.
 
 # How
-When adding the integration, you will need to know your Jung Home gateway address and get an API token from https://<JUNGHOME>/api/junghome/swagger/ (using User Registration action).
+When adding the integration, you will need to know your Jung Home gateway address and get an API token from `https://<JUNGHOME>/api/junghome/swagger/` (using User Registration action).
 
 You will need to confirm the token in the Jung Home mobile app.
 
