@@ -1,13 +1,22 @@
+"""
+Junghome integration package.
+
+Provides integration setup and entry load/unload helpers.
+"""
+
 import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
-from .coordinator import JungHomeDataUpdateCoordinator
+
 from .const import DOMAIN
+from .coordinator import JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+
+async def async_setup(_hass: HomeAssistant, _config: ConfigType) -> bool:
     """Set up the Jung Home integration."""
     return True
 
@@ -31,7 +40,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.start()
 
     # Forward the setup to the appropriate platforms
-    await hass.config_entries.async_forward_entry_setups(entry, ["light", "switch", "sensor", "event"])
+    await hass.config_entries.async_forward_entry_setups(
+        entry,
+        ["light", "switch", "sensor", "event"],
+    )
 
     return True
 
@@ -40,13 +52,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         del hass.data[DOMAIN][entry.entry_id]
 
-    # Unload platforms
-    unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "light")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "switch")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "event")
-
-    return unload_ok
+    # Unload platforms sequentially and return combined result
+    return (
+        await hass.config_entries.async_forward_entry_unload(entry, "light")
+        and await hass.config_entries.async_forward_entry_unload(entry, "switch")
+        and await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+        and await hass.config_entries.async_forward_entry_unload(entry, "event")
+    )
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Reload a config entry."""
