@@ -1,5 +1,8 @@
 # What?
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/ernetas/junghome)](https://github.com/ernetas/junghome/releases)
+
 This is a custom Jung Home integration based on WebSocket communication with Jung Home Gateway. A gateway is required.
 
 Currently functional things:
@@ -17,6 +20,23 @@ All communication is via WebSockets. I've managed to reliably automate:
 - Hold
 
 Any feedback is welcome, this is my first integration with HomeAssistant.
+
+# Installation
+
+## HACS (recommended)
+
+Until this is in the HACS default store, add it as a custom repository:
+
+[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ernetas&repository=junghome&category=integration)
+
+1. HACS → ⋮ (top right) → **Custom repositories**.
+2. Repository: `https://github.com/ernetas/junghome`, Category: **Integration**. Add.
+3. Find **Jung Home** in HACS, **Download** the latest release, then restart Home Assistant.
+4. Settings → Devices & Services → **Add Integration** → Jung Home (see [Setup](#setup)).
+
+## Manual
+
+Copy `custom_components/junghome/` into your Home Assistant `config/custom_components/` directory and restart.
 
 # Setup
 
@@ -39,7 +59,8 @@ removed in the Jung Home app afterwards are picked up automatically.
 # Gateway internals (for contributors)
 
 The local gateway API (REST + WebSocket), its registration flow, and the
-device-mesh architecture are documented in **[docs/](docs/README.md)**.
+device-mesh architecture are documented in **[docs/](docs/README.md)**. Release
+and HACS-publishing steps are in **[docs/publishing.md](docs/publishing.md)**.
 
 # TODO
 - Make setup easier.
