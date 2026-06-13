@@ -1,0 +1,2 @@
+# EFR32 NCP prototype (junghome_mesh.py)
+pybgapi>=1.3

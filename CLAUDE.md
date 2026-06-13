@@ -30,6 +30,11 @@ When working on anything that touches the gateway protocol, consult
   types and command formats.
 - [docs/gateway-architecture.md](docs/gateway-architecture.md) — partitions,
   services, the BT-Mesh stack, self-hosting analysis.
+- [docs/bt-mesh-direct.md](docs/bt-mesh-direct.md) — gateway-free BT-Mesh control
+  (function→model map, vendor model, hardware); prototypes in
+  `tools/bt-mesh-direct/`.
+- [docs/matter-bridge.md](docs/matter-bridge.md) — Matter options (gateway's own
+  is inactive; bridge from HA).
 
 ## Key behaviours to preserve
 
