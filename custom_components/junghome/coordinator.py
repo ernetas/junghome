@@ -3,7 +3,6 @@ import json
 import logging
 import ssl
 import aiohttp
-import websockets
 from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -18,6 +17,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.config = config
         self.websocket = None
+        self._ws_task = None
         super().__init__(hass, _LOGGER, name="Jung Home", update_interval=timedelta(minutes=1))
 
     async def _async_update_data(self):
@@ -52,16 +52,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                 response.raise_for_status()
                 data = await response.json()
 
-        devices = []
-        for device in data:
-            devices.append({
-                "id": device["id"],
-                "label": device["label"],
-                "type": device["type"],
-                "datapoints": device["datapoints"]
-            })
-
-        return devices
+        # Keep the full device payload so any firmware-stable identifier
+        # (serial / address / etc.) is available for building unique IDs,
+        # and is visible in the debug log above for inspection.
+        return list(data)
 
     async def _connect_websocket(self):
         """Connect to the WebSocket and handle incoming messages using aiohttp."""
@@ -109,15 +103,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
 
         data = message.get("data")
         msg_type = message.get("type")
-        # Fire dispatcher signal for datapoint messages
-        if msg_type == "datapoint":
-            _LOGGER.debug("[JUNGHOME] Dispatching button event for message: %s", message)
-            from homeassistant.helpers.dispatcher import async_dispatcher_send
-            async_dispatcher_send(self.hass, "jung_home_button_event", message)
-        # Call button callback for datapoint messages if registered
-        if msg_type == "datapoint" and hasattr(self, "_button_callback"):
-            self._button_callback(message)
-        # ...existing code for dict/list handling...
         if isinstance(data, dict):
             datapoint_id = data.get("id")
             if not datapoint_id:
@@ -155,7 +140,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         """Start the coordinator by fetching initial data and connecting to the WebSocket."""
         _LOGGER.debug("Starting coordinator: fetching initial data and connecting to WebSocket")
         await self.async_refresh()
-        self.hass.loop.create_task(self._connect_websocket())
+        self._ws_task = self.hass.loop.create_task(self._connect_websocket())
+
+    async def stop(self):
+        """Stop the coordinator and close the WebSocket connection."""
+        _LOGGER.debug("Stopping coordinator and closing WebSocket")
+        if self._ws_task is not None:
+            self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_task = None
+        if self.websocket is not None and not self.websocket.closed:
+            await self.websocket.close()
+        self.websocket = None
 
     async def send_websocket_message(self, message):
         """Send a message via WebSocket."""
@@ -169,7 +168,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             _LOGGER.error("WebSocket is not connected or is closed. Attempting to reconnect...")
             # Try to reconnect
-            self.hass.loop.create_task(self._connect_websocket())
+            self._ws_task = self.hass.loop.create_task(self._connect_websocket())
 
     async def turn_on_switch(self, datapoint_id):
         """Turn on the switch."""

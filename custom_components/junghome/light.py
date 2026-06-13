@@ -5,7 +5,7 @@ from homeassistant.components.light import LightEntity, ColorMode
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN
+from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,22 +28,26 @@ def mired_to_kelvin(mired: int) -> int:
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities):
     """Set up Jung Home lights from a config entry."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    known: set[str] = set()
 
-    # Fetch devices from the coordinator
-    await coordinator.async_refresh()
-    devices = coordinator.data
+    @callback
+    def _discover_lights():
+        """Add entities for any lights not yet created (handles devices added later)."""
+        new_entities = []
+        for device in coordinator.data or []:
+            if device.get('type') in ('OnOff', 'ColorLight'):
+                for datapoint in device.get('datapoints', []):
+                    if datapoint.get('type') == 'switch':
+                        uid = stable_unique_id(device, datapoint)
+                        if uid in known:
+                            continue
+                        known.add(uid)
+                        new_entities.append(JungHomeLight(coordinator, device, datapoint))
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=True)
 
-    # Create entities for each light device
-    entities = []
-    for device in devices:
-        _LOGGER.debug("Processing device: %s", device)
-        if device['type'] == 'OnOff' or device['type'] == 'ColorLight':  # Add devices with type "OnOff" or "ColorLight"
-            for datapoint in device.get('datapoints', []):
-                if datapoint['type'] == 'switch':
-                    entities.append(JungHomeLight(coordinator, device, datapoint))
-
-    if entities:
-        async_add_entities(entities, update_before_add=True)
+    _discover_lights()
+    config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))
 
 class JungHomeLight(CoordinatorEntity, LightEntity):
     """Representation of a Jung Home light."""
@@ -76,9 +80,9 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         self._last_written_color_temp_raw = None
         self._last_written_color_temp_ts = 0.0
         self._name = device.get("label", "Jung Light")
-        self._unique_id = f"{device.get('id')}_{datapoint.get('id')}"  # Use device ID and datapoint ID
+        # Firmware-stable id derived from the label, not the volatile device id.
+        self._unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
-        self.entity_id = f"light.{self._unique_id}"  # Set the entity ID
 
         if device['type'] == 'ColorLight':
             # Read brightness and color_temp from their specific datapoints (if present)
@@ -147,7 +151,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
     def device_info(self):
         """Return device information about this light."""
         return {
-            "identifiers": {(DOMAIN, self._device["id"])},  # Link to the device
+            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),

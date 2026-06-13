@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Jung Home",
+        "description": "Enter the address of your Jung Home gateway. After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local)."
+        }
+      },
+      "register_failed": {
+        "title": "Registration failed",
+        "description": "The access request was not approved in time or the gateway could not be reached. Submit to try again, then approve the request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+    },
+    "error": {
+      "invalid_host": "The host is not valid.",
+      "cannot_connect": "Failed to connect to the gateway.",
+      "register_failed": "Registration was not completed. Make sure you approve the request in the app."
+    },
+    "abort": {
+      "already_configured": "This Jung Home gateway is already configured."
+    }
+  }
+}

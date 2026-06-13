@@ -4,31 +4,38 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
-from .const import DOMAIN
+from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     """Set up Jung Home switches from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    known: set[str] = set()
 
-    # Fetch devices from the coordinator
-    await coordinator.async_refresh()
-    devices = coordinator.data
+    @callback
+    def _discover_switches():
+        """Add entities for any switches not yet created (handles devices added later)."""
+        new_entities = []
+        for device in coordinator.data or []:
+            if device.get('type') == 'Socket':
+                for datapoint in device.get('datapoints', []):
+                    if datapoint.get('type') == 'switch':
+                        entity = JungHomeSocket(coordinator, device, datapoint)
+                        if entity.unique_id not in known:
+                            known.add(entity.unique_id)
+                            new_entities.append(entity)
+            elif device.get('type') == 'RockerSwitch':
+                for datapoint in device.get('datapoints', []):
+                    if datapoint.get('type') == 'status_led':
+                        entity = JungHomeSwitch(coordinator, device, datapoint)
+                        if entity.unique_id not in known:
+                            known.add(entity.unique_id)
+                            new_entities.append(entity)
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=True)
 
-    # Create switch entities for each device
-    entities = []
-    for device in devices:
-        if device['type'] == 'Socket':  # Add devices with type "Socket"
-            for datapoint in device.get('datapoints', []):
-                if datapoint['type'] == 'switch':
-                    entities.append(JungHomeSocket(coordinator, device, datapoint))
-        elif device.get('type') == 'RockerSwitch':
-            for datapoint in device.get('datapoints', []):
-                if datapoint.get('type') == 'status_led':
-                    entities.append(JungHomeSwitch(coordinator, device, datapoint))
-
-    if entities:
-        async_add_entities(entities, update_before_add=True)
+    _discover_switches()
+    entry.async_on_unload(coordinator.async_add_listener(_discover_switches))
 
 class JungHomeSocket(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home socket."""
@@ -39,9 +46,9 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         self._device = device
         self._datapoint = datapoint
         self._name = device.get("label", "Jung Socket")
-        self._unique_id = f"{device.get('id')}_{datapoint.get('id')}"  # Use device ID and datapoint ID
+        # Firmware-stable id derived from the label, not the volatile device id.
+        self._unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
-        self.entity_id = f"switch.{self._unique_id}"  # Set the entity ID
 
     @property
     def name(self):
@@ -67,7 +74,7 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
     def device_info(self):
         """Return device information about this socket."""
         return {
-            "identifiers": {(DOMAIN, self._device["id"])},  # Link to the device
+            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
@@ -142,14 +149,14 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         self._device = device
         self._datapoint = datapoint
         self._attr_name = f"{device.get('label', 'Jung Status LED')}_{datapoint.get('type', 'Unknown')}"
-        self._attr_unique_id = f"{device.get('id')}_{datapoint.get('id')}_switch"
+        self._attr_unique_id = stable_unique_id(device, datapoint, "switch")
         self._attr_available = coordinator.last_update_success
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
 
     @property
     def device_info(self):
         return {
-            "identifiers": {(DOMAIN, self._device["id"])},
+            "identifiers": {(DOMAIN, device_slug(self._device))},
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
