@@ -1,0 +1,21 @@
+# Spin up a throwaway Home Assistant instance with this integration mounted in.
+#
+#   docker compose up          # start HA at http://localhost:8123
+#   docker compose down        # stop it
+#   docker compose down -v     # stop and wipe the HA config/state
+#
+# The repo's custom_components/ is bind-mounted live into the container, so
+# editing the integration and restarting the container (docker compose restart)
+# picks up changes without a rebuild.
+#
+# To pin a specific HA version, replace `stable` with e.g. `2025.12.4`.
+services:
+  homeassistant:
+    container_name: junghome-ha-test
+    image: ghcr.io/home-assistant/home-assistant:stable
+    volumes:
+      - ./config:/config
+      - ./custom_components:/config/custom_components
+    ports:
+      - "8123:8123"
+    restart: unless-stopped

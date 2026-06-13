@@ -3,31 +3,35 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN
+from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     """Set up Jung Home sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    known: set[str] = set()
 
-    # Fetch devices from the coordinator
-    await coordinator.async_refresh()
-    devices = coordinator.data
+    @callback
+    def _discover_sensors():
+        """Add entities for any sensors not yet created (handles devices added later)."""
+        new_entities = []
+        for device in coordinator.data or []:
+            if device.get('type') == 'Socket':
+                for datapoint in device.get('datapoints', []):
+                    if datapoint.get('type') == 'quantity':
+                        label = next((value['value'].strip() for value in datapoint['values'] if value['key'] == 'quantity_label'), None)
+                        unit = next((value['value'] for value in datapoint['values'] if value['key'] == 'quantity_unit'), None)
+                        if label and unit:
+                            entity = JungHomeQuantity(coordinator, device, datapoint, label, unit)
+                            if entity.unique_id not in known:
+                                known.add(entity.unique_id)
+                                new_entities.append(entity)
+        if new_entities:
+            async_add_entities(new_entities, update_before_add=True)
 
-    # Create sensor entities for each device
-    entities = []
-    for device in devices:
-        if device['type'] == 'Socket':  # Add devices with type "Socket"
-            for datapoint in device.get('datapoints', []):
-                if datapoint['type'] == 'quantity':
-                    label = next((value['value'].strip() for value in datapoint['values'] if value['key'] == 'quantity_label'), None)
-                    unit = next((value['value'] for value in datapoint['values'] if value['key'] == 'quantity_unit'), None)
-                    if label and unit:
-                        entities.append(JungHomeQuantity(coordinator, device, datapoint, label, unit))
-
-    if entities:
-        async_add_entities(entities, update_before_add=True)
+    _discover_sensors()
+    entry.async_on_unload(coordinator.async_add_listener(_discover_sensors))
 
 class JungHomeQuantity(CoordinatorEntity, SensorEntity):
     """Representation of a Jung Home quantity."""
@@ -38,10 +42,10 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         self._device = device
         self._datapoint = datapoint
         self._name = f"{device.get('label', 'Jung Device')} {label}"
-        self._unique_id = f"{device.get('id')}_{datapoint.get('id')}_{label.replace(' ', '_').lower()}"
+        # Firmware-stable id derived from the label, not the volatile device id.
+        self._unique_id = stable_unique_id(device, datapoint, label.replace(' ', '_').lower())
         self._unit = unit
         self._value = self._get_value_from_datapoint(datapoint)
-        self.entity_id = f"sensor.{self._unique_id}"  # Set the entity ID
 
     @property
     def name(self):
@@ -67,7 +71,7 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
     def device_info(self):
         """Return device information about this quantity."""
         return {
-            "identifiers": {(DOMAIN, self._device["id"])},  # Link to the device
+            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),

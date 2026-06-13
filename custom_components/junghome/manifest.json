@@ -1,9 +1,13 @@
 {
   "domain": "junghome",
   "name": "Jung Home",
+  "codeowners": ["@ernetas"],
   "config_flow": true,
-  "version": "1.0.0",
-  "requirements": [],
   "dependencies": [],
-  "codeowners": []
+  "documentation": "https://github.com/ernetas/junghome",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/ernetas/junghome/issues",
+  "requirements": [],
+  "version": "1.0.0"
 }

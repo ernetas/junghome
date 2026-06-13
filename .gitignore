@@ -1,3 +1,6 @@
+# Jung Home Gateway disk dump for debugging
+disk_dump
+
 # artifacts
 __pycache__
 .pytest*
