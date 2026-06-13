@@ -2,12 +2,14 @@ import asyncio
 import json
 import logging
 import ssl
-import aiohttp
 from datetime import timedelta
+
+import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the Jung Home API."""
@@ -18,19 +20,25 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.config = config
         self.websocket = None
         self._ws_task = None
-        super().__init__(hass, _LOGGER, name="Jung Home", update_interval=timedelta(minutes=1))
+        super().__init__(
+            hass, _LOGGER, name="Jung Home", update_interval=timedelta(minutes=1)
+        )
 
     async def _async_update_data(self):
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
         try:
-            response = await self._fetch_devices_from_api(self.config['host'], self.config['token'])
+            response = await self._fetch_devices_from_api(
+                self.config["host"], self.config["token"]
+            )
             if response is None:
                 _LOGGER.error("Received None response from API")
                 return []  # Returning empty list ensures entities don't break
 
             _LOGGER.debug("API Response: %s", response)
-            return response  # `async_set_updated_data` is automatically called with this
+            return (
+                response  # `async_set_updated_data` is automatically called with this
+            )
         except Exception as e:
             _LOGGER.error("Error fetching data from Jung Home API: %s", e)
             raise  # Raising exception allows Home Assistant to handle errors properly
@@ -42,10 +50,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         ssl_context.verify_mode = ssl.CERT_NONE
 
         url = f"https://{host}/api/junghome/functions"
-        headers = {
-            "token": f"{token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"token": f"{token}", "Content-Type": "application/json"}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, ssl=ssl_context) as response:
@@ -60,15 +65,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
     async def _connect_websocket(self):
         """Connect to the WebSocket and handle incoming messages using aiohttp."""
         url = f"wss://{self.config['host']}/ws"
-        headers = {
-            "token": f"{self.config['token']}"
-        }
+        headers = {"token": f"{self.config['token']}"}
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(url, headers=headers, ssl=ssl_context) as ws:
+                async with session.ws_connect(
+                    url, headers=headers, ssl=ssl_context
+                ) as ws:
                     self.websocket = ws
                     _LOGGER.debug("WebSocket connected (aiohttp)")
                     async for msg in ws:
@@ -77,7 +82,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                             try:
                                 data = json.loads(msg.data)
                                 if isinstance(data, list):
-                                    _LOGGER.error("Received WebSocket message is a list: %s", data)
+                                    _LOGGER.error(
+                                        "Received WebSocket message is a list: %s", data
+                                    )
                                     continue
                                 if data.get("type") in ["message", "version"]:
                                     _LOGGER.debug("Received initial message: %s", data)
@@ -86,7 +93,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                             except json.JSONDecodeError as e:
                                 _LOGGER.error("Error decoding WebSocket message: %s", e)
                             except Exception as e:
-                                _LOGGER.error("Unexpected error handling WebSocket message: %s", e)
+                                _LOGGER.error(
+                                    "Unexpected error handling WebSocket message: %s", e
+                                )
                                 _LOGGER.error("Message content: %s", msg.data)
                         elif msg.type == aiohttp.WSMsgType.ERROR:
                             _LOGGER.error("WebSocket error: %s", msg)
@@ -106,7 +115,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(data, dict):
             datapoint_id = data.get("id")
             if not datapoint_id:
-                _LOGGER.error("Received WebSocket message without datapoint_id: %s", message)
+                _LOGGER.error(
+                    "Received WebSocket message without datapoint_id: %s", message
+                )
                 return
             updated = False
             for device in self.data:
@@ -116,7 +127,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                         for key, value in data.items():
                             if key != "id":
                                 datapoint[key] = value
-                        _LOGGER.debug("Updated datapoint for device %s: %s", device["id"], datapoint)
+                        _LOGGER.debug(
+                            "Updated datapoint for device %s: %s",
+                            device["id"],
+                            datapoint,
+                        )
                         updated = True
                         break
                 if updated:
@@ -134,11 +149,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Updated scenes: %s", data)
             self.async_set_updated_data(self.data)
         elif not isinstance(data, dict):
-            _LOGGER.warning("Received WebSocket message with unknown data type: %s", message)
+            _LOGGER.warning(
+                "Received WebSocket message with unknown data type: %s", message
+            )
 
     async def start(self):
         """Start the coordinator by fetching initial data and connecting to the WebSocket."""
-        _LOGGER.debug("Starting coordinator: fetching initial data and connecting to WebSocket")
+        _LOGGER.debug(
+            "Starting coordinator: fetching initial data and connecting to WebSocket"
+        )
         await self.async_refresh()
         self._ws_task = self.hass.loop.create_task(self._connect_websocket())
 
@@ -166,7 +185,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as e:
                 _LOGGER.error("Error sending WebSocket message: %s", e)
         else:
-            _LOGGER.error("WebSocket is not connected or is closed. Attempting to reconnect...")
+            _LOGGER.error(
+                "WebSocket is not connected or is closed. Attempting to reconnect..."
+            )
             # Try to reconnect
             self._ws_task = self.hass.loop.create_task(self._connect_websocket())
 
@@ -178,8 +199,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "switch",
-                "values": [{"key": "switch", "value": "1"}]
-            }
+                "values": [{"key": "switch", "value": "1"}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -191,8 +212,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "switch",
-                "values": [{"key": "switch", "value": "0"}]
-            }
+                "values": [{"key": "switch", "value": "0"}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -204,8 +225,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "switch",
-                "values": [{"key": "switch", "value": "1"}]
-            }
+                "values": [{"key": "switch", "value": "1"}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -217,8 +238,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "switch",
-                "values": [{"key": "switch", "value": "0"}]
-            }
+                "values": [{"key": "switch", "value": "0"}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -229,8 +250,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "brightness",
-                "values": [{"key": "brightness", "value": str(brightness)}]
-            }
+                "values": [{"key": "brightness", "value": str(brightness)}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -241,8 +262,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "color_temperature",
-                "values": [{"key": "color_temperature", "value": str(color_temp)}]
-            }
+                "values": [{"key": "color_temperature", "value": str(color_temp)}],
+            },
         }
         await self.send_websocket_message(message)
 
@@ -254,7 +275,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             "data": {
                 "id": datapoint_id,
                 "type": "status_led",
-                "values": [{"key": "status_led", "value": value}]
-            }
+                "values": [{"key": "status_led", "value": value}],
+            },
         }
         await self.send_websocket_message(message)

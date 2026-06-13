@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reference prototype: control JUNG HOME devices over Bluetooth Mesh, gateway-free.
+"""
+Reference prototype: control JUNG HOME devices over Bluetooth Mesh, gateway-free.
 
 This mirrors what the gateway's `middleware` does, but from your own host driving
 a Silicon Labs EFR32 acting as a Bluetooth Mesh NCP over a serial port (the same
@@ -83,22 +84,24 @@ class JungMesh:
         self._tid = (self._tid + 1) & 0xFF
         return self._tid
 
-    def _generic_client_set(self, address, model_id, kind, value_bytes, transition_ms=0):
+    def _generic_client_set(
+        self, address, model_id, kind, value_bytes, transition_ms=0
+    ):
         """sl_btmesh_cmd_generic_client_set, retransmitted like the gateway."""
         tid = self._next_tid()
         for i in range(RETRANSMISSIONS):
             delay_ms = INTERVAL_MS * (RETRANSMISSIONS - 1 - i)
             self.lib.btmesh.generic_client.set(
-                address,          # server_address
-                0,                # elem_index
-                model_id,         # model_id
-                APPKEY_INDEX,     # appkey_index
-                tid,              # tid
-                transition_ms,    # transition_ms
-                delay_ms,         # delay_ms
-                1,                # flags
-                kind,             # type (MeshModelSetKind)
-                value_bytes,      # parameters
+                address,  # server_address
+                0,  # elem_index
+                model_id,  # model_id
+                APPKEY_INDEX,  # appkey_index
+                tid,  # tid
+                transition_ms,  # transition_ms
+                delay_ms,  # delay_ms
+                1,  # flags
+                kind,  # type (MeshModelSetKind)
+                value_bytes,  # parameters
             )
             if i < RETRANSMISSIONS - 1:
                 time.sleep(INTERVAL_MS / 1000)
@@ -111,15 +114,20 @@ class JungMesh:
         )
 
     def set_brightness(self, address: int, percent: int):
-        """percent 0..100 -> Light Lightness Actual uint16."""
+        """Percent 0..100 -> Light Lightness Actual uint16."""
         value = convert_range(percent, 0, 100, 0, 0xFFFF)
         self._generic_client_set(
-            address, MODEL_LIGHT_LIGHTNESS_CLIENT, KIND_LIGHTNESS_ACTUAL, to_u16_le(value)
+            address,
+            MODEL_LIGHT_LIGHTNESS_CLIENT,
+            KIND_LIGHTNESS_ACTUAL,
+            to_u16_le(value),
         )
 
     def set_color_temp(self, address: int, kelvin: int):
         """Generic Level on the CTL temperature element (address + 1)."""
-        level = convert_range(kelvin, CT_KELVIN_MIN, CT_KELVIN_MAX, LEVEL_MIN, LEVEL_MAX)
+        level = convert_range(
+            kelvin, CT_KELVIN_MIN, CT_KELVIN_MAX, LEVEL_MIN, LEVEL_MAX
+        )
         self._generic_client_set(
             address + 1, MODEL_GENERIC_LEVEL_CLIENT, KIND_LEVEL, to_u16_le(level)
         )
@@ -128,7 +136,10 @@ class JungMesh:
         """direction: 'up' | 'down' | 'stop' (Generic Level Move)."""
         value = {"down": 0x7FFF, "up": 0x8000, "stop": 0x0000}[direction]
         self._generic_client_set(
-            address, MODEL_GENERIC_LEVEL_CLIENT, KIND_LEVEL_MOVE, to_u16_le(value),
+            address,
+            MODEL_GENERIC_LEVEL_CLIENT,
+            KIND_LEVEL_MOVE,
+            to_u16_le(value),
             transition_ms=0xFFFE,
         )
 
@@ -145,16 +156,19 @@ class JungMesh:
     # --- vendor model (status LED / buttons), company 0x0527 ---
 
     def set_status_led(self, address: int, model_client: int, prop_id: int, on: bool):
-        """JUNG vendor 'Property' model via the host->NCP passthrough.
+        """
+        JUNG vendor 'Property' model via the host->NCP passthrough.
 
         Mirrors btmesh_set_datapoint_service._sendKeyStatus (commandId 2 =
         STATUS_LBC_PROP_SEND_ID). See docs/bt-mesh-direct.md.
         """
         self.lib.bt.user.message_to_target(
-            bytes([
-                2,                       # commandId STATUS_LBC_PROP_SEND_ID
-                0,                       # elementId (lo) ...
-            ])
+            bytes(
+                [
+                    2,  # commandId STATUS_LBC_PROP_SEND_ID
+                    0,  # elementId (lo) ...
+                ]
+            )
             # NOTE: exact field packing for user_message_to_target depends on the
             # vendor app on the NCP; see the documented field list. Left as a
             # starting point for the buttons/LED path.
@@ -167,24 +181,39 @@ class JungMesh:
         for evt in self.lib.gen_events(max_time=None):
             name = evt._str  # e.g. 'btmesh_evt_generic_client_server_status'
             if "generic_client_server_status" in name:
-                print(f"state  addr=0x{evt.server_address:04x} model=0x{evt.model_id:04x} "
-                      f"params={bytes(evt.parameters).hex()}")
+                print(
+                    f"state  addr=0x{evt.server_address:04x} model=0x{evt.model_id:04x} "
+                    f"params={bytes(evt.parameters).hex()}"
+                )
             elif "sensor_client_status" in name:
-                print(f"sensor addr=0x{evt.server_address:04x} data={bytes(evt.sensor_data).hex()}")
+                print(
+                    f"sensor addr=0x{evt.server_address:04x} data={bytes(evt.sensor_data).hex()}"
+                )
             elif "scene_client_status" in name:
-                print(f"scene  addr=0x{evt.server_address:04x} current={evt.current_scene}")
+                print(
+                    f"scene  addr=0x{evt.server_address:04x} current={evt.current_scene}"
+                )
             elif "user_message_to_host" in name:
                 print(f"vendor data={bytes(evt.message).hex()}")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="JUNG HOME BT-Mesh direct control (prototype)")
+    ap = argparse.ArgumentParser(
+        description="JUNG HOME BT-Mesh direct control (prototype)"
+    )
     ap.add_argument("--port", default="/dev/ttyACM0", help="EFR32 NCP serial port")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("onoff"); p.add_argument("address", type=lambda x: int(x, 0)); p.add_argument("state", choices=["on", "off"])
-    p = sub.add_parser("brightness"); p.add_argument("address", type=lambda x: int(x, 0)); p.add_argument("percent", type=int)
-    p = sub.add_parser("ct"); p.add_argument("address", type=lambda x: int(x, 0)); p.add_argument("kelvin", type=int)
-    p = sub.add_parser("scene"); p.add_argument("number", type=int)
+    p = sub.add_parser("onoff")
+    p.add_argument("address", type=lambda x: int(x, 0))
+    p.add_argument("state", choices=["on", "off"])
+    p = sub.add_parser("brightness")
+    p.add_argument("address", type=lambda x: int(x, 0))
+    p.add_argument("percent", type=int)
+    p = sub.add_parser("ct")
+    p.add_argument("address", type=lambda x: int(x, 0))
+    p.add_argument("kelvin", type=int)
+    p = sub.add_parser("scene")
+    p.add_argument("number", type=int)
     sub.add_parser("listen")
     args = ap.parse_args()
 
