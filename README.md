@@ -63,11 +63,10 @@ device-mesh architecture are documented in **[docs/](docs/README.md)**. Release
 and HACS-publishing steps are in **[docs/publishing.md](docs/publishing.md)**.
 
 # TODO
-- Make setup easier.
 - Bring back binary sensors (motion/presence, which was previously removed).
 - Puck support.
 
-Unlikely to be completed by me, since I don't have the devices:
+Unlikely to be completed by me, since I don't have these devices:
 - Curtain control.
 - Thermostats.
 
@@ -94,6 +93,3 @@ scripts/setup     # install dependencies
 scripts/develop   # run Home Assistant against ./config with the integration on PYTHONPATH
 scripts/lint      # ruff
 ```
-
-# Coffee
-If you've enjoyed this integration, feel free to buy me a cup of coffee. My BTC address is `bc1qlpvgqzr0y09a4zhez94sjl6539ptk0l9rdy2jm`.
