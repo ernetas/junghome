@@ -1,18 +1,23 @@
 import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
+
+from .const import DOMAIN, datapoint_suffix, device_slug
 from .coordinator import JungHomeDataUpdateCoordinator
-from .const import DOMAIN, device_slug, datapoint_suffix
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["light", "switch", "sensor", "event"]
 
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Jung Home integration."""
     return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Jung Home from a config entry."""
@@ -26,9 +31,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = JungHomeDataUpdateCoordinator(hass, {"host": host, "token": token})
 
     # Store the coordinator in hass data for later use
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator
-    }
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
     # Start the coordinator (fetch initial data and connect to WebSocket)
     await coordinator.start()
@@ -47,8 +50,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     return True
 
-def _migrate_to_stable_ids(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> None:
-    """Re-point existing id-based registry entries to label-based stable ids.
+
+def _migrate_to_stable_ids(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator
+) -> None:
+    """
+    Re-point existing id-based registry entries to label-based stable ids.
 
     The Jung HOME gateway exposes no hardware identifier, and it regenerates the
     random device id on firmware updates, which previously caused Home Assistant
@@ -77,8 +84,12 @@ def _migrate_to_stable_ids(hass: HomeAssistant, entry: ConfigEntry, coordinator)
             for dp_id, device in by_datapoint.items():
                 prefix = f"{device['id']}_{dp_id}"
                 if old_uid == prefix or old_uid.startswith(prefix + "_"):
-                    trailing = old_uid[len(prefix):]  # "", "_switch", "_event", "_<label>"
-                    new_uid = f"{device_slug(device)}_{datapoint_suffix(dp_id)}{trailing}"
+                    trailing = old_uid[
+                        len(prefix) :
+                    ]  # "", "_switch", "_event", "_<label>"
+                    new_uid = (
+                        f"{device_slug(device)}_{datapoint_suffix(dp_id)}{trailing}"
+                    )
                     break
             if not new_uid or new_uid == old_uid:
                 continue
@@ -103,11 +114,14 @@ def _migrate_to_stable_ids(hass: HomeAssistant, entry: ConfigEntry, coordinator)
                 else:
                     new_identifiers.add((domain, identifier))
             if changed:
-                dev_reg.async_update_device(device_entry.id, new_identifiers=new_identifiers)
+                dev_reg.async_update_device(
+                    device_entry.id, new_identifiers=new_identifiers
+                )
 
         _LOGGER.info("Jung Home: migrated %s entities to firmware-stable ids", migrated)
-    except Exception:  # noqa: BLE001 - never let migration block setup
+    except Exception:
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
@@ -119,6 +133,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         del hass.data[DOMAIN][entry.entry_id]
 
     return unload_ok
+
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Reload a config entry."""

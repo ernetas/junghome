@@ -4,7 +4,6 @@ import ssl
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 
@@ -30,7 +29,7 @@ def _normalize_host(host: str) -> str:
     host = host.strip()
     for prefix in ("https://", "http://"):
         if host.lower().startswith(prefix):
-            host = host[len(prefix):]
+            host = host[len(prefix) :]
     return host.rstrip("/")
 
 
@@ -75,7 +74,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             self._token = self._register_task.result()
-        except Exception:  # noqa: BLE001 - surfaced to the user on the next step
+        except Exception:
             self._register_task = None
             return self.async_show_progress_done(next_step_id="register_failed")
 
@@ -100,7 +99,8 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_register(self) -> str:
-        """POST the registration request and return the issued token.
+        """
+        POST the registration request and return the issued token.
 
         Blocks until the user approves the request in the app or the gateway
         times out (~180s).
@@ -117,7 +117,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._error = "register_failed"
                         raise CannotRegister(f"HTTP {response.status}")
                     data = await response.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (TimeoutError, aiohttp.ClientError) as err:
             self._error = "cannot_connect"
             raise CannotRegister(str(err)) from err
 

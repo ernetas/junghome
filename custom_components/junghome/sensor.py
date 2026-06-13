@@ -1,13 +1,18 @@
 import logging
+
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+):
     """Set up Jung Home sensors from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     known: set[str] = set()
@@ -17,13 +22,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         """Add entities for any sensors not yet created (handles devices added later)."""
         new_entities = []
         for device in coordinator.data or []:
-            if device.get('type') == 'Socket':
-                for datapoint in device.get('datapoints', []):
-                    if datapoint.get('type') == 'quantity':
-                        label = next((value['value'].strip() for value in datapoint['values'] if value['key'] == 'quantity_label'), None)
-                        unit = next((value['value'] for value in datapoint['values'] if value['key'] == 'quantity_unit'), None)
+            if device.get("type") == "Socket":
+                for datapoint in device.get("datapoints", []):
+                    if datapoint.get("type") == "quantity":
+                        label = next(
+                            (
+                                value["value"].strip()
+                                for value in datapoint["values"]
+                                if value["key"] == "quantity_label"
+                            ),
+                            None,
+                        )
+                        unit = next(
+                            (
+                                value["value"]
+                                for value in datapoint["values"]
+                                if value["key"] == "quantity_unit"
+                            ),
+                            None,
+                        )
                         if label and unit:
-                            entity = JungHomeQuantity(coordinator, device, datapoint, label, unit)
+                            entity = JungHomeQuantity(
+                                coordinator, device, datapoint, label, unit
+                            )
                             if entity.unique_id not in known:
                                 known.add(entity.unique_id)
                                 new_entities.append(entity)
@@ -32,6 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     _discover_sensors()
     entry.async_on_unload(coordinator.async_add_listener(_discover_sensors))
+
 
 class JungHomeQuantity(CoordinatorEntity, SensorEntity):
     """Representation of a Jung Home quantity."""
@@ -43,7 +65,9 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         self._datapoint = datapoint
         self._name = f"{device.get('label', 'Jung Device')} {label}"
         # Firmware-stable id derived from the label, not the volatile device id.
-        self._unique_id = stable_unique_id(device, datapoint, label.replace(' ', '_').lower())
+        self._unique_id = stable_unique_id(
+            device, datapoint, label.replace(" ", "_").lower()
+        )
         self._unit = unit
         self._value = self._get_value_from_datapoint(datapoint)
 
@@ -87,16 +111,23 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         )
         if device:
             datapoint = next(
-                (dp for dp in device.get('datapoints', []) if dp["id"] == self._datapoint["id"]), None
+                (
+                    dp
+                    for dp in device.get("datapoints", [])
+                    if dp["id"] == self._datapoint["id"]
+                ),
+                None,
             )
             if datapoint:
                 self._value = self._get_value_from_datapoint(datapoint)
-                _LOGGER.debug("Updated state for quantity %s: %s", self._name, self._value)
+                _LOGGER.debug(
+                    "Updated state for quantity %s: %s", self._name, self._value
+                )
                 self.async_write_ha_state()
 
     def _get_value_from_datapoint(self, datapoint):
         """Extract the value of the quantity from its datapoint."""
-        for value in datapoint.get('values', []):
-            if value['key'] == 'quantity':
-                return value['value']
+        for value in datapoint.get("values", []):
+            if value["key"] == "quantity":
+                return value["value"]
         return None

@@ -1,13 +1,18 @@
 import logging
+
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+):
     """Set up Jung Home switches from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     known: set[str] = set()
@@ -17,16 +22,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         """Add entities for any switches not yet created (handles devices added later)."""
         new_entities = []
         for device in coordinator.data or []:
-            if device.get('type') == 'Socket':
-                for datapoint in device.get('datapoints', []):
-                    if datapoint.get('type') == 'switch':
+            if device.get("type") == "Socket":
+                for datapoint in device.get("datapoints", []):
+                    if datapoint.get("type") == "switch":
                         entity = JungHomeSocket(coordinator, device, datapoint)
                         if entity.unique_id not in known:
                             known.add(entity.unique_id)
                             new_entities.append(entity)
-            elif device.get('type') == 'RockerSwitch':
-                for datapoint in device.get('datapoints', []):
-                    if datapoint.get('type') == 'status_led':
+            elif device.get("type") == "RockerSwitch":
+                for datapoint in device.get("datapoints", []):
+                    if datapoint.get("type") == "status_led":
                         entity = JungHomeSwitch(coordinator, device, datapoint)
                         if entity.unique_id not in known:
                             known.add(entity.unique_id)
@@ -36,6 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     _discover_switches()
     entry.async_on_unload(coordinator.async_add_listener(_discover_switches))
+
 
 class JungHomeSocket(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home socket."""
@@ -90,11 +96,18 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         )
         if device:
             datapoint = next(
-                (dp for dp in device.get('datapoints', []) if dp["id"] == self._datapoint["id"]), None
+                (
+                    dp
+                    for dp in device.get("datapoints", [])
+                    if dp["id"] == self._datapoint["id"]
+                ),
+                None,
             )
             if datapoint:
                 self._is_on = self._get_state_from_datapoint(datapoint)
-                _LOGGER.debug("Updated state for socket %s: %s", self._name, self._is_on)
+                _LOGGER.debug(
+                    "Updated state for socket %s: %s", self._name, self._is_on
+                )
                 self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs):
@@ -129,7 +142,12 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         )
         if device:
             datapoint = next(
-                (dp for dp in device.get('datapoints', []) if dp["id"] == self._datapoint["id"]), None
+                (
+                    dp
+                    for dp in device.get("datapoints", [])
+                    if dp["id"] == self._datapoint["id"]
+                ),
+                None,
             )
             if datapoint:
                 self._is_on = self._get_state_from_datapoint(datapoint)
@@ -137,13 +155,15 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
 
     def _get_state_from_datapoint(self, datapoint):
         """Extract the state of the socket from its datapoint."""
-        for value in datapoint.get('values', []):
-            if value['key'] == 'switch':
-                return value['value'] == '1'
+        for value in datapoint.get("values", []):
+            if value["key"] == "switch":
+                return value["value"] == "1"
         return False
+
 
 class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
+
     def __init__(self, coordinator, device, datapoint):
         super().__init__(coordinator)
         self._device = device
@@ -164,9 +184,9 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         }
 
     def _get_state_from_datapoint(self, datapoint):
-        for value in datapoint.get('values', []):
-            if value['key'] == 'status_led':
-                return value['value'] == '1'
+        for value in datapoint.get("values", []):
+            if value["key"] == "status_led":
+                return value["value"] == "1"
         return False
 
     @property
@@ -184,10 +204,19 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         _LOGGER.debug("Updating switch for %s", self._attr_name)
-        device = next((d for d in self.coordinator.data if d["id"] == self._device["id"]), None)
+        device = next(
+            (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
+        )
         if not device:
             return
-        datapoint = next((dp for dp in device.get("datapoints", []) if dp["id"] == self._datapoint["id"]), None)
+        datapoint = next(
+            (
+                dp
+                for dp in device.get("datapoints", [])
+                if dp["id"] == self._datapoint["id"]
+            ),
+            None,
+        )
         if not datapoint:
             return
         new_state = self._get_state_from_datapoint(datapoint)
