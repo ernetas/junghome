@@ -14,20 +14,6 @@ DEFAULT_MIN_KELVIN = 2700
 DEFAULT_MAX_KELVIN = 6500
 
 
-def kelvin_to_mired(kelvin: int) -> int:
-    try:
-        return round(1000000 / kelvin)
-    except Exception:
-        return round(1000000 / DEFAULT_MIN_KELVIN)
-
-
-def mired_to_kelvin(mired: int) -> int:
-    try:
-        return round(1000000 / mired)
-    except Exception:
-        return DEFAULT_MIN_KELVIN
-
-
 async def async_setup_entry(
     hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
 ):
@@ -136,22 +122,9 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         return self._brightness
 
     @property
-    def color_temp(self):
-        """Return the color temperature of the light."""
-        # Home Assistant expects color_temp in mireds; device reports Kelvin
-        if self._color_temp is None:
-            return None
-        return kelvin_to_mired(self._color_temp)
-
-    @property
-    def min_mireds(self) -> int:
-        """Return minimum mireds supported."""
-        return kelvin_to_mired(DEFAULT_MAX_KELVIN)
-
-    @property
-    def max_mireds(self) -> int:
-        """Return maximum mireds supported."""
-        return kelvin_to_mired(DEFAULT_MIN_KELVIN)
+    def color_temp_kelvin(self):
+        """Return the color temperature in Kelvin (device-native)."""
+        return self._color_temp
 
     @property
     def supported_color_modes(self):
@@ -301,9 +274,8 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
             if "brightness" in kwargs:
                 brightness = kwargs["brightness"]
                 await self._set_brightness(brightness)
-            if "color_temp" in kwargs:
-                color_temp = kwargs["color_temp"]
-                await self._set_color_temp(color_temp)
+            if "color_temp_kelvin" in kwargs:
+                await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
@@ -343,13 +315,6 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
                 # Device reports 0-100; convert linearly to HA 0-255
                 return round(raw * 255 / 100)
         return 0
-
-    def _raw_to_ha_brightness(self, raw: int) -> int:
-        """Convert device raw brightness (0-100) to Home Assistant 0-255 scale."""
-        try:
-            return round(raw * 255 / 100)
-        except Exception:
-            return 0
 
     def _ha_to_raw_brightness(self, ha_brightness: int) -> int:
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
@@ -396,25 +361,17 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         self._brightness = brightness
         self.async_write_ha_state()
 
-    async def _set_color_temp(self, color_temp):
-        """Set the color temperature of the light."""
-        _LOGGER.debug(
-            "Setting color temperature for light %s to %s", self._name, color_temp
-        )
+    async def _set_color_temp(self, kelvin):
+        """Set the color temperature of the light (Kelvin, device-native)."""
         if not self._color_temp_datapoint_id:
             _LOGGER.warning(
                 "No color_temperature datapoint id for light %s", self._name
             )
             return
-        # Home Assistant supplies mireds; convert to Kelvin for device
-        kelvin = mired_to_kelvin(int(color_temp))
+        kelvin = int(kelvin)
         _LOGGER.debug(
-            "Converted HA color_temp %s mired -> %s K for %s",
-            color_temp,
-            kelvin,
-            self._name,
+            "Setting color temperature for light %s to %sK", self._name, kelvin
         )
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
-        # store Kelvin locally
         self._color_temp = kelvin
         self.async_write_ha_state()

@@ -65,4 +65,10 @@ When working on anything that touches the gateway protocol, consult
 - Match Home Assistant integration patterns; keep `strings.json` and
   `translations/en.json` in sync (no `<...>` in text — it breaks the translation
   parser).
+- Reuse the shared aiohttp session via `async_get_clientsession(hass,
+  verify_ssl=False)` (the gateway's cert is self-signed); don't create
+  per-request `ClientSession`s or build SSL contexts on the event loop.
 - Validate with hassfest + HACS (see `.github/workflows/validate.yml`).
+- Tests for the pure helpers live in `tests/` (`pytest`, needs the pinned
+  `homeassistant`; uses Python 3.14 like the other workflows). Run `pytest`;
+  it's wired into `.github/workflows/test.yml`.

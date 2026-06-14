@@ -39,6 +39,12 @@ ignore = [
 [lint.per-file-ignores]
 # Reference prototypes: CLI-style scripts, intentional prints / passthroughs.
 "tools/**" = ["T201", "SLF001", "EXE001", "INP001"]
+# Tests: asserts are the point; private-member access is fine.
+"tests/**" = ["S101", "S105", "S106", "SLF001", "INP001"]
+"conftest.py" = ["INP001"]
+
+[lint.isort]
+known-first-party = ["custom_components"]
 
 [lint.flake8-pytest-style]
 fixture-parentheses = false

@@ -1,13 +1,43 @@
 import logging
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfEnergy,
+    UnitOfFrequency,
+    UnitOfPower,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
+
+_MEAS = SensorStateClass.MEASUREMENT
+_TOTAL = SensorStateClass.TOTAL_INCREASING
+
+# Map a device-reported unit (normalised: stripped + lowercased) to
+# (device_class, state_class, Home Assistant unit). Energy is TOTAL_INCREASING so
+# it feeds the energy dashboard; the rest are MEASUREMENT. Unknown units fall
+# back to a plain string sensor with no class.
+_UNIT_MAP = {
+    "w": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.WATT),
+    "kw": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.KILO_WATT),
+    "wh": (SensorDeviceClass.ENERGY, _TOTAL, UnitOfEnergy.WATT_HOUR),
+    "kwh": (SensorDeviceClass.ENERGY, _TOTAL, UnitOfEnergy.KILO_WATT_HOUR),
+    "v": (SensorDeviceClass.VOLTAGE, _MEAS, UnitOfElectricPotential.VOLT),
+    "a": (SensorDeviceClass.CURRENT, _MEAS, UnitOfElectricCurrent.AMPERE),
+    "hz": (SensorDeviceClass.FREQUENCY, _MEAS, UnitOfFrequency.HERTZ),
+    "°c": (SensorDeviceClass.TEMPERATURE, _MEAS, UnitOfTemperature.CELSIUS),
+}
 
 
 async def async_setup_entry(
@@ -74,7 +104,12 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         self._unique_id = stable_unique_id(
             device, datapoint, label.replace(" ", "_").lower()
         )
-        self._unit = unit
+        device_class, state_class, ha_unit = _UNIT_MAP.get(
+            unit.strip().lower(), (None, None, unit)
+        )
+        self._attr_device_class = device_class
+        self._attr_state_class = state_class
+        self._attr_native_unit_of_measurement = ha_unit
         self._value = self._get_value_from_datapoint(datapoint)
 
     @property
@@ -88,14 +123,16 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         return self._unique_id
 
     @property
-    def state(self):
-        """Return the state of the quantity."""
+    def native_value(self):
+        """Return the measured value (numeric when the unit has a state class)."""
+        if self._value is None:
+            return None
+        if self._attr_state_class is not None:
+            try:
+                return float(self._value)
+            except (TypeError, ValueError):
+                return None
         return self._value
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement of the quantity."""
-        return self._unit
 
     @property
     def device_info(self):
