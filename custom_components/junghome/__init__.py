@@ -56,7 +56,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
 
 def _migrate_to_stable_ids(
-    hass: HomeAssistant, entry: JungHomeConfigEntry, coordinator
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    coordinator: JungHomeDataUpdateCoordinator,
 ) -> None:
     """Re-point existing id-based registry entries to label-based stable ids.
 

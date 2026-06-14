@@ -2,14 +2,18 @@
 
 import logging
 import time
+from datetime import datetime
+from typing import Any
 
 from homeassistant.components.event import EventEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, device_slug, stable_unique_id
-from .coordinator import JungHomeConfigEntry
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,14 +32,16 @@ _EVENT_TRANSLATION_KEYS = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: JungHomeConfigEntry, async_add_entities
-):
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
     """Set up Jung Home event entities from a config entry."""
     coordinator = entry.runtime_data
     known: set[str] = set()
 
     @callback
-    def _discover_events():
+    def _discover_events() -> None:
         """Add entities for any events not yet created (handles devices added later)."""
         new_entities = []
         for device in coordinator.data or []:
@@ -69,7 +75,12 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
     _attr_event_types = ["pressed", "depressed"]
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, device, datapoint):
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        device: dict[str, Any],
+        datapoint: dict[str, Any],
+    ) -> None:
         """Initialize the event entity."""
         super().__init__(coordinator)
         self._device = device
@@ -89,7 +100,7 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
         self._last_value = self._get_state_from_datapoint(datapoint)
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device information for this event entity."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},
@@ -138,11 +149,11 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
             self._last_value = new_state
 
     @property
-    def state(self):
+    def state(self) -> datetime | None:
         """Return the timestamp of the last button event."""
         return getattr(self, "_attr_event_timestamp", None)
 
-    def _get_state_from_datapoint(self, datapoint):
+    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         """Extract state from datapoint values. Returns True if pressed."""
         for value in datapoint.get("values", []):
             if value["key"] in {"up_request", "down_request", "trigger_request"}:

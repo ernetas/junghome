@@ -1,13 +1,16 @@
 """Switch platform for Jung Home (sockets and rocker status LEDs)."""
 
 import logging
+from typing import Any
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
-from .coordinator import JungHomeConfigEntry
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -16,31 +19,33 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: JungHomeConfigEntry, async_add_entities
-):
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
     """Set up Jung Home switches from a config entry."""
     coordinator = entry.runtime_data
     known: set[str] = set()
 
     @callback
-    def _discover_switches():
+    def _discover_switches() -> None:
         """Add entities for any switches not yet created (handles devices added later)."""
-        new_entities = []
+        new_entities: list[JungHomeSocket | JungHomeSwitch] = []
         for device in coordinator.data or []:
             if device.get("type") == "Socket":
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "switch":
-                        entity = JungHomeSocket(coordinator, device, datapoint)
-                        if entity.unique_id not in known:
-                            known.add(entity.unique_id)
-                            new_entities.append(entity)
+                        socket = JungHomeSocket(coordinator, device, datapoint)
+                        if socket.unique_id not in known:
+                            known.add(socket.unique_id)
+                            new_entities.append(socket)
             elif device.get("type") == "RockerSwitch":
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "status_led":
-                        entity = JungHomeSwitch(coordinator, device, datapoint)
-                        if entity.unique_id not in known:
-                            known.add(entity.unique_id)
-                            new_entities.append(entity)
+                        led = JungHomeSwitch(coordinator, device, datapoint)
+                        if led.unique_id not in known:
+                            known.add(led.unique_id)
+                            new_entities.append(led)
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)
 
@@ -55,8 +60,14 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
     # (entity_id `switch.<device>`, not the old `switch.<device>_<device>`).
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_device_class = SwitchDeviceClass.OUTLET
 
-    def __init__(self, coordinator, device, datapoint):
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        device: dict[str, Any],
+        datapoint: dict[str, Any],
+    ) -> None:
         """Initialize the socket."""
         super().__init__(coordinator)
         self._device = device
@@ -67,22 +78,17 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         self._is_on = self._get_state_from_datapoint(datapoint)
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str | None:
         """Return a unique ID for the socket."""
         return self._unique_id
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool | None:
         """Return the state of the socket."""
         return self._is_on
 
     @property
-    def device_class(self):
-        """Return the device class of the socket."""
-        return "outlet"
-
-    @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device information about this socket."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
@@ -115,14 +121,14 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
                 )
                 self.async_write_ha_state()
 
-    async def async_turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the socket on."""
         _LOGGER.debug("Turning on socket %s", self._name)
         await self.coordinator.turn_on_switch(self._datapoint["id"])
         self._is_on = True
         self.async_write_ha_state()
 
-    async def async_turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the socket off."""
         _LOGGER.debug("Turning off socket %s", self._name)
         await self.coordinator.turn_off_switch(self._datapoint["id"])
@@ -130,16 +136,16 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         self.async_write_ha_state()
 
     @property
-    def should_poll(self):
+    def should_poll(self) -> bool:
         """No polling needed for this entity."""
         return False
 
     @property
-    def available(self):
+    def available(self) -> bool:
         """Return if the device is available."""
         return self.coordinator.last_update_success
 
-    def _get_state_from_datapoint(self, datapoint):
+    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         """Extract the state of the socket from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "switch":
@@ -156,7 +162,12 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "status_led"
 
-    def __init__(self, coordinator, device, datapoint):
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        device: dict[str, Any],
+        datapoint: dict[str, Any],
+    ) -> None:
         """Initialize the status LED switch."""
         super().__init__(coordinator)
         self._device = device
@@ -167,7 +178,7 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device information for the rocker this LED belongs to."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},
@@ -177,23 +188,23 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
             "sw_version": self._device.get("sw_version", "Unknown Version"),
         }
 
-    def _get_state_from_datapoint(self, datapoint):
+    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         for value in datapoint.get("values", []):
             if value["key"] == "status_led":
                 return value["value"] == "1"
         return False
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool | None:
         """Return whether the status LED is on."""
         return self._attr_is_on
 
-    async def async_turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the status LED on."""
         _LOGGER.debug("Turning on switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], True)
 
-    async def async_turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the status LED off."""
         _LOGGER.debug("Turning off switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], False)

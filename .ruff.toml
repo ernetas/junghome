@@ -16,7 +16,6 @@ ignore = [
 
     # Families this (largely pre-existing) codebase does not follow; relaxed so
     # CI lint is green without rewriting working code.
-    "ANN", # type annotations not used throughout
     "ARG", # unused arguments are common in Home Assistant callback signatures
     "FBT", # boolean positional args are common in HA APIs
     "EM", # exception messages as string literals
@@ -37,10 +36,10 @@ ignore = [
 [lint.per-file-ignores]
 # Reference prototypes: CLI-style scripts, intentional prints / passthroughs;
 # not held to the integration's docstring convention.
-"tools/**" = ["T201", "SLF001", "EXE001", "INP001", "D"]
+"tools/**" = ["T201", "SLF001", "EXE001", "INP001", "D", "ANN"]
 # Tests: asserts are the point; private-member access is fine; descriptive test
 # names stand in for docstrings.
-"tests/**" = ["S101", "S105", "S106", "SLF001", "INP001", "D"]
+"tests/**" = ["S101", "S105", "S106", "SLF001", "INP001", "D", "ANN"]
 "conftest.py" = ["INP001"]
 
 [lint.isort]
