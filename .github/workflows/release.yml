@@ -8,6 +8,11 @@ name: Release
 #
 # This workflow fails if the tag doesn't match the manifest version, to keep
 # them in sync.
+#
+# A plain X.Y.Z tag is a normal release. Anything with a suffix (e.g. 1.1.0b1,
+# 1.1.0-rc1) is published as a GitHub *pre-release*, which HACS hides from users
+# unless they enable "show beta versions" for the repository — so betas don't
+# auto-update everyone.
 
 on:
   push:
@@ -37,4 +42,11 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if printf '%s' "$tag" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          else
+            echo "Pre-release version ($tag): marking as pre-release so HACS won't auto-update everyone."
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --prerelease --latest=false
+          fi
