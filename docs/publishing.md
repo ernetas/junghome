@@ -19,6 +19,15 @@ the default branch and shows a commit SHA instead of a version — so always tag
 
 The tag name (minus the leading `v`) is the version HACS offers.
 
+### Beta / pre-release versions
+
+To publish a version **without** auto-updating everyone, use a pre-release
+version string — a suffix on the `X.Y.Z` base, e.g. `1.1.0b1` or `1.1.0-rc1`
+(set it in `manifest.json` and tag it `v1.1.0b1`). `release.yml` detects the
+suffix and marks the GitHub release as a **pre-release**. HACS hides pre-releases
+unless a user enables **show beta versions** for the repo, so only opt-in testers
+get it. Promote to stable later by releasing a plain `X.Y.Z`.
+
 ## Custom repository (works today)
 
 Users add `https://github.com/ernetas/junghome` as a HACS custom repository,
