@@ -1,3 +1,5 @@
+"""Data update coordinator for Jung Home (REST polling + WebSocket push)."""
+
 import asyncio
 import json
 import logging

@@ -1,3 +1,5 @@
+"""Config flow for the Jung Home integration."""
+
 import asyncio
 import logging
 
@@ -40,6 +42,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
+        """Initialize the config flow."""
         self._host: str | None = None
         self._token: str | None = None
         self._error: str = "register_failed"
@@ -199,8 +202,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_register()
 
     async def _async_register(self) -> str:
-        """
-        POST the registration request and return the issued token.
+        """POST the registration request and return the issued token.
 
         Blocks until the user approves the request in the app or the gateway
         times out (~180s).
