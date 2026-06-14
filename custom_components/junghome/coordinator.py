@@ -12,6 +12,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 # WebSocket reconnect backoff bounds (seconds).
@@ -52,11 +54,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             if err.status in (401, 403):
                 # Token revoked/expired — trigger Home Assistant's reauth flow.
                 raise ConfigEntryAuthFailed(
-                    "Jung Home gateway rejected the token"
+                    translation_domain=DOMAIN, translation_key="auth_failed"
                 ) from err
-            raise UpdateFailed(f"Error fetching data from Jung Home: {err}") from err
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="cannot_connect",
+                translation_placeholders={"error": str(err)},
+            ) from err
         except aiohttp.ClientError as err:
-            raise UpdateFailed(f"Error connecting to Jung Home: {err}") from err
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="cannot_connect",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
         if response is None:
             _LOGGER.error("Received None response from API")
