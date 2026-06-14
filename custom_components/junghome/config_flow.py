@@ -2,10 +2,13 @@
 
 import asyncio
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
@@ -46,11 +49,13 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._host: str | None = None
         self._token: str | None = None
         self._error: str = "register_failed"
-        self._register_task: asyncio.Task | None = None
+        self._register_task: asyncio.Task[str] | None = None
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Collect the gateway host, then start registration."""
-        errors = {}
+        errors: dict[str, str] = {}
         if user_input is not None:
             self._host = _normalize_host(user_input[CONF_HOST])
             if not self._host:
@@ -64,7 +69,9 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    async def async_step_register(self, user_input=None):
+    async def async_step_register(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Wait for the user to approve the access request in the Jung Home app."""
         if self._register_task is None:
             self._register_task = self.hass.async_create_task(self._async_register())
@@ -85,14 +92,18 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._register_task = None
         return self.async_show_progress_done(next_step_id="finish")
 
-    async def async_step_finish(self, user_input=None):
+    async def async_step_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Create the config entry once a token has been obtained."""
         return self.async_create_entry(
             title="Jung Home",
             data={CONF_HOST: self._host, CONF_TOKEN: self._token},
         )
 
-    async def async_step_register_failed(self, user_input=None):
+    async def async_step_register_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Show the failure reason and allow the user to retry."""
         if user_input is not None:
             return await self.async_step_register()
@@ -102,12 +113,16 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors={"base": self._error},
         )
 
-    async def async_step_reauth(self, entry_data):
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
         """Start reauth when the gateway rejects the stored token."""
         self._host = entry_data[CONF_HOST]
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input=None):
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Re-register with the gateway to obtain a fresh token."""
         if self._register_task is None:
             self._register_task = self.hass.async_create_task(self._async_register())
@@ -128,14 +143,18 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._register_task = None
         return self.async_show_progress_done(next_step_id="reauth_finish")
 
-    async def async_step_reauth_finish(self, user_input=None):
+    async def async_step_reauth_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Store the fresh token on the existing entry and reload it."""
         return self.async_update_reload_and_abort(
             self._get_reauth_entry(),
             data_updates={CONF_TOKEN: self._token},
         )
 
-    async def async_step_reauth_failed(self, user_input=None):
+    async def async_step_reauth_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Show the failure reason and allow retrying the reauth."""
         if user_input is not None:
             return await self.async_step_reauth_confirm()
@@ -145,14 +164,16 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors={"base": self._error},
         )
 
-    async def async_step_reconfigure(self, user_input=None):
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Let the user update the gateway address (e.g. after an IP change).
 
         The existing token still works for the same gateway at a new address; if
         it points at a different gateway, the next refresh triggers reauth.
         """
         entry = self._get_reconfigure_entry()
-        errors = {}
+        errors: dict[str, str] = {}
         if user_input is not None:
             host = _normalize_host(user_input[CONF_HOST])
             if not host:
@@ -176,7 +197,9 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo):
+    async def async_step_zeroconf(
+        self, discovery_info: ZeroconfServiceInfo
+    ) -> ConfigFlowResult:
         """Handle a gateway discovered via mDNS (_junghome._tcp)."""
         self._host = discovery_info.host
         hostname = (discovery_info.hostname or "").rstrip(".") or self._host
@@ -192,7 +215,9 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"host": hostname}
         return await self.async_step_zeroconf_confirm()
 
-    async def async_step_zeroconf_confirm(self, user_input=None):
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Confirm setup of a discovered gateway, then register."""
         if user_input is None:
             return self.async_show_form(

@@ -1,6 +1,7 @@
 """Sensor platform for Jung Home (socket energy quantities)."""
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -16,10 +17,12 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
-from .coordinator import JungHomeConfigEntry
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +36,7 @@ _TOTAL = SensorStateClass.TOTAL_INCREASING
 # (device_class, state_class, Home Assistant unit). Energy is TOTAL_INCREASING so
 # it feeds the energy dashboard; the rest are MEASUREMENT. Unknown units fall
 # back to a plain string sensor with no class.
-_UNIT_MAP = {
+_UNIT_MAP: dict[str, tuple[SensorDeviceClass, SensorStateClass, str]] = {
     "w": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.WATT),
     "kw": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.KILO_WATT),
     "wh": (SensorDeviceClass.ENERGY, _TOTAL, UnitOfEnergy.WATT_HOUR),
@@ -46,16 +49,18 @@ _UNIT_MAP = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: JungHomeConfigEntry, async_add_entities
-):
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
     """Set up Jung Home sensors from a config entry."""
     coordinator = entry.runtime_data
     known: set[str] = set()
 
     @callback
-    def _discover_sensors():
+    def _discover_sensors() -> None:
         """Add entities for any sensors not yet created (handles devices added later)."""
-        new_entities = []
+        new_entities: list[JungHomeQuantity] = []
         for device in coordinator.data or []:
             if device.get("type") == "Socket":
                 for datapoint in device.get("datapoints", []):
@@ -98,7 +103,14 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
     # baked into the entity name).
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, device, datapoint, label, unit):
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        device: dict[str, Any],
+        datapoint: dict[str, Any],
+        label: str,
+        unit: str,
+    ) -> None:
         """Initialize the quantity."""
         super().__init__(coordinator)
         self._device = device
@@ -118,17 +130,17 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         self._value = self._get_value_from_datapoint(datapoint)
 
     @property
-    def name(self):
+    def name(self) -> str | None:
         """Return the entity name (the measured quantity; HA adds the device)."""
         return self._attr_name
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str | None:
         """Return a unique ID for the quantity."""
         return self._unique_id
 
     @property
-    def native_value(self):
+    def native_value(self) -> float | str | None:
         """Return the measured value (numeric when the unit has a state class)."""
         if self._value is None:
             return None
@@ -140,7 +152,7 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
         return self._value
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device information about this quantity."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
@@ -173,7 +185,7 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
                 )
                 self.async_write_ha_state()
 
-    def _get_value_from_datapoint(self, datapoint):
+    def _get_value_from_datapoint(self, datapoint: dict[str, Any]) -> str | None:
         """Extract the value of the quantity from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "quantity":

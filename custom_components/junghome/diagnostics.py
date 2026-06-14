@@ -27,6 +27,7 @@ async def async_get_config_entry_diagnostics(
             "data": async_redact_data(entry.data, TO_REDACT),
             "title": entry.title,
         },
+        "gateway_version": coordinator.gateway_version,
         "device_count": len(coordinator.data or []),
         "devices": coordinator.data or [],
     }

@@ -5,7 +5,7 @@ from homeassistant.util import slugify
 DOMAIN = "junghome"
 
 
-def datapoint_suffix(datapoint_id) -> str:
+def datapoint_suffix(datapoint_id: str) -> str:
     """Return the stable element index of a datapoint id.
 
     Datapoint ids look like ``id5f09764942a70ce-001``. The ``id...`` prefix is

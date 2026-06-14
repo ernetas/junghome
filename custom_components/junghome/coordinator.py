@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
+from typing import Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -24,15 +25,19 @@ MAX_RECONNECT_DELAY = 60
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
 
 
-class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
+class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
     """Class to manage fetching data from the Jung Home API."""
 
-    def __init__(self, hass: HomeAssistant, config: dict, config_entry: ConfigEntry):
+    def __init__(
+        self, hass: HomeAssistant, config: dict[str, Any], config_entry: ConfigEntry
+    ) -> None:
         """Initialize the coordinator."""
         self.hass = hass
         self.config = config
-        self.websocket = None
-        self._ws_task = None
+        self.websocket: aiohttp.ClientWebSocketResponse | None = None
+        # Gateway firmware version, reported by the WebSocket "version" frame.
+        self.gateway_version: str | None = None
+        self._ws_task: asyncio.Task[None] | None = None
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         super().__init__(
@@ -43,7 +48,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(minutes=1),
         )
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> list[dict[str, Any]]:
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
         try:
@@ -75,7 +80,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         # `async_set_updated_data` is automatically called with this.
         return response
 
-    async def _fetch_devices_from_api(self, host, token):
+    async def _fetch_devices_from_api(
+        self, host: str, token: str
+    ) -> list[dict[str, Any]]:
         """Fetch devices from the Jung Home API."""
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
         # cert without building an SSL context on the event loop.
@@ -92,7 +99,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         # and is visible in the debug log above for inspection.
         return list(data)
 
-    async def _websocket_loop(self):
+    async def _websocket_loop(self) -> None:
         """Keep a WebSocket connection alive, reconnecting with backoff on drop.
 
         The gateway pushes state via WebSocket; without this loop a single
@@ -114,7 +121,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             await asyncio.sleep(self._reconnect_delay)
             self._reconnect_delay = min(self._reconnect_delay * 2, MAX_RECONNECT_DELAY)
 
-    async def _run_websocket(self):
+    async def _run_websocket(self) -> None:
         """Open one WebSocket session and pump messages until it closes."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
         url = f"wss://{self.config['host']}/ws"
@@ -139,7 +146,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                                     "Received WebSocket message is a list: %s", data
                                 )
                                 continue
-                            if data.get("type") in ["message", "version"]:
+                            if data.get("type") == "version":
+                                self.gateway_version = data.get("data")
+                                _LOGGER.info(
+                                    "Jung Home gateway firmware version: %s",
+                                    self.gateway_version,
+                                )
+                                continue
+                            if data.get("type") == "message":
                                 _LOGGER.debug("Received initial message: %s", data)
                                 continue
                             self._handle_websocket_message(data)
@@ -155,7 +169,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             finally:
                 self.websocket = None
 
-    def _handle_websocket_message(self, message):
+    def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
         if not isinstance(message, dict):
             _LOGGER.error("Received WebSocket message is not a dictionary: %s", message)
@@ -199,7 +213,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                 "Received WebSocket message with unknown data type: %s", message
             )
 
-    async def start(self):
+    async def start(self) -> None:
         """Connect to the WebSocket.
 
         Initial device data is fetched separately during setup via
@@ -210,7 +224,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         self._closing = False
         self._ws_task = self.hass.loop.create_task(self._websocket_loop())
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the coordinator and close the WebSocket connection."""
         _LOGGER.debug("Stopping coordinator and closing WebSocket")
         self._closing = True
@@ -225,7 +239,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             await self.websocket.close()
         self.websocket = None
 
-    async def send_websocket_message(self, message):
+    async def send_websocket_message(self, message: dict[str, Any]) -> None:
         """Send a message via WebSocket."""
         _LOGGER.debug("Sending WebSocket message: %s", message)
         if self.websocket and not self.websocket.closed:
@@ -241,7 +255,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
                 "WebSocket is not connected; command dropped (reconnect in progress)"
             )
 
-    async def turn_on_switch(self, datapoint_id):
+    async def turn_on_switch(self, datapoint_id: str) -> None:
         """Turn on the switch."""
         _LOGGER.debug("Turning on switch with datapoint_id: %s", datapoint_id)
         message = {
@@ -254,7 +268,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def turn_off_switch(self, datapoint_id):
+    async def turn_off_switch(self, datapoint_id: str) -> None:
         """Turn off the switch."""
         _LOGGER.debug("Turning off switch with datapoint_id: %s", datapoint_id)
         message = {
@@ -267,7 +281,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def turn_on_light(self, datapoint_id):
+    async def turn_on_light(self, datapoint_id: str) -> None:
         """Turn on the light."""
         _LOGGER.debug("Turning on light with datapoint_id: %s", datapoint_id)
         message = {
@@ -280,7 +294,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def turn_off_light(self, datapoint_id):
+    async def turn_off_light(self, datapoint_id: str) -> None:
         """Turn off the light."""
         _LOGGER.debug("Turning off light with datapoint_id: %s", datapoint_id)
         message = {
@@ -293,7 +307,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def set_brightness(self, datapoint_id, brightness):
+    async def set_brightness(self, datapoint_id: str, brightness: int) -> None:
         """Set the brightness of the light."""
         message = {
             "type": "datapoint",
@@ -305,7 +319,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def set_color_temp(self, datapoint_id, color_temp):
+    async def set_color_temp(self, datapoint_id: str, color_temp: int) -> None:
         """Set the color temperature of the light."""
         message = {
             "type": "datapoint",
@@ -317,7 +331,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         }
         await self.send_websocket_message(message)
 
-    async def set_status_led(self, datapoint_id, state):
+    async def set_status_led(self, datapoint_id: str, state: bool) -> None:
         """Set the status LED on (True) or off (False)."""
         value = "1" if state else "0"
         message = {

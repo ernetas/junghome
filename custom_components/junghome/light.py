@@ -2,13 +2,16 @@
 
 import logging
 import time
+from typing import Any
 
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
-from .coordinator import JungHomeConfigEntry
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,16 +23,18 @@ DEFAULT_MAX_KELVIN = 6500
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, config_entry: JungHomeConfigEntry, async_add_entities
-):
+    hass: HomeAssistant,
+    config_entry: JungHomeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
     """Set up Jung Home lights from a config entry."""
     coordinator = config_entry.runtime_data
     known: set[str] = set()
 
     @callback
-    def _discover_lights():
+    def _discover_lights() -> None:
         """Add entities for any lights not yet created (handles devices added later)."""
-        new_entities = []
+        new_entities: list[JungHomeLight] = []
         for device in coordinator.data or []:
             if device.get("type") in ("OnOff", "ColorLight"):
                 for datapoint in device.get("datapoints", []):
@@ -57,7 +62,12 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(self, coordinator, device, datapoint):
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        device: dict[str, Any],
+        datapoint: dict[str, Any],
+    ) -> None:
         """Initialize the light."""
         super().__init__(coordinator)
         self._device = device
@@ -87,10 +97,10 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         )
         # Device brightness scale is 0-100 (device) — Home Assistant uses 0-255
         # Track last local write to debounce weird rapid WS echoes
-        self._last_written_brightness_raw = None
+        self._last_written_brightness_raw: int | None = None
         self._last_written_brightness_ts = 0.0
         # Track last local write for color temperature (Kelvin)
-        self._last_written_color_temp_raw = None
+        self._last_written_color_temp_raw: int | None = None
         self._last_written_color_temp_ts = 0.0
         self._name = device.get("label", "Jung Light")
         # Firmware-stable id derived from the label, not the volatile device id.
@@ -99,10 +109,10 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
 
         if device["type"] == "ColorLight":
             # Read brightness and color_temp from their specific datapoints (if present)
-            self._brightness = self._get_brightness_from_datapoint(
+            self._brightness: int | None = self._get_brightness_from_datapoint(
                 self._brightness_datapoint
             )
-            self._color_temp = self._get_color_temp_from_datapoint(
+            self._color_temp: int | None = self._get_color_temp_from_datapoint(
                 self._color_temp_datapoint
             )
             self._attr_min_color_temp_kelvin = DEFAULT_MIN_KELVIN
@@ -126,27 +136,27 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
             self._attr_color_mode = ColorMode.ONOFF
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str | None:
         """Return a unique ID for the light."""
         return self._unique_id
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool | None:
         """Return the state of the light."""
         return self._is_on
 
     @property
-    def brightness(self):
+    def brightness(self) -> int | None:
         """Return the brightness of the light."""
         return self._brightness
 
     @property
-    def color_temp_kelvin(self):
+    def color_temp_kelvin(self) -> int | None:
         """Return the color temperature in Kelvin (device-native)."""
         return self._color_temp
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device information about this light."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
@@ -267,7 +277,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
                 _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
                 self.async_write_ha_state()
 
-    async def async_turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on."""
         _LOGGER.debug("Turning on light %s", self._name)
         # Turn on first, then apply brightness/color temperature to avoid
@@ -282,7 +292,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
                 await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
 
-    async def async_turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the light off."""
         _LOGGER.debug("Turning off light %s", self._name)
         await self.coordinator.turn_off_light(self._datapoint["id"])
@@ -290,23 +300,23 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         self.async_write_ha_state()
 
     @property
-    def should_poll(self):
+    def should_poll(self) -> bool:
         """No polling needed for this entity."""
         return False
 
     @property
-    def available(self):
+    def available(self) -> bool:
         """Return if the device is available."""
         return self.coordinator.last_update_success
 
-    def _get_state_from_datapoint(self, datapoint):
+    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         """Extract the state of the light from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "switch":
                 return value["value"] == "1"
         return False
 
-    def _get_brightness_from_datapoint(self, datapoint):
+    def _get_brightness_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
         """Extract the brightness of the light from its datapoint."""
         if not datapoint:
             return 0
@@ -327,7 +337,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         except Exception:
             return round(int(ha_brightness) * 100 / 255)
 
-    def _get_color_temp_from_datapoint(self, datapoint):
+    def _get_color_temp_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
         """Extract the color temperature of the light from its datapoint."""
         if not datapoint:
             return 3000
@@ -340,7 +350,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
                     return 3000
         return 3000
 
-    async def _set_brightness(self, brightness):
+    async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""
         _LOGGER.debug("Setting brightness for light %s to %s", self._name, brightness)
         if not self._brightness_datapoint_id:
@@ -365,7 +375,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         self._brightness = brightness
         self.async_write_ha_state()
 
-    async def _set_color_temp(self, kelvin):
+    async def _set_color_temp(self, kelvin: int) -> None:
         """Set the color temperature of the light (Kelvin, device-native)."""
         if not self._color_temp_datapoint_id:
             _LOGGER.warning(
