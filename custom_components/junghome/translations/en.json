@@ -22,6 +22,16 @@
       "reauth_failed": {
         "title": "Reauthorization failed",
         "description": "The access request was not approved in time or the gateway could not be reached. Submit to try again, then approve the request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+      },
+      "reconfigure": {
+        "title": "Reconfigure Jung Home",
+        "description": "Update the address of your Jung Home gateway, for example after its IP address changed.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local)."
+        }
       }
     },
     "progress": {
@@ -34,7 +44,8 @@
     },
     "abort": {
       "already_configured": "This Jung Home gateway is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reconfigure_successful": "The gateway address was updated."
     }
   }
 }

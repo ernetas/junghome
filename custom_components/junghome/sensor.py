@@ -21,6 +21,9 @@ from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
+# Read-only platform; no update serialisation needed.
+PARALLEL_UPDATES = 0
+
 _MEAS = SensorStateClass.MEASUREMENT
 _TOTAL = SensorStateClass.TOTAL_INCREASING
 

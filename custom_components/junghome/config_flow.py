@@ -141,6 +141,37 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors={"base": self._error},
         )
 
+    async def async_step_reconfigure(self, user_input=None):
+        """Let the user update the gateway address (e.g. after an IP change).
+
+        The existing token still works for the same gateway at a new address; if
+        it points at a different gateway, the next refresh triggers reauth.
+        """
+        entry = self._get_reconfigure_entry()
+        errors = {}
+        if user_input is not None:
+            host = _normalize_host(user_input[CONF_HOST])
+            if not host:
+                errors["base"] = "invalid_host"
+            elif any(
+                other.entry_id != entry.entry_id and other.data.get(CONF_HOST) == host
+                for other in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
+            else:
+                await self.async_set_unique_id(host)
+                return self.async_update_reload_and_abort(
+                    entry, data_updates={CONF_HOST: host}, unique_id=host
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_USER_DATA_SCHEMA, {CONF_HOST: entry.data.get(CONF_HOST)}
+            ),
+            errors=errors,
+        )
+
     async def _async_register(self) -> str:
         """
         POST the registration request and return the issued token.

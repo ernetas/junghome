@@ -11,6 +11,9 @@ from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
+# Read-only platform; no update serialisation needed.
+PARALLEL_UPDATES = 0
+
 # Short, human-readable names per rocker datapoint type. With
 # `_attr_has_entity_name = True`, Home Assistant prepends the device name, so the
 # label is no longer baked into the entity name (which previously produced
