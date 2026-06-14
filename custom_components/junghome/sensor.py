@@ -1,3 +1,5 @@
+"""Sensor platform for Jung Home (socket energy quantities)."""
+
 import logging
 
 from homeassistant.components.sensor import (

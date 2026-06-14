@@ -10,20 +10,18 @@ select = [
 ignore = [
     "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
     "D203", # no-blank-line-before-class (incompatible with formatter)
-    "D212", # multi-line-summary-first-line (incompatible with formatter)
+    "D213", # multi-line-summary-second-line (we summarise on the first line)
     "COM812", # incompatible with formatter
     "ISC001", # incompatible with formatter
 
     # Families this (largely pre-existing) codebase does not follow; relaxed so
     # CI lint is green without rewriting working code.
     "ANN", # type annotations not used throughout
-    "D", # docstrings not present throughout
     "ARG", # unused arguments are common in Home Assistant callback signatures
     "FBT", # boolean positional args are common in HA APIs
     "EM", # exception messages as string literals
     "TRY", # tryceratops opinions (TRY003/TRY300/TRY400)
     "BLE001", # blind "except Exception" is intentional in places
-    "G004", # f-strings in logging calls
     "E501", # line length (formatter handles wrapping; long URLs/strings remain)
     "SIM102", # nested if (clearer as-is in places)
     "SIM105", # contextlib.suppress
@@ -37,10 +35,12 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-# Reference prototypes: CLI-style scripts, intentional prints / passthroughs.
-"tools/**" = ["T201", "SLF001", "EXE001", "INP001"]
-# Tests: asserts are the point; private-member access is fine.
-"tests/**" = ["S101", "S105", "S106", "SLF001", "INP001"]
+# Reference prototypes: CLI-style scripts, intentional prints / passthroughs;
+# not held to the integration's docstring convention.
+"tools/**" = ["T201", "SLF001", "EXE001", "INP001", "D"]
+# Tests: asserts are the point; private-member access is fine; descriptive test
+# names stand in for docstrings.
+"tests/**" = ["S101", "S105", "S106", "SLF001", "INP001", "D"]
 "conftest.py" = ["INP001"]
 
 [lint.isort]

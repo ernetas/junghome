@@ -1,3 +1,5 @@
+"""The Jung Home integration."""
+
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -56,8 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 def _migrate_to_stable_ids(
     hass: HomeAssistant, entry: JungHomeConfigEntry, coordinator
 ) -> None:
-    """
-    Re-point existing id-based registry entries to label-based stable ids.
+    """Re-point existing id-based registry entries to label-based stable ids.
 
     The Jung HOME gateway exposes no hardware identifier, and it regenerates the
     random device id on firmware updates, which previously caused Home Assistant

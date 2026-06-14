@@ -1,3 +1,5 @@
+"""Light platform for Jung Home (on/off, dimmable, tunable white)."""
+
 import logging
 import time
 

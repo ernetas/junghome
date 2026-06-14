@@ -1,11 +1,12 @@
+"""Constants and firmware-stable identity helpers for Jung Home."""
+
 from homeassistant.util import slugify
 
 DOMAIN = "junghome"
 
 
 def datapoint_suffix(datapoint_id) -> str:
-    """
-    Return the stable element index of a datapoint id.
+    """Return the stable element index of a datapoint id.
 
     Datapoint ids look like ``id5f09764942a70ce-001``. The ``id...`` prefix is
     the device id, which the gateway regenerates on firmware updates, but the
@@ -15,8 +16,7 @@ def datapoint_suffix(datapoint_id) -> str:
 
 
 def device_slug(device: dict) -> str:
-    """
-    Return a firmware-stable slug for a device, based on its label.
+    """Return a firmware-stable slug for a device, based on its label.
 
     The gateway exposes no hardware identifier (serial/MAC/address); the user
     facing label is the only attribute that survives firmware updates, so it is

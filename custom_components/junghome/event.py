@@ -1,3 +1,5 @@
+"""Event platform for Jung Home rocker buttons."""
+
 import logging
 import time
 
@@ -119,25 +121,25 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
         if new_state != self._last_value:
             now = time.time()
             if new_state is True:
-                _LOGGER.debug(f"Triggering event for {self._attr_name} at {now}")
+                _LOGGER.debug(
+                    "Triggering pressed event for %s at %s", self.entity_id, now
+                )
                 self._trigger_event("pressed")
                 self._attr_event_timestamp = dt_util.now()
                 self.async_write_ha_state()
-                _LOGGER.debug(f"EventEntity state after trigger: {self.state}")
                 self._last_press_time = now
             elif new_state is False:
                 _LOGGER.debug(
-                    f"Triggering depressed event for {self._attr_name} at {now}"
+                    "Triggering depressed event for %s at %s", self.entity_id, now
                 )
                 self._trigger_event("depressed")
                 self._attr_event_timestamp = dt_util.now()
                 self.async_write_ha_state()
-                _LOGGER.debug(f"EventEntity state after trigger: {self.state}")
             self._last_value = new_state
 
     @property
     def state(self):
-        # Show the last event timestamp as state if available
+        """Return the timestamp of the last button event."""
         return getattr(self, "_attr_event_timestamp", None)
 
     def _get_state_from_datapoint(self, datapoint):

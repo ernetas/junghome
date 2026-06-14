@@ -1,3 +1,5 @@
+"""Switch platform for Jung Home (sockets and rocker status LEDs)."""
+
 import logging
 
 from homeassistant.components.switch import SwitchEntity
@@ -155,6 +157,7 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     _attr_translation_key = "status_led"
 
     def __init__(self, coordinator, device, datapoint):
+        """Initialize the status LED switch."""
         super().__init__(coordinator)
         self._device = device
         self._datapoint = datapoint
@@ -165,6 +168,7 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def device_info(self):
+        """Return device information for the rocker this LED belongs to."""
         return {
             "identifiers": {(DOMAIN, device_slug(self._device))},
             "name": self._device.get("label", "Jung Device"),
@@ -181,13 +185,16 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self):
+        """Return whether the status LED is on."""
         return self._attr_is_on
 
     async def async_turn_on(self, **kwargs):
+        """Turn the status LED on."""
         _LOGGER.debug("Turning on switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], True)
 
     async def async_turn_off(self, **kwargs):
+        """Turn the status LED off."""
         _LOGGER.debug("Turning off switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], False)
 
