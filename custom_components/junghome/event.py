@@ -14,14 +14,14 @@ _LOGGER = logging.getLogger(__name__)
 # Read-only platform; no update serialisation needed.
 PARALLEL_UPDATES = 0
 
-# Short, human-readable names per rocker datapoint type. With
-# `_attr_has_entity_name = True`, Home Assistant prepends the device name, so the
-# label is no longer baked into the entity name (which previously produced
-# duplicated entity_ids like `event.<label>_<label>_up_request_event`).
-_EVENT_NAMES = {
-    "up_request": "Up",
-    "down_request": "Down",
-    "trigger_request": "Press",
+# Translation keys per rocker datapoint type. With `_attr_has_entity_name`, HA
+# prepends the device name; the entity name itself comes from the
+# `entity.event.*` translations (strings.json), so it's localisable rather than
+# hardcoded.
+_EVENT_TRANSLATION_KEYS = {
+    "up_request": "up",
+    "down_request": "down",
+    "trigger_request": "press",
 }
 
 
@@ -73,7 +73,11 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
         self._device = device
         self._datapoint = datapoint
         dp_type = datapoint.get("type", "Unknown")
-        self._attr_name = _EVENT_NAMES.get(dp_type, dp_type)
+        translation_key = _EVENT_TRANSLATION_KEYS.get(dp_type)
+        if translation_key:
+            self._attr_translation_key = translation_key
+        else:
+            self._attr_name = dp_type
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
         self._attr_icon = "mdi:gesture-tap-button"
         # Availability is inherited from CoordinatorEntity (tracks the gateway
