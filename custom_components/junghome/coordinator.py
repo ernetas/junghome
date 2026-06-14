@@ -13,7 +13,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
+from .const import DOMAIN, device_slug
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +37,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
         self.websocket: aiohttp.ClientWebSocketResponse | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
         self.gateway_version: str | None = None
+        # Stable-slug -> volatile device id, to detect firmware-update id changes.
+        self._device_ids: dict[str, str] = {}
         self._ws_task: asyncio.Task[None] | None = None
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
@@ -77,8 +79,30 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             _LOGGER.error("Received None response from API")
             return []  # Returning empty list ensures entities don't break
         _LOGGER.debug("API Response: %s", response)
+        self._reload_if_device_ids_changed(response)
         # `async_set_updated_data` is automatically called with this.
         return response
+
+    def _reload_if_device_ids_changed(self, devices: list[dict[str, Any]]) -> None:
+        """Reload the entry if the gateway regenerated its device ids.
+
+        The gateway assigns new volatile device/datapoint ids on a firmware
+        update; entities cache those ids, so without a reload they can no longer
+        find their datapoint (state stops updating, commands target dead ids).
+        unique_ids are label-based and survive the reload.
+        """
+        new_ids = {device_slug(d): d["id"] for d in devices if d.get("id")}
+        changed = any(
+            self._device_ids.get(slug) not in (None, dev_id)
+            for slug, dev_id in new_ids.items()
+        )
+        self._device_ids = new_ids
+        if changed and self.config_entry is not None:
+            _LOGGER.warning(
+                "Jung Home gateway device ids changed (firmware update?); "
+                "reloading the integration to re-resolve entities"
+            )
+            self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
 
     async def _fetch_devices_from_api(
         self, host: str, token: str
