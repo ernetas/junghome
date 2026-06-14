@@ -1,11 +1,11 @@
 import asyncio
 import logging
-import ssl
 
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
 
@@ -105,18 +105,19 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Blocks until the user approves the request in the app or the gateway
         times out (~180s).
         """
-        ssl_context = await self.hass.async_add_executor_job(_build_ssl_context)
+        # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
+        # cert without building an SSL context on the event loop.
+        session = async_get_clientsession(self.hass, verify_ssl=False)
         url = f"https://{self._host}/api/junghome/register"
         timeout = aiohttp.ClientTimeout(total=REGISTER_TIMEOUT)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    url, json={"user_name": REGISTER_USER_NAME}, ssl=ssl_context
-                ) as response:
-                    if response.status != 200:
-                        self._error = "register_failed"
-                        raise CannotRegister(f"HTTP {response.status}")
-                    data = await response.json()
+            async with session.post(
+                url, json={"user_name": REGISTER_USER_NAME}, timeout=timeout
+            ) as response:
+                if response.status != 200:
+                    self._error = "register_failed"
+                    raise CannotRegister(f"HTTP {response.status}")
+                data = await response.json()
         except (TimeoutError, aiohttp.ClientError) as err:
             self._error = "cannot_connect"
             raise CannotRegister(str(err)) from err
@@ -126,11 +127,3 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._error = "register_failed"
             raise CannotRegister("No token in response")
         return token
-
-
-def _build_ssl_context() -> ssl.SSLContext:
-    """Build an SSL context that tolerates the gateway's self-signed cert."""
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    return ssl_context
