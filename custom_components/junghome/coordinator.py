@@ -106,9 +106,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         async with session.ws_connect(url, headers=headers, heartbeat=30) as ws:
             self.websocket = ws
             # Connected: reset the backoff and resync state we may have missed
-            # while disconnected.
+            # while disconnected. Logged at INFO (paired with the WARNING on
+            # disconnect) so the drop/recover story is visible without enabling
+            # debug logging during a long soak.
             self._reconnect_delay = INITIAL_RECONNECT_DELAY
-            _LOGGER.debug("WebSocket connected (aiohttp)")
+            _LOGGER.info("Jung Home WebSocket connected")
             await self.async_request_refresh()
             try:
                 async for msg in ws:
