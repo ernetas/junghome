@@ -1,6 +1,11 @@
 {
   "config": {
+    "flow_title": "{host}",
     "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home gateway discovered",
+        "description": "Set up the Jung Home gateway at {host}? After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+      },
       "user": {
         "title": "Connect to Jung Home",
         "description": "Enter the address of your Jung Home gateway. After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests.",

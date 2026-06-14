@@ -6,6 +6,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .const import DOMAIN
 
@@ -171,6 +172,31 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo):
+        """Handle a gateway discovered via mDNS (_junghome._tcp)."""
+        self._host = discovery_info.host
+        hostname = (discovery_info.hostname or "").rstrip(".") or self._host
+        # Stable per-gateway id; update the stored host if its IP changed.
+        await self.async_set_unique_id(hostname)
+        self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
+        # Also skip gateways already added manually under a different unique id.
+        if any(
+            entry.data.get(CONF_HOST) in (self._host, hostname)
+            for entry in self._async_current_entries()
+        ):
+            return self.async_abort(reason="already_configured")
+        self.context["title_placeholders"] = {"host": hostname}
+        return await self.async_step_zeroconf_confirm()
+
+    async def async_step_zeroconf_confirm(self, user_input=None):
+        """Confirm setup of a discovered gateway, then register."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="zeroconf_confirm",
+                description_placeholders={"host": self._host},
+            )
+        return await self.async_step_register()
 
     async def _async_register(self) -> str:
         """
