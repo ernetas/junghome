@@ -1,11 +1,11 @@
 import logging
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
+from .coordinator import JungHomeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -14,10 +14,10 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, entry: JungHomeConfigEntry, async_add_entities
 ):
     """Set up Jung Home switches from a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data
     known: set[str] = set()
 
     @callback

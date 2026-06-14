@@ -2,12 +2,12 @@ import logging
 import time
 
 from homeassistant.components.event import EventEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, device_slug, stable_unique_id
+from .coordinator import JungHomeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,10 +26,10 @@ _EVENT_NAMES = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, entry: JungHomeConfigEntry, async_add_entities
 ):
     """Set up Jung Home event entities from a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data
     known: set[str] = set()
 
     @callback

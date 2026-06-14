@@ -2,11 +2,11 @@ import logging
 import time
 
 from homeassistant.components.light import ColorMode, LightEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
+from .coordinator import JungHomeConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,10 +18,10 @@ DEFAULT_MAX_KELVIN = 6500
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, config_entry: JungHomeConfigEntry, async_add_entities
 ):
     """Set up Jung Home lights from a config entry."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    coordinator = config_entry.runtime_data
     known: set[str] = set()
 
     @callback

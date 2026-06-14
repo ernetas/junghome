@@ -1,13 +1,12 @@
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, datapoint_suffix, device_slug
-from .coordinator import JungHomeDataUpdateCoordinator
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
     """Set up Jung Home from a config entry."""
     host = entry.data.get("host")
     token = entry.data.get("token")
@@ -33,8 +32,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # unreachable, or ConfigEntryAuthFailed (reauth) if the token is rejected.
     await coordinator.async_config_entry_first_refresh()
 
-    # Store the coordinator in hass data for later use
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+    # Expose the coordinator as runtime data for the platforms.
+    entry.runtime_data = coordinator
 
     # Connect to the WebSocket for live updates
     await coordinator.start()
@@ -55,7 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _migrate_to_stable_ids(
-    hass: HomeAssistant, entry: ConfigEntry, coordinator
+    hass: HomeAssistant, entry: JungHomeConfigEntry, coordinator
 ) -> None:
     """
     Re-point existing id-based registry entries to label-based stable ids.
@@ -126,19 +125,17 @@ def _migrate_to_stable_ids(
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    if unload_ok and DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        await coordinator.stop()
-        del hass.data[DOMAIN][entry.entry_id]
+    if unload_ok:
+        await entry.runtime_data.stop()
 
     return unload_ok
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
     """Reload a config entry."""
     await async_unload_entry(hass, entry)
     return await async_setup_entry(hass, entry)
