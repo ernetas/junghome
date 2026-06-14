@@ -58,18 +58,23 @@ mode: single
 triggers:
   - trigger: state
     entity_id: event.living_room_r1_b_up_request_event
-    attribute: event_type
-    to: pressed
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
   - action: light.toggle
     target:
       entity_id: light.living_room_lamp
 ```
 
-Why `attribute: event_type` / `to: pressed`? An event entity's *state* is just a
-timestamp that changes on **both** press and release. Triggering on the
-`event_type` attribute becoming `pressed` makes the automation fire **once per
-press** (and never on release).
+Why trigger on *any* state change and filter with a condition, instead of
+`attribute: event_type` / `to: pressed`? An event entity's *state* is just a
+timestamp that changes on **both** press and release, and a `to:`-style trigger
+only fires when the attribute *changes value* — so it silently misses a repeated
+`pressed` (which happens when JUNG reports the same button twice, or alternates
+between `up_request` and `down_request`). Triggering on the state change and
+checking `event_type == 'pressed'` in a condition fires reliably **once per
+press** and never on release.
 
 > Want it to react to **either** side of the rocker? List both entities under
 > `entity_id:`.
@@ -87,8 +92,9 @@ mode: single
 triggers:
   - trigger: state
     entity_id: event.living_room_r1_b_up_request_event
-    attribute: event_type
-    to: pressed
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
   - if:
       - condition: state
@@ -118,73 +124,71 @@ automation, with no helper entities**, using `wait_for_trigger`:
 - **Double** — pressed, released, then pressed again within 0.4 s.
 - **Single** — pressed and released, with no second press.
 
+List **all** of the button's events under `entity_id:` (e.g. both the
+`up_request` and `down_request` events) — JUNG often alternates between them, and
+this automation treats any of them as the same button. We trigger on *any* state
+change and filter with a condition rather than `attribute: event_type` /
+`to: pressed`, because the `to:` form silently misses repeated/alternating
+`pressed` events (this is exactly what makes double-clicks misfire as singles).
+
 ```yaml
 alias: R1 B - single / double / hold
 mode: single  # important: ignore re-triggers while we're measuring a gesture
 triggers:
   - trigger: state
-    entity_id: event.living_room_r1_b_up_request_event
-    attribute: event_type
-    to: pressed
+    entity_id:
+      - event.living_room_r1_b_up_request_event
+      - event.living_room_r1_b_down_request_event
+conditions:
+  # Only start on a press edge; ignore release ('depressed') state changes.
+  - condition: template
+    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
-  # 1) Wait up to 2 s for the release. If it never comes → it's a HOLD.
+  # 1) Wait for the next state change (the press's release). If nothing happens
+  #    within 2 s, the button is still held → HOLD.
   - wait_for_trigger:
       - trigger: state
-        entity_id: event.living_room_r1_b_up_request_event
-        attribute: event_type
-        to: depressed
+        entity_id:
+          - event.living_room_r1_b_up_request_event
+          - event.living_room_r1_b_down_request_event
     timeout: "00:00:02"
     continue_on_timeout: true
 
   - choose:
-      # ---- HOLD: the release didn't arrive in time ----
+      # ---- HOLD: nothing arrived in time → still held ----
       - conditions:
           - "{{ wait.trigger is none }}"
         sequence:
           - action: notify.pushover
             data:
               message: R1 B held (2s)
-          # Optional: wait for the eventual release so a long hold doesn't
-          # immediately look like the start of a new gesture.
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: event.living_room_r1_b_up_request_event
-                attribute: event_type
-                to: depressed
-            timeout: "00:00:10"
-            continue_on_timeout: true
 
     # ---- Released within 2 s: decide SINGLE vs DOUBLE ----
     default:
-      # 2) Wait briefly for a second press.
+      # 2) Wait for the next event. A fresh 'pressed' within the window is a
+      #    second click → DOUBLE; otherwise → SINGLE.
       - wait_for_trigger:
           - trigger: state
-            entity_id: event.living_room_r1_b_up_request_event
-            attribute: event_type
-            to: pressed
+            entity_id:
+              - event.living_room_r1_b_up_request_event
+              - event.living_room_r1_b_down_request_event
         timeout: "00:00:00.4"
         continue_on_timeout: true
       - choose:
-          # No second press → SINGLE
+          # A second press arrived → DOUBLE
           - conditions:
-              - "{{ wait.trigger is none }}"
+              - >
+                {{ wait.trigger is not none
+                   and wait.trigger.to_state.attributes.event_type == 'pressed' }}
             sequence:
               - action: notify.pushover
                 data:
-                  message: R1 B single click
-        # A second press arrived → DOUBLE
+                  message: R1 B double click
+        # No second press in the window → SINGLE
         default:
           - action: notify.pushover
             data:
-              message: R1 B double click
-          # Consume the release of that second press.
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: event.living_room_r1_b_up_request_event
-                attribute: event_type
-                to: depressed
-            timeout: "00:00:02"
-            continue_on_timeout: true
+              message: R1 B single click
 ```
 
 ### Tuning
