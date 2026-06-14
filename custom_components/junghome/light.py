@@ -60,6 +60,12 @@ async def async_setup_entry(
 class JungHomeLight(CoordinatorEntity, LightEntity):
     """Representation of a Jung Home light."""
 
+    # The light is the device's main feature, so it adopts the device name. With
+    # has_entity_name the entity_id is `light.<device>` instead of the old
+    # `light.<device>_<device>` (label was previously baked into the name too).
+    _attr_has_entity_name = True
+    _attr_name = None
+
     def __init__(self, coordinator, device, datapoint):
         """Initialize the light."""
         super().__init__(coordinator)
@@ -113,11 +119,6 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
         else:
             self._brightness = None
             self._color_temp = None
-
-    @property
-    def name(self):
-        """Return the name of the light."""
-        return self._name
 
     @property
     def unique_id(self):

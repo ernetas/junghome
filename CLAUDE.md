@@ -13,8 +13,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `const.py` — `DOMAIN` and the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`).
   - `light.py`, `switch.py`, `sensor.py`, `event.py` — platforms (each does live
-    discovery of devices added at runtime).
-- `docs/` — **reverse-engineered gateway reference** (see below).
+    discovery of devices added at runtime). `event.py` exposes RockerSwitch
+    buttons; the gateway only reports raw `pressed` / `depressed` edges (no
+    native single/double/hold) and alternates a button between its `up_request`
+    and `down_request` events on consecutive presses.
+- `blueprints/automation/junghome/button_gestures.yaml` — shipped HA blueprint
+  deriving single/double/hold from those raw edges. Users import it by URL; it is
+  **not** distributed by HACS (HACS only installs `custom_components/`).
+- `docs/` — **reverse-engineered gateway reference** plus
+  `docs/example-button-automation.md` (user-facing button-automation guide).
 - `config/`, `docker-compose.yml`, `scripts/` — local test harness.
 - `disk_dump/` — gateway microSD image, **gitignored** (contains tokens + mesh
   keys; never commit it).
@@ -42,6 +49,12 @@ When working on anything that touches the gateway protocol, consult
   updates, so entity `unique_id`s and device identifiers are derived from the
   device **label** + datapoint **suffix** (`stable_unique_id`), never the raw id.
   Don't reintroduce id-based identifiers.
+- **Entity naming.** Entities set `_attr_has_entity_name = True` and a short
+  `_attr_name` (or `None` for a device's main feature, e.g. light/socket). The
+  **device** carries the label; never bake the label into the entity name — doing
+  so makes Home Assistant compose the label twice (the old
+  `event.<label>_<label>_..._event` bug). Naming changes only affect new entities;
+  existing `entity_id`s are sticky.
 - **Registration.** Tokens are obtained via `POST /api/junghome/register`
   (`{"user_name": ...}`), which blocks up to 180 s until the user approves the
   request in the JUNG HOME app (Settings → Gateway → Access Permissions → Open
