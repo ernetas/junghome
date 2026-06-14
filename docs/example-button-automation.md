@@ -124,16 +124,23 @@ If you want **one physical button to do three different things** depending on ho
 it's pressed, you have to measure timing yourself. The whole thing fits in **one
 automation, with no helper entities**, using `wait_for_trigger`:
 
-- **Hold** — pressed and *not released* within 2 s.
-- **Double** — pressed, released, then pressed again within 0.4 s.
+- **Hold** — pressed and *nothing else happens* within 2 s (still held).
+- **Double** — a second press arrives within ~0.4 s (before *or* after the first
+  release).
 - **Single** — pressed and released, with no second press.
 
 List **all** of the button's events under `entity_id:` (e.g. both the
-`up_request` and `down_request` events) — JUNG often alternates between them, and
-this automation treats any of them as the same button. We trigger on *any* state
-change and filter with a condition rather than `attribute: event_type` /
-`to: pressed`, because the `to:` form silently misses repeated/alternating
-`pressed` events (this is exactly what makes double-clicks misfire as singles).
+`up_request` and `down_request` events) — JUNG alternates between them on
+consecutive presses, and this automation treats any of them as the same button.
+We trigger on *any* state change and filter with a condition rather than
+`attribute: event_type` / `to: pressed`, because the `to:` form silently misses
+repeated/alternating `pressed` events.
+
+The key detail (confirmed from real device logs): on a double-click JUNG can
+report the **second press before the first release**, e.g.
+`DOWN pressed → UP pressed → DOWN depressed → UP depressed`. So instead of
+assuming "press, then release, then maybe a second press", we just wait for the
+*next event of any kind* and branch on it.
 
 ```yaml
 alias: R1 B - single / double / hold
@@ -148,8 +155,10 @@ conditions:
   - condition: template
     value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
-  # 1) Wait for the next state change (the press's release). If nothing happens
-  #    within 2 s, the button is still held → HOLD.
+  # Wait up to 2 s for the NEXT event of any kind:
+  #   nothing      → still held        → HOLD
+  #   another press → second click      → DOUBLE
+  #   a release     → single/slow double → checked below
   - wait_for_trigger:
       - trigger: state
         entity_id:
@@ -157,6 +166,10 @@ actions:
           - event.living_room_r1_b_down_request_event
     timeout: "00:00:02"
     continue_on_timeout: true
+  - variables:
+      evt: >-
+        {{ wait.trigger.to_state.attributes.event_type
+           if wait.trigger is not none else none }}
 
   - choose:
       # ---- HOLD: nothing arrived in time → still held ----
@@ -167,10 +180,17 @@ actions:
             data:
               message: R1 B held (2s)
 
-    # ---- Released within 2 s: decide SINGLE vs DOUBLE ----
+      # ---- DOUBLE: a second press came before the first release ----
+      - conditions:
+          - "{{ evt == 'pressed' }}"
+        sequence:
+          - action: notify.pushover
+            data:
+              message: R1 B double click
+
+    # ---- First press released: SINGLE, or a slower double ----
     default:
-      # 2) Wait for the next event. A fresh 'pressed' within the window is a
-      #    second click → DOUBLE; otherwise → SINGLE.
+      # Wait once more for a second press within the double-click window.
       - wait_for_trigger:
           - trigger: state
             entity_id:
@@ -266,9 +286,40 @@ Either:
   sure your device actually sends a separate `depressed` (release) event — hold
   detection depends on press and release being reported separately, which JUNG
   rockers do.
-- **One press registers as a double-click.** This happens if a single physical
-  press fires *both* the `up_request` and `down_request` events at once. Watch
-  both in *Developer Tools → States*: if they always fire together, select only
-  one of them in the blueprint; if they fire interchangeably (sometimes up,
-  sometimes down), select both.
+- **Double-clicks register as single (or vice-versa).** Make sure you selected
+  **all** of the button's events (both `up_request` and `down_request`) — JUNG
+  alternates between them, so with only one selected, every other click is
+  invisible. If genuine double-clicks are still missed, widen the **double-click
+  window**; if singles are seen as doubles, shorten it. Use the debug logger
+  below to see your actual timing.
+
+### Debug logger — capture the raw event stream
+
+To see exactly what your button emits (and the timing between events), add this
+**automation** — not a Developer Tools → Template snippet; `trigger` only exists
+inside an automation. Replace the entity IDs with your own:
+
+```yaml
+alias: JUNG button debug logger
+mode: queued
+max: 100
+triggers:
+  - trigger: state
+    entity_id:
+      - event.living_room_r1_b_up_request_event
+      - event.living_room_r1_b_down_request_event
+actions:
+  - action: system_log.write
+    data:
+      level: warning
+      logger: jung_button_debug
+      message: >-
+        {{ trigger.entity_id }} = {{ trigger.to_state.attributes.event_type }}
+        @ {{ trigger.to_state.last_changed.timestamp() | round(3) }}
+```
+
+Do one single-click, one double-click and one hold, then read the lines from the
+Home Assistant log (`grep jung_button_debug` in `home-assistant.log`). The
+`@ <epoch>` timestamps let you measure the gaps and tune the hold time and
+double-click window.
 

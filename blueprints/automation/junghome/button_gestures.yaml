@@ -98,14 +98,24 @@ conditions:
          and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 
 actions:
-  # 1) Wait for this press to end (the next state change is its release). If no
-  #    change arrives within the hold time, the button is still down → HOLD.
+  # First press seen. Wait up to the hold time for the NEXT event of any kind.
+  # JUNG alternates a button between its up/down events and can report the second
+  # press *before* the first release, so we react to whatever comes next rather
+  # than assuming a release:
+  #   - nothing within hold_time  → still held              → HOLD
+  #   - another 'pressed'         → a second click          → DOUBLE
+  #   - a 'depressed' (release)   → maybe single / slow double → check below
   - wait_for_trigger:
       - trigger: state
         entity_id: !input button
     timeout:
       seconds: !input hold_time
     continue_on_timeout: true
+  - variables:
+      evt: >-
+        {{ wait.trigger.to_state.attributes.get('event_type')
+           if (wait.trigger is not none and wait.trigger.to_state is not none)
+           else none }}
 
   - choose:
       # ---- HOLD: nothing happened within the hold time → still held ----
@@ -115,12 +125,18 @@ actions:
           - choose: []
             default: !input hold_action
 
-    # ---- Released in time: decide SINGLE vs DOUBLE ----
+      # ---- DOUBLE: a second press arrived before the first released ----
+      - conditions:
+          - "{{ evt == 'pressed' }}"
+        sequence:
+          - choose: []
+            default: !input double_action
+
+    # ---- The first press was released: SINGLE, or a slower double ----
     default:
-      # 2) Wait for the next event. A fresh `pressed` within the window is a
-      #    second click → DOUBLE; otherwise (timeout, or a stray release) it was
-      #    a SINGLE. This catches the second press even when JUNG reports it on a
-      #    different (up/down) entity than the first.
+      # Wait once more for a second press within the double-click window. This
+      # catches double-clicks where the first release lands before the second
+      # press.
       - wait_for_trigger:
           - trigger: state
             entity_id: !input button
