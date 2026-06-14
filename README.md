@@ -56,6 +56,19 @@ Behind the scenes this calls the gateway's `POST /api/junghome/register`
 endpoint; the issued token is stored in the config entry. Devices added or
 removed in the Jung Home app afterwards are picked up automatically.
 
+# Button automations (rocker switches)
+
+Rocker buttons show up as Home Assistant **event entities** (one per up/down
+side). The gateway only reports raw press/release, so single/double/hold gestures
+are derived in an automation — a ready-made **blueprint** does this for you:
+
+- Blueprint: [`blueprints/automation/junghome/button_gestures.yaml`](blueprints/automation/junghome/button_gestures.yaml)
+- Full guide + copy-paste recipes: [`docs/example-button-automation.md`](docs/example-button-automation.md)
+
+Import the blueprint by URL (Settings → Automations & scenes → Blueprints →
+Import), select **all** of the button's event entities (JUNG alternates between
+the up/down events), and assign actions for single / double / hold.
+
 # Gateway internals (for contributors)
 
 The local gateway API (REST + WebSocket), its registration flow, and the

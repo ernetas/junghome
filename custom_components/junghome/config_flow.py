@@ -98,6 +98,49 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors={"base": self._error},
         )
 
+    async def async_step_reauth(self, entry_data):
+        """Start reauth when the gateway rejects the stored token."""
+        self._host = entry_data[CONF_HOST]
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Re-register with the gateway to obtain a fresh token."""
+        if self._register_task is None:
+            self._register_task = self.hass.async_create_task(self._async_register())
+
+        if not self._register_task.done():
+            return self.async_show_progress(
+                step_id="reauth_confirm",
+                progress_action="waiting_for_approval",
+                progress_task=self._register_task,
+            )
+
+        try:
+            self._token = self._register_task.result()
+        except Exception:
+            self._register_task = None
+            return self.async_show_progress_done(next_step_id="reauth_failed")
+
+        self._register_task = None
+        return self.async_show_progress_done(next_step_id="reauth_finish")
+
+    async def async_step_reauth_finish(self, user_input=None):
+        """Store the fresh token on the existing entry and reload it."""
+        return self.async_update_reload_and_abort(
+            self._get_reauth_entry(),
+            data_updates={CONF_TOKEN: self._token},
+        )
+
+    async def async_step_reauth_failed(self, user_input=None):
+        """Show the failure reason and allow retrying the reauth."""
+        if user_input is not None:
+            return await self.async_step_reauth_confirm()
+        return self.async_show_form(
+            step_id="reauth_failed",
+            data_schema=vol.Schema({}),
+            errors={"base": self._error},
+        )
+
     async def _async_register(self) -> str:
         """
         POST the registration request and return the issued token.
