@@ -47,5 +47,15 @@
       "reauth_successful": "Re-authentication was successful.",
       "reconfigure_successful": "The gateway address was updated."
     }
+  },
+  "entity": {
+    "event": {
+      "up": { "name": "Up" },
+      "down": { "name": "Down" },
+      "press": { "name": "Press" }
+    },
+    "switch": {
+      "status_led": { "name": "Status LED" }
+    }
   }
 }

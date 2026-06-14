@@ -149,9 +149,10 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
 
     # Secondary entity on the rocker device; HA prepends the device name, so the
-    # entity_id becomes `switch.<device>_status_led`.
+    # entity_id becomes `switch.<device>_status_led`. The name comes from the
+    # entity.switch.status_led translation.
     _attr_has_entity_name = True
-    _attr_name = "Status LED"
+    _attr_translation_key = "status_led"
 
     def __init__(self, coordinator, device, datapoint):
         super().__init__(coordinator)
@@ -183,16 +184,16 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         return self._attr_is_on
 
     async def async_turn_on(self, **kwargs):
-        _LOGGER.debug("Turning on switch %s", self._attr_name)
+        _LOGGER.debug("Turning on switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], True)
 
     async def async_turn_off(self, **kwargs):
-        _LOGGER.debug("Turning off switch %s", self._attr_name)
+        _LOGGER.debug("Turning off switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], False)
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        _LOGGER.debug("Updating switch for %s", self._attr_name)
+        _LOGGER.debug("Updating switch for %s", self._attr_unique_id)
         device = next(
             (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
         )
