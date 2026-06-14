@@ -11,6 +11,16 @@ from .const import DOMAIN, device_slug, stable_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
+# Short, human-readable names per rocker datapoint type. With
+# `_attr_has_entity_name = True`, Home Assistant prepends the device name, so the
+# label is no longer baked into the entity name (which previously produced
+# duplicated entity_ids like `event.<label>_<label>_up_request_event`).
+_EVENT_NAMES = {
+    "up_request": "Up",
+    "down_request": "Down",
+    "trigger_request": "Press",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
@@ -52,13 +62,15 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
     """Event entity for Jung Home button presses."""
 
     _attr_event_types = ["pressed", "depressed"]
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, device, datapoint):
         """Initialize the event entity."""
         super().__init__(coordinator)
         self._device = device
         self._datapoint = datapoint
-        self._attr_name = f"{device.get('label', 'Jung Button')}_{datapoint.get('type', 'Unknown')}_event"
+        dp_type = datapoint.get("type", "Unknown")
+        self._attr_name = _EVENT_NAMES.get(dp_type, dp_type)
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
         self._attr_icon = "mdi:gesture-tap-button"
         self._attr_available = True
