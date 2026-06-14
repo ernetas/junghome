@@ -62,5 +62,13 @@
     "switch": {
       "status_led": { "name": "Status LED" }
     }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "The Jung Home gateway rejected the access token."
+    },
+    "cannot_connect": {
+      "message": "Error communicating with the Jung Home gateway: {error}"
+    }
   }
 }

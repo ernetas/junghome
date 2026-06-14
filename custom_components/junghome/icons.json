@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "event": {
+      "up": { "default": "mdi:gesture-tap-button" },
+      "down": { "default": "mdi:gesture-tap-button" },
+      "press": { "default": "mdi:gesture-tap-button" }
+    }
+  }
+}

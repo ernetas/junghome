@@ -81,7 +81,7 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
         else:
             self._attr_name = dp_type
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
-        self._attr_icon = "mdi:gesture-tap-button"
+        # Icon comes from icons.json (icon-translations).
         # Availability is inherited from CoordinatorEntity (tracks the gateway
         # connection); don't pin it True or it stays "available" when the
         # gateway is down.
