@@ -12,8 +12,8 @@ blueprint:
     Pick the `event.*` entity (or entities) for one physical button and fill in
     the actions you want for each gesture — leave a gesture empty to ignore it.
     JUNG sometimes exposes a button as separate `up_request` and `down_request`
-    events; select **all** the events that belong to the same button so any of
-    them drives the same gesture.
+    events, and may alternate between them on consecutive presses; select **all**
+    the events that belong to the same button so any of them drives the gesture.
   domain: automation
   author: junghome
   source_url: https://github.com/ernetas/junghome/blob/main/blueprints/automation/junghome/button_gestures.yaml
@@ -23,10 +23,10 @@ blueprint:
       description: >
         The JUNG HOME event entity (or entities) for one physical button. JUNG
         sometimes splits a single button into `up_request` and `down_request`
-        events — select all of them so any one driving a press/release feeds the
-        same gesture logic. Find them under Developer Tools → States, filtered by
-        `event.`; the `event_type` attribute flips between `pressed` and
-        `depressed` when you press the button.
+        events and alternates between them — select all of them so any one
+        driving a press/release feeds the same gesture logic. Find them under
+        Developer Tools → States, filtered by `event.`; the `event_type`
+        attribute flips between `pressed` and `depressed` when you press.
       selector:
         entity:
           multiple: true
@@ -54,7 +54,7 @@ blueprint:
       selector:
         number:
           min: 100
-          max: 1000
+          max: 1500
           step: 50
           unit_of_measurement: milliseconds
           mode: box
@@ -77,73 +77,66 @@ blueprint:
       selector:
         action: {}
 
-# Ignore re-triggers while we are still measuring a gesture.
+# Ignore re-triggers while we are still measuring a gesture; the second press of
+# a double-click is caught by wait_for_trigger below, not by re-triggering.
 mode: single
 max_exceeded: silent
 
+# Trigger on ANY change of the selected event entities, then keep only press
+# edges. We deliberately do NOT use `attribute: event_type` / `to: pressed`:
+# an event entity's state is a timestamp, so a `to:`-style trigger silently
+# misses repeated `pressed` event_types (e.g. JUNG alternating up/down), which
+# is what made double-clicks register as singles.
 triggers:
   - trigger: state
     entity_id: !input button
-    attribute: event_type
-    to: pressed
+
+conditions:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state is not none
+         and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 
 actions:
-  # 1) Wait for the release. If it never comes in time → HOLD.
+  # 1) Wait for this press to end (the next state change is its release). If no
+  #    change arrives within the hold time, the button is still down → HOLD.
   - wait_for_trigger:
       - trigger: state
         entity_id: !input button
-        attribute: event_type
-        to: depressed
     timeout:
       seconds: !input hold_time
     continue_on_timeout: true
 
   - choose:
-      # ---- HOLD: release did not arrive within the hold time ----
+      # ---- HOLD: nothing happened within the hold time → still held ----
       - conditions:
           - "{{ wait.trigger is none }}"
         sequence:
           - choose: []
             default: !input hold_action
-          # Swallow the eventual release so a long hold isn't mistaken for the
-          # start of a new gesture.
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: !input button
-                attribute: event_type
-                to: depressed
-            timeout:
-              seconds: 10
-            continue_on_timeout: true
 
     # ---- Released in time: decide SINGLE vs DOUBLE ----
     default:
-      # 2) Wait briefly for a second press.
+      # 2) Wait for the next event. A fresh `pressed` within the window is a
+      #    second click → DOUBLE; otherwise (timeout, or a stray release) it was
+      #    a SINGLE. This catches the second press even when JUNG reports it on a
+      #    different (up/down) entity than the first.
       - wait_for_trigger:
           - trigger: state
             entity_id: !input button
-            attribute: event_type
-            to: pressed
         timeout:
           milliseconds: !input double_click_window
         continue_on_timeout: true
       - choose:
-          # No second press → SINGLE
           - conditions:
-              - "{{ wait.trigger is none }}"
+              - >
+                {{ wait.trigger is not none
+                   and wait.trigger.to_state is not none
+                   and wait.trigger.to_state.attributes.get('event_type') == 'pressed' }}
             sequence:
               - choose: []
-                default: !input single_action
-        # Second press arrived → DOUBLE
+                default: !input double_action
+        # No second press in the window → SINGLE
         default:
           - choose: []
-            default: !input double_action
-          # Swallow the release of the second press.
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: !input button
-                attribute: event_type
-                to: depressed
-            timeout:
-              seconds: !input hold_time
-            continue_on_timeout: true
+            default: !input single_action
