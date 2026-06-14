@@ -21,19 +21,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Jung Home from a config entry."""
-    if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
-        return False
-
     host = entry.data.get("host")
     token = entry.data.get("token")
 
     # Initialize the coordinator with the host and token
-    coordinator = JungHomeDataUpdateCoordinator(hass, {"host": host, "token": token})
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": host, "token": token}, entry
+    )
+
+    # Fetch initial data; raises ConfigEntryNotReady (retry) if the gateway is
+    # unreachable, or ConfigEntryAuthFailed (reauth) if the token is rejected.
+    await coordinator.async_config_entry_first_refresh()
 
     # Store the coordinator in hass data for later use
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
-    # Start the coordinator (fetch initial data and connect to WebSocket)
+    # Connect to the WebSocket for live updates
     await coordinator.start()
 
     # One-time migration of registry entries from the gateway's volatile device

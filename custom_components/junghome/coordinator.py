@@ -19,7 +19,7 @@ MAX_RECONNECT_DELAY = 60
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the Jung Home API."""
 
-    def __init__(self, hass: HomeAssistant, config: dict):
+    def __init__(self, hass: HomeAssistant, config: dict, config_entry):
         """Initialize the coordinator."""
         self.hass = hass
         self.config = config
@@ -28,7 +28,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         super().__init__(
-            hass, _LOGGER, name="Jung Home", update_interval=timedelta(minutes=1)
+            hass,
+            _LOGGER,
+            config_entry=config_entry,
+            name="Jung Home",
+            update_interval=timedelta(minutes=1),
         )
 
     async def _async_update_data(self):
@@ -178,12 +182,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             )
 
     async def start(self):
-        """Start the coordinator by fetching initial data and connecting to the WebSocket."""
-        _LOGGER.debug(
-            "Starting coordinator: fetching initial data and connecting to WebSocket"
-        )
+        """Connect to the WebSocket.
+
+        Initial device data is fetched separately during setup via
+        async_config_entry_first_refresh() so that a failure aborts setup
+        correctly (retry on connection error, reauth on a rejected token).
+        """
+        _LOGGER.debug("Starting coordinator: connecting to WebSocket")
         self._closing = False
-        await self.async_refresh()
         self._ws_task = self.hass.loop.create_task(self._websocket_loop())
 
     async def stop(self):
