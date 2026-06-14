@@ -9,21 +9,27 @@ blueprint:
     within the hold time is a *hold*; a press, release and second press within
     the double-click window is a *double*; anything else is a *single*.
 
-    Create one automation per button side. Pick the `event.*` entity for the side
-    you want (e.g. `event.living_room_r1_b_up_request_event`) and fill in the
-    actions you want for each gesture — leave a gesture empty to ignore it.
+    Pick the `event.*` entity (or entities) for one physical button and fill in
+    the actions you want for each gesture — leave a gesture empty to ignore it.
+    JUNG sometimes exposes a button as separate `up_request` and `down_request`
+    events; select **all** the events that belong to the same button so any of
+    them drives the same gesture.
   domain: automation
   author: junghome
   source_url: https://github.com/ernetas/junghome/blob/main/blueprints/automation/junghome/button_gestures.yaml
   input:
     button:
-      name: Button (event entity)
+      name: Button (event entities)
       description: >
-        The JUNG HOME event entity for the button side to watch. Find it under
-        Developer Tools → States, filtered by `event.` — its `event_type`
-        attribute flips between `pressed` and `depressed` when you press it.
+        The JUNG HOME event entity (or entities) for one physical button. JUNG
+        sometimes splits a single button into `up_request` and `down_request`
+        events — select all of them so any one driving a press/release feeds the
+        same gesture logic. Find them under Developer Tools → States, filtered by
+        `event.`; the `event_type` attribute flips between `pressed` and
+        `depressed` when you press the button.
       selector:
         entity:
+          multiple: true
           filter:
             - domain: event
               integration: junghome

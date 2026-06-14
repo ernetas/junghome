@@ -216,7 +216,10 @@ button by **filling in a form** instead of editing YAML:
 
 It exposes:
 
-- **Button (event entity)** — the `event.*` entity for the side to watch.
+- **Button (event entities)** — the `event.*` entity (or entities) for one
+  physical button. JUNG sometimes splits a button into separate `up_request` and
+  `down_request` events; select **all** of them so whichever one fires drives the
+  same gesture.
 - **Hold time** and **Double-click window** — the two timing thresholds.
 - **Single / Double / Hold action** — what to run for each gesture; leave any of
   them empty to ignore that gesture.
@@ -255,5 +258,9 @@ Either:
   sure your device actually sends a separate `depressed` (release) event — hold
   detection depends on press and release being reported separately, which JUNG
   rockers do.
-```
+- **One press registers as a double-click.** This happens if a single physical
+  press fires *both* the `up_request` and `down_request` events at once. Watch
+  both in *Developer Tools → States*: if they always fire together, select only
+  one of them in the blueprint; if they fire interchangeably (sometimes up,
+  sometimes down), select both.
 
