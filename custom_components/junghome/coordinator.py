@@ -4,6 +4,7 @@ import logging
 from datetime import timedelta
 
 import aiohttp
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -15,11 +16,14 @@ _LOGGER = logging.getLogger(__name__)
 INITIAL_RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
 
+# Config entry carrying the coordinator as runtime_data.
+type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
+
 
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching data from the Jung Home API."""
 
-    def __init__(self, hass: HomeAssistant, config: dict, config_entry):
+    def __init__(self, hass: HomeAssistant, config: dict, config_entry: ConfigEntry):
         """Initialize the coordinator."""
         self.hass = hass
         self.config = config
