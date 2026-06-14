@@ -2,7 +2,7 @@
 
 import logging
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
@@ -51,6 +51,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
     # Forward the setup to the appropriate platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Prune HA devices the gateway no longer reports (quality-scale stale-devices).
+    @callback
+    def _prune_stale_devices() -> None:
+        if not coordinator.data:
+            return  # don't prune on an empty/failed poll
+        current = {device_slug(d) for d in coordinator.data}
+        dev_reg = dr.async_get(hass)
+        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            slugs = {
+                identifier
+                for domain, identifier in device_entry.identifiers
+                if domain == DOMAIN
+            }
+            if slugs and not (slugs & current):
+                dev_reg.async_update_device(
+                    device_entry.id, remove_config_entry_id=entry.entry_id
+                )
+
+    _prune_stale_devices()
+    entry.async_on_unload(coordinator.async_add_listener(_prune_stale_devices))
 
     return True
 

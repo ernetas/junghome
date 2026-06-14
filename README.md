@@ -69,6 +69,33 @@ Import the blueprint by URL (Settings → Automations & scenes → Blueprints �
 Import), select **all** of the button's event entities (JUNG alternates between
 the up/down events), and assign actions for single / double / hold.
 
+# How updates work
+
+The integration is **local push**: it holds a WebSocket to the gateway and
+applies state changes the moment the gateway broadcasts them, so device states
+update in real time. It also re-fetches the full device list over REST once a
+minute as a backstop, and on every WebSocket reconnect. If the WebSocket drops it
+reconnects automatically with backoff. No cloud and no account are involved.
+
+# Known limitations
+
+- **Scenes and groups** defined in the JUNG app aren't exposed; use Home
+  Assistant scenes/areas instead.
+- **Button gestures** (single/double/hold) aren't native — derive them with the
+  [blueprint](#button-automations-rocker-switches).
+- The rocker **status-LED colour** can't be set from here (on/off only); colour
+  is configured in the JUNG app or over BT-Mesh.
+- Curtains/covers, thermostats and the puck aren't supported yet.
+- The gateway uses a **self-signed certificate**, so TLS verification is disabled
+  for the local connection (expected for a LAN device).
+
+# Removing the integration
+
+Settings → Devices & Services → **Jung Home** → ⋮ → **Delete**. This removes all
+of its devices and entities. The access token is dropped with the config entry;
+to also revoke it on the gateway, remove "Home Assistant" under **Settings →
+Gateway → Access Permissions** in the JUNG app.
+
 # Gateway internals (for contributors)
 
 The local gateway API (REST + WebSocket), its registration flow, and the
