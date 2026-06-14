@@ -60,7 +60,7 @@ triggers:
     entity_id: event.living_room_r1_b_up_request_event
 conditions:
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
   - action: light.toggle
     target:
@@ -75,6 +75,10 @@ only fires when the attribute *changes value* — so it silently misses a repeat
 between `up_request` and `down_request`). Triggering on the state change and
 checking `event_type == 'pressed'` in a condition fires reliably **once per
 press** and never on release.
+
+The `trigger is defined` guard keeps Home Assistant from logging a
+*"'trigger' is undefined"* warning when it renders the condition outside a
+trigger context (e.g. when you save the automation or run it manually).
 
 > Want it to react to **either** side of the rocker? List both entities under
 > `entity_id:`.
@@ -94,7 +98,7 @@ triggers:
     entity_id: event.living_room_r1_b_up_request_event
 conditions:
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
   - if:
       - condition: state
@@ -142,7 +146,7 @@ triggers:
 conditions:
   # Only start on a press edge; ignore release ('depressed') state changes.
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
 actions:
   # 1) Wait for the next state change (the press's release). If nothing happens
   #    within 2 s, the button is still held → HOLD.
