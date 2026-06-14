@@ -58,12 +58,18 @@ async def async_setup_entry(
 class JungHomeQuantity(CoordinatorEntity, SensorEntity):
     """Representation of a Jung Home quantity."""
 
+    # Secondary entity on the device; HA prepends the device name, so the
+    # entity_id becomes `sensor.<device>_<quantity>` (the label is no longer
+    # baked into the entity name).
+    _attr_has_entity_name = True
+
     def __init__(self, coordinator, device, datapoint, label, unit):
         """Initialize the quantity."""
         super().__init__(coordinator)
         self._device = device
         self._datapoint = datapoint
-        self._name = f"{device.get('label', 'Jung Device')} {label}"
+        self._attr_name = label
+        self._name = f"{device.get('label', 'Jung Device')} {label}"  # for logging
         # Firmware-stable id derived from the label, not the volatile device id.
         self._unique_id = stable_unique_id(
             device, datapoint, label.replace(" ", "_").lower()
@@ -73,8 +79,8 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
 
     @property
     def name(self):
-        """Return the name of the quantity."""
-        return self._name
+        """Return the entity name (the measured quantity; HA adds the device)."""
+        return self._attr_name
 
     @property
     def unique_id(self):

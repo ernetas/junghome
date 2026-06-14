@@ -46,6 +46,11 @@ async def async_setup_entry(
 class JungHomeSocket(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home socket."""
 
+    # The socket is the device's main feature, so it adopts the device name
+    # (entity_id `switch.<device>`, not the old `switch.<device>_<device>`).
+    _attr_has_entity_name = True
+    _attr_name = None
+
     def __init__(self, coordinator, device, datapoint):
         """Initialize the socket."""
         super().__init__(coordinator)
@@ -55,11 +60,6 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         # Firmware-stable id derived from the label, not the volatile device id.
         self._unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
-
-    @property
-    def name(self):
-        """Return the name of the socket."""
-        return self._name
 
     @property
     def unique_id(self):
@@ -164,11 +164,15 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
 class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
 
+    # Secondary entity on the rocker device; HA prepends the device name, so the
+    # entity_id becomes `switch.<device>_status_led`.
+    _attr_has_entity_name = True
+    _attr_name = "Status LED"
+
     def __init__(self, coordinator, device, datapoint):
         super().__init__(coordinator)
         self._device = device
         self._datapoint = datapoint
-        self._attr_name = f"{device.get('label', 'Jung Status LED')}_{datapoint.get('type', 'Unknown')}"
         self._attr_unique_id = stable_unique_id(device, datapoint, "switch")
         self._attr_available = coordinator.last_update_success
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
