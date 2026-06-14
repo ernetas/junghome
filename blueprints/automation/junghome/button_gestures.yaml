@@ -94,7 +94,7 @@ triggers:
 conditions:
   - condition: template
     value_template: >
-      {{ trigger.to_state is not none
+      {{ trigger is defined and trigger.to_state is not none
          and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 
 actions:
