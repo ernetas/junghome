@@ -5,8 +5,9 @@ from datetime import timedelta
 
 import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,17 +38,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator):
             response = await self._fetch_devices_from_api(
                 self.config["host"], self.config["token"]
             )
-            if response is None:
-                _LOGGER.error("Received None response from API")
-                return []  # Returning empty list ensures entities don't break
+        except aiohttp.ClientResponseError as err:
+            if err.status in (401, 403):
+                # Token revoked/expired — trigger Home Assistant's reauth flow.
+                raise ConfigEntryAuthFailed(
+                    "Jung Home gateway rejected the token"
+                ) from err
+            raise UpdateFailed(f"Error fetching data from Jung Home: {err}") from err
+        except aiohttp.ClientError as err:
+            raise UpdateFailed(f"Error connecting to Jung Home: {err}") from err
 
-            _LOGGER.debug("API Response: %s", response)
-            return (
-                response  # `async_set_updated_data` is automatically called with this
-            )
-        except Exception as e:
-            _LOGGER.error("Error fetching data from Jung Home API: %s", e)
-            raise  # Raising exception allows Home Assistant to handle errors properly
+        if response is None:
+            _LOGGER.error("Received None response from API")
+            return []  # Returning empty list ensures entities don't break
+        _LOGGER.debug("API Response: %s", response)
+        # `async_set_updated_data` is automatically called with this.
+        return response
 
     async def _fetch_devices_from_api(self, host, token):
         """Fetch devices from the Jung Home API."""

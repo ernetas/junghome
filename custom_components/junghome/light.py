@@ -106,6 +106,20 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
             self._brightness = None
             self._color_temp = None
 
+        # Color mode is fixed by the device's capabilities (datapoints), not by
+        # the current value. Home Assistant requires supported_color_modes to be
+        # a stable set, so decide it once here. COLOR_TEMP already implies
+        # brightness support.
+        if self._color_temp_datapoint_id:
+            self._attr_supported_color_modes = {ColorMode.COLOR_TEMP}
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        elif device["type"] == "ColorLight":
+            self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+        else:
+            self._attr_supported_color_modes = {ColorMode.ONOFF}
+            self._attr_color_mode = ColorMode.ONOFF
+
     @property
     def unique_id(self):
         """Return a unique ID for the light."""
@@ -125,21 +139,6 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
     def color_temp_kelvin(self):
         """Return the color temperature in Kelvin (device-native)."""
         return self._color_temp
-
-    @property
-    def supported_color_modes(self):
-        """Return the supported color modes (only the current mode, per HA 2025.3+)."""
-        return {self.color_mode}
-
-    @property
-    def color_mode(self):
-        """Return the currently active color mode."""
-        if self._device["type"] == "ColorLight":
-            # If color_temp is set, prefer COLOR_TEMP, else BRIGHTNESS
-            if self._color_temp is not None:
-                return ColorMode.COLOR_TEMP
-            return ColorMode.BRIGHTNESS
-        return ColorMode.ONOFF
 
     @property
     def device_info(self):

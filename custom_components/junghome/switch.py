@@ -134,25 +134,6 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         """Return if the device is available."""
         return self.coordinator.last_update_success
 
-    async def async_update(self):
-        """Update the socket's state."""
-        await self.coordinator.async_request_refresh()
-        device = next(
-            (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
-        )
-        if device:
-            datapoint = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp["id"] == self._datapoint["id"]
-                ),
-                None,
-            )
-            if datapoint:
-                self._is_on = self._get_state_from_datapoint(datapoint)
-                self.async_write_ha_state()
-
     def _get_state_from_datapoint(self, datapoint):
         """Extract the state of the socket from its datapoint."""
         for value in datapoint.get("values", []):
@@ -174,7 +155,8 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         self._device = device
         self._datapoint = datapoint
         self._attr_unique_id = stable_unique_id(device, datapoint, "switch")
-        self._attr_available = coordinator.last_update_success
+        # Availability is inherited from CoordinatorEntity (tracks the gateway
+        # connection); don't snapshot it here or it never updates.
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
 
     @property

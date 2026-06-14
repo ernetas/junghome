@@ -14,6 +14,14 @@
       "register_failed": {
         "title": "Registration failed",
         "description": "The access request was not approved in time or the gateway could not be reached. Submit to try again, then approve the request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+      },
+      "reauth_confirm": {
+        "title": "Reauthorize Jung Home",
+        "description": "The gateway no longer accepts the stored access token. Approve the new access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+      },
+      "reauth_failed": {
+        "title": "Reauthorization failed",
+        "description": "The access request was not approved in time or the gateway could not be reached. Submit to try again, then approve the request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
       }
     },
     "progress": {
@@ -25,7 +33,8 @@
       "register_failed": "Registration was not completed. Make sure you approve the request in the app."
     },
     "abort": {
-      "already_configured": "This Jung Home gateway is already configured."
+      "already_configured": "This Jung Home gateway is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   }
 }
