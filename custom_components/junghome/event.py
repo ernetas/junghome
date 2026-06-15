@@ -1,8 +1,6 @@
 """Event platform for Jung Home rocker buttons."""
 
 import logging
-import time
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.event import EventEntity
@@ -10,7 +8,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
@@ -69,7 +66,9 @@ async def async_setup_entry(
 # ------------------------------------------
 # 🔹 EVENT ENTITY (For UI Integration)
 # ------------------------------------------
-class JungHomeEventEntity(CoordinatorEntity, EventEntity):
+class JungHomeEventEntity(
+    CoordinatorEntity[JungHomeDataUpdateCoordinator], EventEntity
+):
     """Event entity for Jung Home button presses."""
 
     _attr_event_types = ["pressed", "depressed"]
@@ -96,7 +95,6 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
         # Availability is inherited from CoordinatorEntity (tracks the gateway
         # connection); don't pin it True or it stays "available" when the
         # gateway is down.
-        self._last_press_time = 0
         self._last_value = self._get_state_from_datapoint(datapoint)
 
     @property
@@ -107,7 +105,9 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version", "Unknown Version"),
+            "sw_version": self._device.get("sw_version")
+            or self.coordinator.gateway_version
+            or "Unknown Version",
         }
 
     @callback
@@ -130,28 +130,12 @@ class JungHomeEventEntity(CoordinatorEntity, EventEntity):
             return
         new_state = self._get_state_from_datapoint(datapoint)
         if new_state != self._last_value:
-            now = time.time()
-            if new_state is True:
-                _LOGGER.debug(
-                    "Triggering pressed event for %s at %s", self.entity_id, now
-                )
-                self._trigger_event("pressed")
-                self._attr_event_timestamp = dt_util.now()
-                self.async_write_ha_state()
-                self._last_press_time = now
-            elif new_state is False:
-                _LOGGER.debug(
-                    "Triggering depressed event for %s at %s", self.entity_id, now
-                )
-                self._trigger_event("depressed")
-                self._attr_event_timestamp = dt_util.now()
-                self.async_write_ha_state()
+            # EventEntity records the event type and timestamp itself.
+            event_type = "pressed" if new_state else "depressed"
+            _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
+            self._trigger_event(event_type)
+            self.async_write_ha_state()
             self._last_value = new_state
-
-    @property
-    def state(self) -> datetime | None:
-        """Return the timestamp of the last button event."""
-        return getattr(self, "_attr_event_timestamp", None)
 
     def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         """Extract state from datapoint values. Returns True if pressed."""

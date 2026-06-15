@@ -53,7 +53,7 @@ async def async_setup_entry(
     config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))
 
 
-class JungHomeLight(CoordinatorEntity, LightEntity):
+class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntity):
     """Representation of a Jung Home light."""
 
     # The light is the device's main feature, so it adopts the device name. With
@@ -163,7 +163,9 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version", "Unknown Version"),
+            "sw_version": self._device.get("sw_version")
+            or self.coordinator.gateway_version
+            or "Unknown Version",
         }
 
     @callback
@@ -332,10 +334,7 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
 
     def _ha_to_raw_brightness(self, ha_brightness: int) -> int:
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
-        try:
-            return round(int(ha_brightness) * 100 / 255)
-        except Exception:
-            return round(int(ha_brightness) * 100 / 255)
+        return round(int(ha_brightness) * 100 / 255)
 
     def _get_color_temp_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
         """Extract the color temperature of the light from its datapoint."""
@@ -387,5 +386,8 @@ class JungHomeLight(CoordinatorEntity, LightEntity):
             "Setting color temperature for light %s to %sK", self._name, kelvin
         )
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
+        # Record last write to debounce device echoes (mirrors _set_brightness).
+        self._last_written_color_temp_raw = kelvin
+        self._last_written_color_temp_ts = time.monotonic()
         self._color_temp = kelvin
         self.async_write_ha_state()

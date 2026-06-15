@@ -31,12 +31,17 @@ class CannotRegister(Exception):
 
 
 def _normalize_host(host: str) -> str:
-    """Strip scheme/whitespace/trailing slash from a user-entered host."""
+    """Normalise a user-entered host (scheme/whitespace/slash/case).
+
+    Hosts and hostnames are case-insensitive, so lower-casing keeps a manually
+    entered hostname and the lower-case mDNS hostname from looking like two
+    different gateways.
+    """
     host = host.strip()
     for prefix in ("https://", "http://"):
         if host.lower().startswith(prefix):
             host = host[len(prefix) :]
-    return host.rstrip("/")
+    return host.rstrip("/").lower()
 
 
 class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -85,7 +90,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             self._token = self._register_task.result()
-        except Exception:
+        except CannotRegister:
             self._register_task = None
             return self.async_show_progress_done(next_step_id="register_failed")
 
@@ -136,7 +141,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             self._token = self._register_task.result()
-        except Exception:
+        except CannotRegister:
             self._register_task = None
             return self.async_show_progress_done(next_step_id="reauth_failed")
 
@@ -222,7 +227,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="zeroconf_confirm",
-                description_placeholders={"host": self._host},
+                description_placeholders={"host": self._host or ""},
             )
         return await self.async_step_register()
 

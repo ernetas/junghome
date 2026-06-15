@@ -25,7 +25,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home switches from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known: set[str | None] = set()
 
     @callback
     def _discover_switches() -> None:
@@ -53,7 +53,7 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_switches))
 
 
-class JungHomeSocket(CoordinatorEntity, SwitchEntity):
+class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEntity):
     """Representation of a Jung Home socket."""
 
     # The socket is the device's main feature, so it adopts the device name
@@ -95,7 +95,9 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version", "Unknown Version"),
+            "sw_version": self._device.get("sw_version")
+            or self.coordinator.gateway_version
+            or "Unknown Version",
         }
 
     @callback
@@ -153,7 +155,7 @@ class JungHomeSocket(CoordinatorEntity, SwitchEntity):
         return False
 
 
-class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
+class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
 
     # Secondary entity on the rocker device; HA prepends the device name, so the
@@ -185,7 +187,9 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version", "Unknown Version"),
+            "sw_version": self._device.get("sw_version")
+            or self.coordinator.gateway_version
+            or "Unknown Version",
         }
 
     def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
@@ -203,11 +207,17 @@ class JungHomeSwitch(CoordinatorEntity, SwitchEntity):
         """Turn the status LED on."""
         _LOGGER.debug("Turning on switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], True)
+        # Optimistic update (only reached if the command was actually sent),
+        # matching the socket/light behaviour.
+        self._attr_is_on = True
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the status LED off."""
         _LOGGER.debug("Turning off switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], False)
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
     @callback
     def _handle_coordinator_update(self) -> None:

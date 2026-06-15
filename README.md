@@ -81,6 +81,12 @@ reconnects automatically with backoff. No cloud and no account are involved.
 
 - **Scenes and groups** defined in the JUNG app aren't exposed; use Home
   Assistant scenes/areas instead.
+- **Metering sockets report instantaneous power (W) and current (A), not
+  cumulative energy (kWh)**, so they can't go straight onto the Energy Dashboard.
+  To track energy/cost, add a Riemann-sum
+  [Integration helper](https://www.home-assistant.io/integrations/integration/)
+  on the socket's power sensor (Settings → Devices & Services → Helpers → Riemann
+  sum), then add that kWh sensor to the Energy Dashboard.
 - **Button gestures** (single/double/hold) aren't native — derive them with the
   [blueprint](#button-automations-rocker-switches).
 - The rocker **status-LED colour** can't be set from here (on/off only); colour

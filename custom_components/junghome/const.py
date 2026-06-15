@@ -30,7 +30,7 @@ def stable_unique_id(
     device: dict, datapoint: dict, qualifier: str | None = None
 ) -> str:
     """Build a firmware-stable unique id from a device label and datapoint suffix."""
-    parts = [device_slug(device), datapoint_suffix(datapoint.get("id"))]
+    parts = [device_slug(device), datapoint_suffix(datapoint["id"])]
     if qualifier:
         parts.append(qualifier)
     return "_".join(parts)

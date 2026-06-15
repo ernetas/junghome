@@ -55,7 +55,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home sensors from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known: set[str | None] = set()
 
     @callback
     def _discover_sensors() -> None:
@@ -95,7 +95,7 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_sensors))
 
 
-class JungHomeQuantity(CoordinatorEntity, SensorEntity):
+class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorEntity):
     """Representation of a Jung Home quantity."""
 
     # Secondary entity on the device; HA prepends the device name, so the
@@ -159,7 +159,9 @@ class JungHomeQuantity(CoordinatorEntity, SensorEntity):
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
             "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version", "Unknown Version"),
+            "sw_version": self._device.get("sw_version")
+            or self.coordinator.gateway_version
+            or "Unknown Version",
         }
 
     @callback

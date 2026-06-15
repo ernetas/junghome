@@ -69,6 +69,12 @@
     },
     "cannot_connect": {
       "message": "Error communicating with the Jung Home gateway: {error}"
+    },
+    "cannot_send": {
+      "message": "Could not reach the Jung Home gateway to send the command; it is reconnecting. Try again in a moment."
+    },
+    "invalid_response": {
+      "message": "The Jung Home gateway returned an unexpected response."
     }
   }
 }
