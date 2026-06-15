@@ -1,7 +1,6 @@
 """Event platform for Jung Home rocker buttons."""
 
 import logging
-from typing import Any
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.core import HomeAssistant, callback
@@ -11,6 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,8 +78,8 @@ class JungHomeEventEntity(
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
-        device: dict[str, Any],
-        datapoint: dict[str, Any],
+        device: Device,
+        datapoint: Datapoint,
     ) -> None:
         """Initialize the event entity."""
         super().__init__(coordinator)
@@ -145,7 +145,7 @@ class JungHomeEventEntity(
             datapoint = next(
                 (
                     dp
-                    for dp in (device or {}).get("datapoints", [])
+                    for dp in (device["datapoints"] if device else [])
                     if dp.get("id") == self._datapoint["id"]
                 ),
                 None,
@@ -160,7 +160,7 @@ class JungHomeEventEntity(
                 self._trigger_event(event_type)
         self.async_write_ha_state()
 
-    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         """Extract state from datapoint values. Returns True if pressed.
 
         Scoped to this datapoint's own type so bundled request keys don't merge.
