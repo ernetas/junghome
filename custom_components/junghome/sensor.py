@@ -1,7 +1,6 @@
 """Sensor platform for Jung Home (socket energy quantities)."""
 
 import logging
-from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -23,6 +22,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home sensors from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str | None] = set()
+    known: set[str] = set()
 
     @callback
     def _discover_sensors() -> None:
@@ -85,12 +85,16 @@ async def async_setup_entry(
                             None,
                         )
                         if label and unit:
-                            entity = JungHomeQuantity(
-                                coordinator, device, datapoint, label, unit
+                            uid = stable_unique_id(
+                                device, datapoint, label.replace(" ", "_").lower()
                             )
-                            if entity.unique_id not in known:
-                                known.add(entity.unique_id)
-                                new_entities.append(entity)
+                            if uid not in known:
+                                known.add(uid)
+                                new_entities.append(
+                                    JungHomeQuantity(
+                                        coordinator, device, datapoint, label, unit
+                                    )
+                                )
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)
 
@@ -109,8 +113,8 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
-        device: dict[str, Any],
-        datapoint: dict[str, Any],
+        device: Device,
+        datapoint: Datapoint,
         label: str,
         unit: str,
     ) -> None:
@@ -212,7 +216,7 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
                 )
                 self.async_write_ha_state()
 
-    def _get_value_from_datapoint(self, datapoint: dict[str, Any]) -> str | None:
+    def _get_value_from_datapoint(self, datapoint: Datapoint) -> str | None:
         """Extract the value of the quantity from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "quantity":

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, device_slug
+from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ MAX_RECONNECT_DELAY = 60
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
 
 
-class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
+class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     """Class to manage fetching data from the Jung Home API."""
 
     def __init__(
@@ -57,7 +58,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             update_interval=timedelta(minutes=1),
         )
 
-    async def _async_update_data(self) -> list[dict[str, Any]]:
+    async def _async_update_data(self) -> list[Device]:
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
         try:
@@ -96,7 +97,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
         # `async_set_updated_data` is automatically called with this.
         return response
 
-    def _reload_if_device_ids_changed(self, devices: list[dict[str, Any]]) -> None:
+    def _reload_if_device_ids_changed(self, devices: list[Device]) -> None:
         """Reload the entry if the gateway regenerated its device ids.
 
         The gateway assigns new volatile device/datapoint ids on a firmware
@@ -117,9 +118,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
 
-    async def _fetch_devices_from_api(
-        self, host: str, token: str
-    ) -> list[dict[str, Any]]:
+    async def _fetch_devices_from_api(self, host: str, token: str) -> list[Device]:
         """Fetch devices from the Jung Home API."""
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
         # cert without building an SSL context on the event loop.
@@ -141,8 +140,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             )
         # Keep the full device payload so any firmware-stable identifier
         # (serial / address / etc.) is available for building unique IDs,
-        # and is visible in the debug log above for inspection.
-        return [device for device in data if isinstance(device, dict)]
+        # and is visible in the debug log above for inspection. This is the
+        # trust boundary: untyped gateway JSON becomes the typed `Device` model.
+        # Downstream code keeps defensive `.get(...)` access for malformed items.
+        return cast("list[Device]", [d for d in data if isinstance(d, dict)])
 
     async def _websocket_loop(self) -> None:
         """Keep a WebSocket connection alive, reconnecting with backoff on drop.
@@ -263,10 +264,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             for device in self.data or []:
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("id") == datapoint_id:
-                        # Update all keys in the datapoint with the new data
+                        # Merge the pushed keys into the stored datapoint. The push
+                        # carries arbitrary keys (typically `values`), so mutate via
+                        # a dict view rather than the TypedDict.
+                        dp_dict = cast("dict[str, Any]", datapoint)
                         for key, value in data.items():
                             if key != "id":
-                                datapoint[key] = value
+                                dp_dict[key] = value
                         _LOGGER.debug(
                             "Updated datapoint for device %s: %s",
                             device.get("id"),

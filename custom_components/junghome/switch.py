@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home switches from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str | None] = set()
+    known: set[str] = set()
 
     @callback
     def _discover_switches() -> None:
@@ -35,17 +36,21 @@ async def async_setup_entry(
             if device.get("type") == "Socket":
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "switch":
-                        socket = JungHomeSocket(coordinator, device, datapoint)
-                        if socket.unique_id not in known:
-                            known.add(socket.unique_id)
-                            new_entities.append(socket)
+                        uid = stable_unique_id(device, datapoint)
+                        if uid not in known:
+                            known.add(uid)
+                            new_entities.append(
+                                JungHomeSocket(coordinator, device, datapoint)
+                            )
             elif device.get("type") == "RockerSwitch":
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "status_led":
-                        led = JungHomeSwitch(coordinator, device, datapoint)
-                        if led.unique_id not in known:
-                            known.add(led.unique_id)
-                            new_entities.append(led)
+                        uid = stable_unique_id(device, datapoint, "switch")
+                        if uid not in known:
+                            known.add(uid)
+                            new_entities.append(
+                                JungHomeSwitch(coordinator, device, datapoint)
+                            )
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)
 
@@ -65,8 +70,8 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
-        device: dict[str, Any],
-        datapoint: dict[str, Any],
+        device: Device,
+        datapoint: Datapoint,
     ) -> None:
         """Initialize the socket."""
         super().__init__(coordinator)
@@ -157,11 +162,11 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         """
         return self.coordinator.ws_connected or self.coordinator.last_update_success
 
-    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         """Extract the state of the socket from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "switch":
-                return str(value["value"]) == "1"
+                return value["value"] == "1"
         return False
 
 
@@ -177,8 +182,8 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
-        device: dict[str, Any],
-        datapoint: dict[str, Any],
+        device: Device,
+        datapoint: Datapoint,
     ) -> None:
         """Initialize the status LED switch."""
         super().__init__(coordinator)
@@ -200,10 +205,10 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
             or "Unknown Version",
         }
 
-    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         for value in datapoint.get("values", []):
             if value["key"] == "status_led":
-                return str(value["value"]) == "1"
+                return value["value"] == "1"
         return False
 
     @property
@@ -253,7 +258,7 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         datapoint = next(
             (
                 dp
-                for dp in (device or {}).get("datapoints", [])
+                for dp in (device["datapoints"] if device else [])
                 if dp.get("id") == self._datapoint["id"]
             ),
             None,

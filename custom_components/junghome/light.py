@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,8 +66,8 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
-        device: dict[str, Any],
-        datapoint: dict[str, Any],
+        device: Device,
+        datapoint: Datapoint,
     ) -> None:
         """Initialize the light."""
         super().__init__(coordinator)
@@ -249,14 +250,14 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         """
         return self.coordinator.ws_connected or self.coordinator.last_update_success
 
-    def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         """Extract the state of the light from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "switch":
-                return str(value["value"]) == "1"
+                return value["value"] == "1"
         return False
 
-    def _get_brightness_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
+    def _get_brightness_from_datapoint(self, datapoint: Datapoint | None) -> int:
         """Extract the brightness of the light from its datapoint."""
         if not datapoint:
             return 0
@@ -272,11 +273,12 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
 
     def _ha_to_raw_brightness(self, ha_brightness: int) -> int:
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
-        return round(int(ha_brightness) * 100 / 255)
+        raw = round(ha_brightness * 100 / 255)
+        # A non-zero HA brightness (1-2) rounds to 0 on the 0-100 device scale,
+        # which the device reads as off; floor it at 1 so "very dim" stays on.
+        return max(1, raw) if ha_brightness > 0 else 0
 
-    def _get_color_temp_from_datapoint(
-        self, datapoint: dict[str, Any] | None
-    ) -> int | None:
+    def _get_color_temp_from_datapoint(self, datapoint: Datapoint | None) -> int | None:
         """Extract the color temperature of the light from its datapoint."""
         if not datapoint:
             return None

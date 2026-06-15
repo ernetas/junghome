@@ -779,6 +779,15 @@ async def test_light_set_without_datapoints_warns_and_noops(
     sc.assert_not_called()
 
 
+async def test_brightness_floor_keeps_dim_on(hass: HomeAssistant) -> None:
+    """A non-zero HA brightness never rounds to device raw 0 (which reads as off)."""
+    light = _color_light(_bare_coordinator(hass))
+    assert light._ha_to_raw_brightness(0) == 0
+    # round(1 * 100 / 255) == 0 without the floor; the floor keeps it on at 1.
+    assert light._ha_to_raw_brightness(1) == 1
+    assert light._ha_to_raw_brightness(255) == 100
+
+
 async def test_sensor_value_extractor_defensive(hass: HomeAssistant) -> None:
     """Sensor helpers return None for a missing value / None state."""
     coordinator = _bare_coordinator(hass)

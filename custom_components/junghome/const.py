@@ -1,8 +1,8 @@
 """Constants and firmware-stable identity helpers for Jung Home."""
 
-from typing import Any
-
 from homeassistant.util import slugify
+
+from .models import Datapoint, Device
 
 DOMAIN = "junghome"
 
@@ -17,7 +17,7 @@ def datapoint_suffix(datapoint_id: str) -> str:
     return str(datapoint_id).rsplit("-", 1)[-1]
 
 
-def device_slug(device: dict[str, Any]) -> str:
+def device_slug(device: Device) -> str:
     """Return a firmware-stable slug for a device, based on its label.
 
     The gateway exposes no hardware identifier (serial/MAC/address); the user
@@ -56,7 +56,7 @@ def device_slug(device: dict[str, Any]) -> str:
 
 
 def stable_unique_id(
-    device: dict[str, Any], datapoint: dict[str, Any], qualifier: str | None = None
+    device: Device, datapoint: Datapoint, qualifier: str | None = None
 ) -> str:
     """Build a firmware-stable unique id from a device label and datapoint suffix."""
     parts = [device_slug(device), datapoint_suffix(datapoint["id"])]
