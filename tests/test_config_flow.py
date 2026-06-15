@@ -204,6 +204,39 @@ async def test_reconfigure_flow(hass: HomeAssistant) -> None:
     assert entry.data[CONF_HOST] == "5.6.7.8"
 
 
+async def test_reconfigure_reloads_once_and_keeps_unique_id(
+    hass: HomeAssistant,
+) -> None:
+    """A reconfigure host change reloads exactly once and preserves unique_id.
+
+    The host-change update listener does the single reload; the flow must not
+    also schedule one (the old double-reload), and it must keep the entry's
+    existing unique_id (e.g. a zeroconf hostname) rather than overwrite it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    fetch, run_ws = _no_network()
+    with fetch, run_ws:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload:
+            result = await entry.start_reconfigure_flow(hass)
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {CONF_HOST: "5.6.7.8"}
+            )
+            await hass.async_block_till_done()
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.data[CONF_HOST] == "5.6.7.8"
+        reload.assert_called_once_with(entry.entry_id)
+        assert entry.unique_id == "junghome.local"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_async_register_returns_token(
     hass: HomeAssistant, aioclient_mock
 ) -> None:

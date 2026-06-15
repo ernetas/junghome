@@ -105,14 +105,19 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for socket %s", self._name)
         device = next(
-            (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
+            (
+                d
+                for d in self.coordinator.data or []
+                if d.get("id") == self._device["id"]
+            ),
+            None,
         )
         if device:
             datapoint = next(
                 (
                     dp
                     for dp in device.get("datapoints", [])
-                    if dp["id"] == self._datapoint["id"]
+                    if dp.get("id") == self._datapoint["id"]
                 ),
                 None,
             )
@@ -245,21 +250,16 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
             ),
             None,
         )
-        if not device:
-            self.async_write_ha_state()
-            return
         datapoint = next(
             (
                 dp
-                for dp in device.get("datapoints", [])
+                for dp in (device or {}).get("datapoints", [])
                 if dp.get("id") == self._datapoint["id"]
             ),
             None,
         )
-        if not datapoint:
-            self.async_write_ha_state()
-            return
-        new_state = self._get_state_from_datapoint(datapoint)
-        if new_state != self._attr_is_on:
-            self._attr_is_on = new_state
+        if datapoint is not None:
+            self._attr_is_on = self._get_state_from_datapoint(datapoint)
+        # Write unconditionally (even when the datapoint is momentarily absent) so
+        # the entity's availability tracks the gateway on every coordinator update.
         self.async_write_ha_state()

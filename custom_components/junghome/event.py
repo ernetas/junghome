@@ -129,34 +129,35 @@ class JungHomeEventEntity(
         edge fires exactly once — including rapid same-value taps that a level
         diff would coalesce — and a re-read never fires a phantom press.
         """
-        if self.coordinator.pushed_datapoint_id != self._datapoint["id"]:
-            self.async_write_ha_state()
-            return
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        datapoint = next(
-            (
-                dp
-                for dp in (device or {}).get("datapoints", [])
-                if dp.get("id") == self._datapoint["id"]
-            ),
-            None,
-        )
-        if not datapoint:  # pragma: no cover - marker implies the push just matched it
-            self.async_write_ha_state()
-            return
-        # EventEntity records the event type and timestamp itself.
-        event_type = (
-            "pressed" if self._get_state_from_datapoint(datapoint) else "depressed"
-        )
-        _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
-        self._trigger_event(event_type)
+        # Fire only on a genuine WebSocket push for THIS datapoint. REST re-reads
+        # (marker is None) and pushes for other datapoints skip the fire but still
+        # write state below, so availability tracks the gateway connection without
+        # ever emitting a phantom press.
+        if self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
+            device = next(
+                (
+                    d
+                    for d in self.coordinator.data or []
+                    if d.get("id") == self._device["id"]
+                ),
+                None,
+            )
+            datapoint = next(
+                (
+                    dp
+                    for dp in (device or {}).get("datapoints", [])
+                    if dp.get("id") == self._datapoint["id"]
+                ),
+                None,
+            )
+            if datapoint:
+                event_type = (
+                    "pressed"
+                    if self._get_state_from_datapoint(datapoint)
+                    else "depressed"
+                )
+                _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
+                self._trigger_event(event_type)
         self.async_write_ha_state()
 
     def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:

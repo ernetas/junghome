@@ -167,14 +167,19 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for light %s", self._name)
         device = next(
-            (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
+            (
+                d
+                for d in self.coordinator.data or []
+                if d.get("id") == self._device["id"]
+            ),
+            None,
         )
         if device:
             datapoint = next(
                 (
                     dp
                     for dp in device.get("datapoints", [])
-                    if dp["id"] == self._datapoint["id"]
+                    if dp.get("id") == self._datapoint["id"]
                 ),
                 None,
             )
