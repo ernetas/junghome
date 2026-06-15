@@ -3,9 +3,9 @@
 import logging
 from typing import Any
 
-from homeassistant.components.event import EventEntity
+from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -72,6 +72,7 @@ class JungHomeEventEntity(
     """Event entity for Jung Home button presses."""
 
     _attr_event_types = ["pressed", "depressed"]
+    _attr_device_class = EventDeviceClass.BUTTON
     _attr_has_entity_name = True
 
     def __init__(
@@ -92,10 +93,17 @@ class JungHomeEventEntity(
             self._attr_name = dp_type
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
         # Icon comes from icons.json (icon-translations).
-        # Availability is inherited from CoordinatorEntity (tracks the gateway
-        # connection); don't pin it True or it stays "available" when the
-        # gateway is down.
-        self._last_value = self._get_state_from_datapoint(datapoint)
+
+    @property
+    def available(self) -> bool:
+        """Return if the device is available.
+
+        Matches the light/socket/LED entities: a live WebSocket link is the
+        primary availability signal, falling back to the last REST poll, so an
+        event entity doesn't go unavailable on a transient REST-poll miss while
+        the WebSocket (which actually delivers its presses) is still connected.
+        """
+        return self.coordinator.ws_connected or self.coordinator.last_update_success
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -112,35 +120,54 @@ class JungHomeEventEntity(
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator (trigger event on press)."""
-        device = next(
-            (d for d in self.coordinator.data if d["id"] == self._device["id"]), None
-        )
-        if not device:
+        """Fire an event when this datapoint is pushed over the WebSocket.
+
+        Press detection keys off the coordinator's per-push marker rather than
+        diffing snapshots. The gateway broadcasts a ``datapoint`` frame on every
+        genuine press/release edge, whereas REST polls (and the full-list resync
+        frames) re-read the same values without setting the marker. So every real
+        edge fires exactly once — including rapid same-value taps that a level
+        diff would coalesce — and a re-read never fires a phantom press.
+        """
+        if self.coordinator.pushed_datapoint_id != self._datapoint["id"]:
+            self.async_write_ha_state()
             return
-        datapoint = next(
+        device = next(
             (
-                dp
-                for dp in device.get("datapoints", [])
-                if dp["id"] == self._datapoint["id"]
+                d
+                for d in self.coordinator.data or []
+                if d.get("id") == self._device["id"]
             ),
             None,
         )
-        if not datapoint:
-            return
-        new_state = self._get_state_from_datapoint(datapoint)
-        if new_state != self._last_value:
-            # EventEntity records the event type and timestamp itself.
-            event_type = "pressed" if new_state else "depressed"
-            _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
-            self._trigger_event(event_type)
+        datapoint = next(
+            (
+                dp
+                for dp in (device or {}).get("datapoints", [])
+                if dp.get("id") == self._datapoint["id"]
+            ),
+            None,
+        )
+        if not datapoint:  # pragma: no cover - marker implies the push just matched it
             self.async_write_ha_state()
-            self._last_value = new_state
+            return
+        # EventEntity records the event type and timestamp itself.
+        event_type = (
+            "pressed" if self._get_state_from_datapoint(datapoint) else "depressed"
+        )
+        _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
+        self._trigger_event(event_type)
+        self.async_write_ha_state()
 
     def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
-        """Extract state from datapoint values. Returns True if pressed."""
+        """Extract state from datapoint values. Returns True if pressed.
+
+        Scoped to this datapoint's own type so bundled request keys don't merge.
+        """
         for value in datapoint.get("values", []):
-            if value["key"] in {"up_request", "down_request", "trigger_request"}:
-                if value["value"] == "1":
-                    return True
+            if (
+                value.get("key") == self._datapoint.get("type")
+                and value.get("value") == "1"
+            ):
+                return True
         return False

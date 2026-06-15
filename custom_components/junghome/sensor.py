@@ -17,7 +17,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -47,6 +47,9 @@ _UNIT_MAP: dict[str, tuple[SensorDeviceClass, SensorStateClass, str]] = {
     "°c": (SensorDeviceClass.TEMPERATURE, _MEAS, UnitOfTemperature.CELSIUS),
 }
 
+# Raw units we've already warned about, so each unmapped unit logs only once.
+_warned_units: set[str] = set()
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -67,17 +70,17 @@ async def async_setup_entry(
                     if datapoint.get("type") == "quantity":
                         label = next(
                             (
-                                value["value"].strip()
-                                for value in datapoint["values"]
-                                if value["key"] == "quantity_label"
+                                (value.get("value") or "").strip()
+                                for value in datapoint.get("values", [])
+                                if value.get("key") == "quantity_label"
                             ),
                             None,
                         )
                         unit = next(
                             (
-                                value["value"]
-                                for value in datapoint["values"]
-                                if value["key"] == "quantity_unit"
+                                value.get("value")
+                                for value in datapoint.get("values", [])
+                                if value.get("key") == "quantity_unit"
                             ),
                             None,
                         )
@@ -121,23 +124,40 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
         self._unique_id = stable_unique_id(
             device, datapoint, label.replace(" ", "_").lower()
         )
-        device_class, state_class, ha_unit = _UNIT_MAP.get(
-            unit.strip().lower(), (None, None, unit)
-        )
+        mapped = _UNIT_MAP.get(unit.strip().lower())
+        if mapped is not None:
+            device_class, state_class, ha_unit = mapped
+        else:
+            # Unknown unit: expose a unitless measurement sensor (numeric, with
+            # statistics) rather than a stateless string with an arbitrary unit.
+            device_class, state_class, ha_unit = None, _MEAS, None
+            if unit not in _warned_units:
+                _warned_units.add(unit)
+                _LOGGER.warning(
+                    "Unmapped Jung Home quantity unit %r; exposing a unitless "
+                    "measurement sensor",
+                    unit,
+                )
         self._attr_device_class = device_class
         self._attr_state_class = state_class
         self._attr_native_unit_of_measurement = ha_unit
         self._value = self._get_value_from_datapoint(datapoint)
 
     @property
-    def name(self) -> str | None:
-        """Return the entity name (the measured quantity; HA adds the device)."""
-        return self._attr_name
-
-    @property
     def unique_id(self) -> str | None:
         """Return a unique ID for the quantity."""
         return self._unique_id
+
+    @property
+    def available(self) -> bool:
+        """Return if the device is available.
+
+        Matches the light/socket/LED/event entities: a live WebSocket link is the
+        primary availability signal, falling back to the last REST poll, so all
+        entities on a device go (un)available together rather than the sensor
+        diverging on a transient poll miss.
+        """
+        return self.coordinator.ws_connected or self.coordinator.last_update_success
 
     @property
     def native_value(self) -> float | str | None:
@@ -191,5 +211,5 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
         """Extract the value of the quantity from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "quantity":
-                return value["value"]
+                return str(value["value"])
         return None

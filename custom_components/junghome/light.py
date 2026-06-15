@@ -1,12 +1,12 @@
 """Light platform for Jung Home (on/off, dimmable, tunable white)."""
 
 import logging
-import time
 from typing import Any
 
-from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.components.light import LightEntity
+from homeassistant.components.light.const import ColorMode
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 # Commands are cheap async WebSocket sends; don't serialise them.
 PARALLEL_UPDATES = 0
 
-DEFAULT_MIN_KELVIN = 2700
+DEFAULT_MIN_KELVIN = 2000
 DEFAULT_MAX_KELVIN = 6500
 
 
@@ -96,12 +96,6 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
             self._color_temp_datapoint.get("id") if self._color_temp_datapoint else None
         )
         # Device brightness scale is 0-100 (device) — Home Assistant uses 0-255
-        # Track last local write to debounce weird rapid WS echoes
-        self._last_written_brightness_raw: int | None = None
-        self._last_written_brightness_ts = 0.0
-        # Track last local write for color temperature (Kelvin)
-        self._last_written_color_temp_raw: int | None = None
-        self._last_written_color_temp_ts = 0.0
         self._name = device.get("label", "Jung Light")
         # Firmware-stable id derived from the label, not the volatile device id.
         self._unique_id = stable_unique_id(device, datapoint)
@@ -197,45 +191,9 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
                             ),
                             None,
                         )
-                        # Read raw brightness value first
-                        raw_brightness = None
-                        if brightness_dp:
-                            for v in brightness_dp.get("values", []):
-                                if v.get("key") == "brightness":
-                                    try:
-                                        raw_brightness = int(v.get("value"))
-                                    except (TypeError, ValueError):
-                                        raw_brightness = None
-                                    break
-                        # If we recently wrote a brightness, debounce transient device
-                        # echoes for a short window unless the echo matches our write.
-                        now_ts = time.monotonic()
-                        debounce_window = 3.0
-                        if (
-                            raw_brightness is not None
-                            and self._last_written_brightness_raw is not None
-                            and (now_ts - self._last_written_brightness_ts)
-                            < debounce_window
-                        ):
-                            if raw_brightness != self._last_written_brightness_raw:
-                                _LOGGER.debug(
-                                    "Ignoring transient brightness echo %s for %s (recent write %s)",
-                                    raw_brightness,
-                                    self._name,
-                                    self._last_written_brightness_raw,
-                                )
-                                # keep local self._brightness until confirmed
-                            else:
-                                # device echoed the same value we wrote — accept and clear tracking
-                                self._brightness = self._get_brightness_from_datapoint(
-                                    brightness_dp
-                                )
-                                self._last_written_brightness_raw = None
-                                self._last_written_brightness_ts = 0.0
-                        else:
-                            self._brightness = self._get_brightness_from_datapoint(
-                                brightness_dp
-                            )
+                        self._brightness = self._get_brightness_from_datapoint(
+                            brightness_dp
+                        )
                     if self._color_temp_datapoint_id:
                         color_dp = next(
                             (
@@ -245,37 +203,7 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
                             ),
                             None,
                         )
-                        # read raw Kelvin value
-                        raw_kelvin = None
-                        if color_dp:
-                            for v in color_dp.get("values", []):
-                                if v.get("key") == "color_temperature":
-                                    try:
-                                        raw_kelvin = int(v.get("value"))
-                                    except (TypeError, ValueError):
-                                        raw_kelvin = None
-                                    break
-                        # debounce transient color temp echoes similar to brightness
-                        now_ts = time.monotonic()
-                        debounce_window = 3.0
-                        if (
-                            raw_kelvin is not None
-                            and self._last_written_color_temp_raw is not None
-                            and (now_ts - self._last_written_color_temp_ts)
-                            < debounce_window
-                            and raw_kelvin != self._last_written_color_temp_raw
-                        ):
-                            _LOGGER.debug(
-                                "Ignoring transient color_temp echo %sK for %s (recent write %sK)",
-                                raw_kelvin,
-                                self._name,
-                                self._last_written_color_temp_raw,
-                            )
-                            # keep local value until confirmed
-                        else:
-                            self._color_temp = self._get_color_temp_from_datapoint(
-                                color_dp
-                            )
+                        self._color_temp = self._get_color_temp_from_datapoint(color_dp)
                 _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
                 self.async_write_ha_state()
 
@@ -308,14 +236,19 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
 
     @property
     def available(self) -> bool:
-        """Return if the device is available."""
-        return self.coordinator.last_update_success
+        """Return if the device is available.
+
+        A live WebSocket link means the gateway is reachable, so it is the
+        primary availability signal; fall back to the last REST poll result
+        until the socket first connects (or while it is reconnecting).
+        """
+        return self.coordinator.ws_connected or self.coordinator.last_update_success
 
     def _get_state_from_datapoint(self, datapoint: dict[str, Any]) -> bool:
         """Extract the state of the light from its datapoint."""
         for value in datapoint.get("values", []):
             if value["key"] == "switch":
-                return value["value"] == "1"
+                return str(value["value"]) == "1"
         return False
 
     def _get_brightness_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
@@ -336,18 +269,20 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
         return round(int(ha_brightness) * 100 / 255)
 
-    def _get_color_temp_from_datapoint(self, datapoint: dict[str, Any] | None) -> int:
+    def _get_color_temp_from_datapoint(
+        self, datapoint: dict[str, Any] | None
+    ) -> int | None:
         """Extract the color temperature of the light from its datapoint."""
         if not datapoint:
-            return 3000
+            return None
         for value in datapoint.get("values", []):
             if value["key"] == "color_temperature":
                 try:
                     # Device reports Kelvin; store Kelvin
                     return int(value["value"])
                 except (TypeError, ValueError):
-                    return 3000
-        return 3000
+                    return None
+        return None
 
     async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""
@@ -365,12 +300,6 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
             self._name,
         )
         await self.coordinator.set_brightness(self._brightness_datapoint_id, raw_value)
-        # Record last write to debounce device echoes
-        try:
-            self._last_written_brightness_raw = int(raw_value)
-        except Exception:
-            self._last_written_brightness_raw = raw_value
-        self._last_written_brightness_ts = time.monotonic()
         self._brightness = brightness
         self.async_write_ha_state()
 
@@ -386,8 +315,5 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
             "Setting color temperature for light %s to %sK", self._name, kelvin
         )
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
-        # Record last write to debounce device echoes (mirrors _set_brightness).
-        self._last_written_color_temp_raw = kelvin
-        self._last_written_color_temp_ts = time.monotonic()
         self._color_temp = kelvin
         self.async_write_ha_state()

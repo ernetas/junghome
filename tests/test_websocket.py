@@ -1,5 +1,6 @@
 """Tests for the coordinator's WebSocket session handling."""
 
+import json
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -59,6 +60,9 @@ async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> N
         _FakeMsg(text, '{"type":"datapoint","data":{"id":"x","values":[]}}'),
         _FakeMsg(text, "not json"),  # JSONDecodeError branch
         _FakeMsg(text, "[1, 2, 3]"),  # top-level list branch
+        # Bare JSON scalar: json.loads -> str -> str.get raises AttributeError,
+        # caught by the broad `except Exception`; the loop must continue.
+        _FakeMsg(text, json.dumps("hi")),
         _FakeMsg(aiohttp.WSMsgType.ERROR, "boom"),  # -> raises, exits the loop
     ]
     session = Mock()
@@ -180,3 +184,53 @@ async def test_all_command_methods_send(hass: HomeAssistant) -> None:
     await coordinator.set_color_temp("d", 3000)
     await coordinator.set_status_led("d", state=True)
     assert ws.send_str.await_count == 7
+
+    # Capture and decode every payload, keyed by datapoint type, to assert the
+    # exact wire format the command builders produce.
+    sent = [json.loads(call.args[0]) for call in ws.send_str.call_args_list]
+    by_type = {msg["data"]["type"]: msg for msg in sent}
+
+    # set_status_led(state=False would send "0"); state=True sends "1".
+    led = by_type["status_led"]
+    assert led["type"] == "datapoint"
+    assert led["data"]["id"] == "d"
+    assert led["data"]["values"] == [{"key": "status_led", "value": "1"}]
+
+    # set_brightness(50) -> brightness datapoint with the raw value stringified.
+    brightness = by_type["brightness"]
+    assert brightness["data"]["values"] == [{"key": "brightness", "value": "50"}]
+
+    # turn_on_light / turn_on_switch both send switch=1; turn_off sends switch=0.
+    switch_values = [
+        v
+        for msg in sent
+        if msg["data"]["type"] == "switch"
+        for v in msg["data"]["values"]
+    ]
+    assert {"key": "switch", "value": "1"} in switch_values
+    assert {"key": "switch", "value": "0"} in switch_values
+
+
+async def test_status_led_off_sends_zero(hass: HomeAssistant) -> None:
+    """set_status_led(False) sends the LED value field as "0"."""
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws
+    await coordinator.set_status_led("d", state=False)
+    sent = json.loads(ws.send_str.call_args.args[0])
+    assert sent["data"]["values"] == [{"key": "status_led", "value": "0"}]
+
+
+async def test_update_data_raises_update_failed_on_timeout(
+    hass: HomeAssistant,
+) -> None:
+    """A fetch TimeoutError surfaces as UpdateFailed (not a bare TimeoutError)."""
+    coordinator = _coordinator(hass)
+    with (
+        patch.object(
+            coordinator, "_fetch_devices_from_api", AsyncMock(side_effect=TimeoutError)
+        ),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_update_data()

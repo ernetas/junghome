@@ -267,16 +267,23 @@ async def test_reconfigure_host_collision(hass: HomeAssistant) -> None:
 
 
 async def test_register_step_captures_failure(hass: HomeAssistant) -> None:
-    """async_step_register surfaces a failed register task to the failure step."""
+    """async_step_register routes a failed register task to the failure form."""
     flow = _flow(hass)
 
     async def boom() -> str:
-        raise CannotRegister("x")
+        flow._error = "register_failed"  # what _async_register sets on failure
+        raise CannotRegister("x")  # the exception the flow catches
 
     flow._register_task = hass.async_create_task(boom())
-    await asyncio.sleep(0.01)
+    await hass.async_block_till_done()
     result = await flow.async_step_register()
     assert result["type"] == FlowResultType.SHOW_PROGRESS_DONE
+    assert result["step_id"] == "register_failed"
+
+    result = await flow.async_step_register_failed()
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "register_failed"
+    assert result["errors"] == {"base": "register_failed"}
 
 
 async def test_register_failed_step_shows_form(hass: HomeAssistant) -> None:
@@ -286,15 +293,23 @@ async def test_register_failed_step_shows_form(hass: HomeAssistant) -> None:
 
 
 async def test_reauth_confirm_captures_failure(hass: HomeAssistant) -> None:
+    """async_step_reauth_confirm routes a failed task to the reauth failure form."""
     flow = _flow(hass)
 
     async def boom() -> str:
-        raise CannotRegister("x")
+        flow._error = "register_failed"  # what _async_register sets on failure
+        raise CannotRegister("x")  # the exception the flow catches
 
     flow._register_task = hass.async_create_task(boom())
-    await asyncio.sleep(0.01)
+    await hass.async_block_till_done()
     result = await flow.async_step_reauth_confirm()
     assert result["type"] == FlowResultType.SHOW_PROGRESS_DONE
+    assert result["step_id"] == "reauth_failed"
+
+    result = await flow.async_step_reauth_failed()
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "reauth_failed"
+    assert result["errors"] == {"base": "register_failed"}
 
 
 async def test_reauth_failed_step_shows_form(hass: HomeAssistant) -> None:

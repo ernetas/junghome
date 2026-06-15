@@ -1,5 +1,9 @@
-# Coverage config. Excludes defensive/unreachable branches (bad-value guards,
-# missing-datapoint fallbacks) so the reported figure reflects reachable code.
+# Coverage config. The reported figure should reflect REACHABLE code, so we do
+# NOT broadly exclude defensive branches (bad-value guards, missing-datapoint
+# fallbacks, the migration's `except`) — those are reachable and are exercised
+# by tests/. Only never-executed TYPE_CHECKING import blocks are excluded here;
+# for a genuinely unreachable line, add a scoped `# pragma: no cover` on that
+# line rather than a package-wide regex.
 [run]
 source = custom_components/junghome
 
@@ -8,8 +12,3 @@ fail_under = 95
 show_missing = true
 exclude_also =
     if TYPE_CHECKING:
-    except \(TypeError, ValueError\):
-    except Exception:
-    if not datapoint:
-    if not self\._brightness_datapoint_id:
-    if not self\._color_temp_datapoint_id:

@@ -189,10 +189,17 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 return self.async_abort(reason="already_configured")
             else:
-                await self.async_set_unique_id(host)
-                return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_HOST: host}, unique_id=host
+                # Update the stored host and let the `add_update_listener` reload
+                # the entry exactly once (the host change makes its guard pass).
+                # Using async_update_reload_and_abort here would schedule a second,
+                # redundant reload on top of the listener's. The entry keeps its
+                # existing unique_id (the manual host or the zeroconf hostname) so
+                # a later mDNS rediscovery still matches it instead of surfacing a
+                # duplicate.
+                self.hass.config_entries.async_update_entry(
+                    entry, data={**entry.data, CONF_HOST: host}
                 )
+                return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -258,4 +265,4 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not token:
             self._error = "register_failed"
             raise CannotRegister("No token in response")
-        return token
+        return str(token)
