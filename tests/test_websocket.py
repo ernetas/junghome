@@ -67,6 +67,44 @@ async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> N
     ]
     session = Mock()
     session.ws_connect = Mock(return_value=_FakeWS(frames))
+    # Record ws_connected at the moment of the connect-time resync.
+    seen: dict[str, bool] = {}
+
+    async def _record_refresh() -> None:
+        seen["ws_connected"] = coordinator.ws_connected
+
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", _record_refresh),
+        pytest.raises(ConnectionError),
+    ):
+        await coordinator._run_websocket()
+
+    assert coordinator.gateway_version == "1.5.0"
+    # Lifecycle: ws_connected was True for the connect-time resync...
+    assert seen["ws_connected"] is True
+    # ...and is reset to False (with the socket cleared) in the finally block.
+    assert coordinator.ws_connected is False
+    assert coordinator.websocket is None
+
+
+async def test_ws_error_message_frame_logged(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A gateway `error:` message frame is surfaced at WARNING, not swallowed."""
+    coordinator = _coordinator(hass)
+    frames = [
+        _FakeMsg(
+            aiohttp.WSMsgType.TEXT,
+            '{"type":"message","data":"error: could not set datapoint"}',
+        ),
+        _FakeMsg(aiohttp.WSMsgType.ERROR, "boom"),
+    ]
+    session = Mock()
+    session.ws_connect = Mock(return_value=_FakeWS(frames))
     with (
         patch(
             "custom_components.junghome.coordinator.async_get_clientsession",
@@ -76,9 +114,25 @@ async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> N
         pytest.raises(ConnectionError),
     ):
         await coordinator._run_websocket()
+    assert "gateway reported an error" in caplog.text
 
-    assert coordinator.gateway_version == "1.5.0"
-    assert coordinator.websocket is None  # cleared in the finally block
+
+async def test_ws_handshake_auth_failure_triggers_reauth(hass: HomeAssistant) -> None:
+    """A 401 at the WS upgrade starts reauth and stops the reconnect loop."""
+    coordinator = _coordinator(hass)
+    err = aiohttp.WSServerHandshakeError(Mock(), (), status=401, message="unauthorized")
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_run_websocket",
+            AsyncMock(side_effect=err),
+        ),
+        patch.object(coordinator.config_entry, "async_start_reauth") as reauth,
+        patch("custom_components.junghome.coordinator.asyncio.sleep", AsyncMock()),
+    ):
+        await coordinator._websocket_loop()
+    # Reauth was started exactly once and the loop exited (no endless reconnect).
+    reauth.assert_called_once()
 
 
 async def test_apply_gateway_version_updates_registry(hass: HomeAssistant) -> None:
