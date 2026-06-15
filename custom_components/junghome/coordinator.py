@@ -9,7 +9,8 @@ from typing import Any
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -32,9 +33,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
         self, hass: HomeAssistant, config: dict[str, Any], config_entry: ConfigEntry
     ) -> None:
         """Initialize the coordinator."""
-        self.hass = hass
         self.config = config
         self.websocket: aiohttp.ClientWebSocketResponse | None = None
+        self.ws_connected: bool = False
+        # The datapoint id whose WebSocket push is being dispatched right now, or
+        # None for REST-poll-driven updates. Event entities read this to fire on
+        # a genuine push edge rather than diffing snapshots (see event.py). It is
+        # set only for the duration of one synchronous `async_set_updated_data`
+        # dispatch, so REST re-reads (which leave it None) never fire events.
+        self.pushed_datapoint_id: str | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
         self.gateway_version: str | None = None
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
@@ -69,6 +76,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                 translation_placeholders={"error": str(err)},
             ) from err
         except aiohttp.ClientError as err:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="cannot_connect",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except TimeoutError as err:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
@@ -114,14 +127,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
         url = f"https://{host}/api/junghome/functions"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
 
-        async with session.get(url, headers=headers) as response:
-            response.raise_for_status()
-            data = await response.json()
+        async with asyncio.timeout(30):
+            async with session.get(url, headers=headers) as response:
+                response.raise_for_status()
+                data = await response.json()
 
+        # The functions endpoint must return a JSON array of device objects; an
+        # error/object response would otherwise degrade into a list of dict keys
+        # and crash the platforms downstream.
+        if not isinstance(data, list):
+            raise UpdateFailed(
+                translation_domain=DOMAIN, translation_key="invalid_response"
+            )
         # Keep the full device payload so any firmware-stable identifier
         # (serial / address / etc.) is available for building unique IDs,
         # and is visible in the debug log above for inspection.
-        return list(data)
+        return [device for device in data if isinstance(device, dict)]
 
     async def _websocket_loop(self) -> None:
         """Keep a WebSocket connection alive, reconnecting with backoff on drop.
@@ -135,6 +156,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                 await self._run_websocket()
             except asyncio.CancelledError:
                 raise
+            except aiohttp.WSServerHandshakeError as err:
+                if err.status in (401, 403):
+                    # A revoked/expired token is rejected at the WS upgrade.
+                    # Reconnecting can't fix that, so stop and let Home Assistant
+                    # drive reauth instead of hammering the gateway with a token
+                    # it already refused. (The REST poll maps 401/403 to reauth
+                    # too, but this surfaces it immediately.)
+                    _LOGGER.warning(
+                        "Jung Home WebSocket rejected the token (HTTP %s); "
+                        "starting reauthentication",
+                        err.status,
+                    )
+                    if self.config_entry is not None:
+                        self.config_entry.async_start_reauth(self.hass)
+                    return
+                _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
             except Exception as err:
                 _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
             if self._closing:
@@ -158,6 +195,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             # debug logging during a long soak.
             self._reconnect_delay = INITIAL_RECONNECT_DELAY
             _LOGGER.info("Jung Home WebSocket connected")
+            self.ws_connected = True
             await self.async_request_refresh()
             try:
                 async for msg in ws:
@@ -176,9 +214,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                                     "Jung Home gateway firmware version: %s",
                                     self.gateway_version,
                                 )
+                                self._apply_gateway_version()
                                 continue
                             if data.get("type") == "message":
-                                _LOGGER.debug("Received initial message: %s", data)
+                                text = data.get("data")
+                                if isinstance(text, str) and text.startswith("error:"):
+                                    # The gateway reports a rejected command (e.g.
+                                    # a bad set) as an `error:` message frame. There
+                                    # is no message_id correlation, but surfacing it
+                                    # at WARNING beats silently dropping it.
+                                    _LOGGER.warning(
+                                        "Jung Home gateway reported an error: %s",
+                                        text,
+                                    )
+                                else:
+                                    _LOGGER.debug("Received message frame: %s", data)
                                 continue
                             self._handle_websocket_message(data)
                         except json.JSONDecodeError as e:
@@ -192,6 +242,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                         raise ConnectionError(f"WebSocket error frame: {msg}")
             finally:
                 self.websocket = None
+                self.ws_connected = False
 
     def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
@@ -209,16 +260,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                 )
                 return
             updated = False
-            for device in self.data:
-                for datapoint in device["datapoints"]:
-                    if datapoint["id"] == datapoint_id:
+            for device in self.data or []:
+                for datapoint in device.get("datapoints", []):
+                    if datapoint.get("id") == datapoint_id:
                         # Update all keys in the datapoint with the new data
                         for key, value in data.items():
                             if key != "id":
                                 datapoint[key] = value
                         _LOGGER.debug(
                             "Updated datapoint for device %s: %s",
-                            device["id"],
+                            device.get("id"),
                             datapoint,
                         )
                         updated = True
@@ -226,7 +277,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                 if updated:
                     break
             if updated:
-                self.async_set_updated_data(self.data)
+                # Flag the pushed datapoint for the duration of this dispatch so
+                # event entities fire on the push itself. `async_set_updated_data`
+                # notifies listeners synchronously, so the flag is valid for
+                # exactly this push and is cleared immediately afterwards; REST
+                # polls never set it and therefore never fire phantom events.
+                self.pushed_datapoint_id = datapoint_id
+                try:
+                    self.async_set_updated_data(self.data)
+                finally:
+                    self.pushed_datapoint_id = None
             else:
                 _LOGGER.warning("No matching datapoint found for id %s", datapoint_id)
         elif isinstance(data, list):
@@ -237,6 +297,24 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
                 "Received WebSocket message with unknown data type: %s", message
             )
 
+    def _apply_gateway_version(self) -> None:
+        """Push the gateway firmware version onto our devices in the registry.
+
+        An entity's ``device_info`` is only read when it is first added, which
+        may happen before the WebSocket ``version`` frame arrives. Update the
+        registry directly so the device page shows the version without needing a
+        reload. Combined with the ``device_info`` fallback this covers either
+        ordering (entities created before or after the frame).
+        """
+        if self.gateway_version is None or self.config_entry is None:
+            return
+        registry = dr.async_get(self.hass)
+        for device in dr.async_entries_for_config_entry(
+            registry, self.config_entry.entry_id
+        ):
+            if device.sw_version != self.gateway_version:
+                registry.async_update_device(device.id, sw_version=self.gateway_version)
+
     async def start(self) -> None:
         """Connect to the WebSocket.
 
@@ -246,7 +324,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
         """
         _LOGGER.debug("Starting coordinator: connecting to WebSocket")
         self._closing = False
-        self._ws_task = self.hass.loop.create_task(self._websocket_loop())
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
+            return
+        self._ws_task = entry.async_create_background_task(
+            self.hass, self._websocket_loop(), name="junghome_ws"
+        )
 
     async def stop(self) -> None:
         """Stop the coordinator and close the WebSocket connection."""
@@ -270,13 +353,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]])
             try:
                 await self.websocket.send_str(json.dumps(message))
                 _LOGGER.debug("WebSocket message sent successfully")
-            except Exception as e:
-                _LOGGER.error("Error sending WebSocket message: %s", e)
+            except Exception as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="cannot_send"
+                ) from err
         else:
-            # The reconnect loop in _websocket_loop() will restore the connection;
-            # this command is dropped rather than queued.
-            _LOGGER.error(
-                "WebSocket is not connected; command dropped (reconnect in progress)"
+            # The reconnect loop in _websocket_loop() will restore the connection,
+            # but surface the failure now so the command isn't silently treated as
+            # applied (callers optimistically update state only on success).
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="cannot_send"
             )
 
     async def turn_on_switch(self, datapoint_id: str) -> None:

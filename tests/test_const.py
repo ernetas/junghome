@@ -21,6 +21,11 @@ def test_datapoint_suffix_without_dash_returns_whole():
     assert datapoint_suffix("noindex") == "noindex"
 
 
+def test_datapoint_suffix_trailing_dash_returns_empty():
+    """A trailing dash leaves an empty suffix segment."""
+    assert datapoint_suffix("trailing-") == ""
+
+
 def test_device_slug_from_label():
     assert device_slug({"label": "Living Room R1 B"}) == "living_room_r1_b"
 
@@ -28,6 +33,45 @@ def test_device_slug_from_label():
 def test_device_slug_falls_back_to_id_then_default():
     assert device_slug({"id": "id123"}) == "id123"
     assert device_slug({}) == "jung"
+
+
+def test_device_slug_unicode_label_is_transliterated():
+    """Non-ASCII labels slugify deterministically (Küche -> kuche)."""
+    assert device_slug({"label": "Küche"}) == "kuche"
+
+
+def test_device_slug_whitespace_only_label_falls_through_to_id():
+    """A whitespace-only label is unsluggable ("unknown"); fall through to the
+    id, NOT to the literal "unknown"."""
+    assert device_slug({"label": "   ", "id": "id123"}) == "id123"
+    assert device_slug({"label": "   "}) == "jung"
+
+
+def test_device_slug_symbol_only_label_falls_through_not_unknown():
+    """A symbol-only label slugs to "unknown" in HA; the fallback must reach the
+    id (or "jung"), never return "unknown"."""
+    assert device_slug({"label": "❤", "id": "id123"}) == "id123"
+    assert device_slug({"label": "❤"}) == "jung"
+
+
+def test_device_slug_similar_labels_collide():
+    """Documented limitation: labels that slug identically collide. The gateway
+    exposes no hardware id, so this is accepted, not disambiguated."""
+    assert device_slug({"label": "Lamp 1"}) == "lamp_1"
+    assert device_slug({"label": "Lamp-1"}) == "lamp_1"
+    assert device_slug({"label": "Lamp 1"}) == device_slug({"label": "Lamp-1"})
+
+
+def test_stable_unique_id_duplicate_labels_collide():
+    """Documented limitation: two devices with the same label produce the SAME
+    stable_unique_id, so the second device's entity cannot register. Accepted
+    gateway constraint, pinned here so a future change is a conscious one."""
+    device_a = {"label": "Boiler", "id": "idAAAA-001"}
+    device_b = {"label": "Boiler", "id": "idBBBB-001"}
+    datapoint = {"id": "idXXXX-001"}
+    assert stable_unique_id(device_a, datapoint) == stable_unique_id(
+        device_b, datapoint
+    )
 
 
 def test_stable_unique_id_combines_slug_suffix_and_qualifier():

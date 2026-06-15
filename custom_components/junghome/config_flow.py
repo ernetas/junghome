@@ -31,12 +31,17 @@ class CannotRegister(Exception):
 
 
 def _normalize_host(host: str) -> str:
-    """Strip scheme/whitespace/trailing slash from a user-entered host."""
+    """Normalise a user-entered host (scheme/whitespace/slash/case).
+
+    Hosts and hostnames are case-insensitive, so lower-casing keeps a manually
+    entered hostname and the lower-case mDNS hostname from looking like two
+    different gateways.
+    """
     host = host.strip()
     for prefix in ("https://", "http://"):
         if host.lower().startswith(prefix):
             host = host[len(prefix) :]
-    return host.rstrip("/")
+    return host.rstrip("/").lower()
 
 
 class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -85,7 +90,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             self._token = self._register_task.result()
-        except Exception:
+        except CannotRegister:
             self._register_task = None
             return self.async_show_progress_done(next_step_id="register_failed")
 
@@ -136,7 +141,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             self._token = self._register_task.result()
-        except Exception:
+        except CannotRegister:
             self._register_task = None
             return self.async_show_progress_done(next_step_id="reauth_failed")
 
@@ -184,10 +189,17 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 return self.async_abort(reason="already_configured")
             else:
-                await self.async_set_unique_id(host)
-                return self.async_update_reload_and_abort(
-                    entry, data_updates={CONF_HOST: host}, unique_id=host
+                # Update the stored host and let the `add_update_listener` reload
+                # the entry exactly once (the host change makes its guard pass).
+                # Using async_update_reload_and_abort here would schedule a second,
+                # redundant reload on top of the listener's. The entry keeps its
+                # existing unique_id (the manual host or the zeroconf hostname) so
+                # a later mDNS rediscovery still matches it instead of surfacing a
+                # duplicate.
+                self.hass.config_entries.async_update_entry(
+                    entry, data={**entry.data, CONF_HOST: host}
                 )
+                return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -222,7 +234,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="zeroconf_confirm",
-                description_placeholders={"host": self._host},
+                description_placeholders={"host": self._host or ""},
             )
         return await self.async_step_register()
 
@@ -253,4 +265,4 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not token:
             self._error = "register_failed"
             raise CannotRegister("No token in response")
-        return token
+        return str(token)

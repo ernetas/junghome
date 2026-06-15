@@ -27,5 +27,8 @@ jobs:
       - name: Install requirements
         run: python3 -m pip install -r requirements_test.txt
 
+      - name: Type check (strict-typing)
+        run: python3 -m mypy custom_components/junghome --strict
+
       - name: Run tests
-        run: python3 -m pytest -q
+        run: python3 -m pytest -q --cov=custom_components/junghome --cov-report=term-missing
