@@ -15,7 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, device_slug
-from .models import Device
+from .models import Device, Scene
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.pushed_datapoint_id: str | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
         self.gateway_version: str | None = None
+        # Scene list, populated from the WebSocket `scenes` broadcasts (full list
+        # on connect, `scenes-new` / `scenes-deleted` deltas on change). The scene
+        # platform discovers from this; recall goes over REST because the
+        # WebSocket `scene` command is unimplemented on the gateway.
+        self.scenes: list[Scene] = []
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
         self._ws_task: asyncio.Task[None] | None = None
@@ -144,6 +149,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # trust boundary: untyped gateway JSON becomes the typed `Device` model.
         # Downstream code keeps defensive `.get(...)` access for malformed items.
         return cast("list[Device]", [d for d in data if isinstance(d, dict)])
+
+    async def activate_scene(self, scene_id: str) -> None:
+        """Activate a scene via REST (the WebSocket scene command is unimplemented)."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{self.config['host']}/api/junghome/scenes/{scene_id}"
+        headers = {
+            "token": f"{self.config['token']}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with asyncio.timeout(30):
+                async with session.post(url, headers=headers) as response:
+                    response.raise_for_status()
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="cannot_send"
+            ) from err
 
     async def _websocket_loop(self) -> None:
         """Keep a WebSocket connection alive, reconnecting with backoff on drop.
@@ -294,12 +316,38 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             else:
                 _LOGGER.warning("No matching datapoint found for id %s", datapoint_id)
         elif isinstance(data, list):
-            # groups / scenes broadcasts — not consumed by any entity; ignore.
-            _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
+            if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
+                self._handle_scenes_broadcast(msg_type, data)
+            else:
+                # groups broadcasts — not consumed by any entity; ignore.
+                _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
         else:
             _LOGGER.warning(
                 "Received WebSocket message with unknown data type: %s", message
             )
+
+    def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:
+        """Update the cached scene list from a WebSocket scenes broadcast.
+
+        The gateway pushes the full ``scenes`` list on connect and on change, and
+        ``scenes-new`` / ``scenes-deleted`` deltas when scenes are added/removed
+        in the app. The scene platform discovers from ``self.scenes`` and is
+        notified via ``async_update_listeners`` so new scenes appear without a
+        reload. (The WebSocket ``scene`` *command* is unimplemented on the
+        gateway, so recall still goes over REST — see ``activate_scene``.)
+        """
+        items = cast("list[Scene]", [s for s in data if isinstance(s, dict)])
+        if msg_type == "scenes":
+            self.scenes = items
+        elif msg_type == "scenes-new":
+            by_id = {s.get("id"): s for s in self.scenes}
+            for scene in items:
+                by_id[scene.get("id")] = scene
+            self.scenes = list(by_id.values())
+        else:  # scenes-deleted
+            removed = {s.get("id") for s in items}
+            self.scenes = [s for s in self.scenes if s.get("id") not in removed]
+        self.async_update_listeners()
 
     def _apply_gateway_version(self) -> None:
         """Push the gateway firmware version onto our devices in the registry.
@@ -454,6 +502,71 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 "id": datapoint_id,
                 "type": "status_led",
                 "values": [{"key": "status_led", "value": value}],
+            },
+        }
+        await self.send_websocket_message(message)
+
+    async def set_level(self, datapoint_id: str, level: int) -> None:
+        """Set a cover's position level (device scale 0-100)."""
+        message = {
+            "type": "datapoint",
+            "data": {
+                "id": datapoint_id,
+                "type": "level",
+                "values": [{"key": "level", "value": str(level)}],
+            },
+        }
+        await self.send_websocket_message(message)
+
+    async def move_level(self, datapoint_id: str, direction: int) -> None:
+        """Move/stop a cover via the ``level_move`` key.
+
+        ``direction`` is the gateway's tri-state: ``1`` / ``-1`` to start moving,
+        ``0`` to stop. (See ``cdb_types_datapoints.json``: ``level_move`` range
+        ``["-1","0","1"]``.)
+        """
+        message = {
+            "type": "datapoint",
+            "data": {
+                "id": datapoint_id,
+                "type": "level",
+                "values": [{"key": "level_move", "value": str(direction)}],
+            },
+        }
+        await self.send_websocket_message(message)
+
+    async def set_angle(self, datapoint_id: str, angle: int) -> None:
+        """Set a cover's slat angle (device scale 0-100)."""
+        message = {
+            "type": "datapoint",
+            "data": {
+                "id": datapoint_id,
+                "type": "angle",
+                "values": [{"key": "angle", "value": str(angle)}],
+            },
+        }
+        await self.send_websocket_message(message)
+
+    async def set_temperature(self, datapoint_id: str, temperature: float) -> None:
+        """Set a thermostat's target temperature (°C)."""
+        message = {
+            "type": "datapoint",
+            "data": {
+                "id": datapoint_id,
+                "type": "temperature_ctrl",
+                "values": [{"key": "temperature_ctrl", "value": str(temperature)}],
+            },
+        }
+        await self.send_websocket_message(message)
+
+    async def set_temperature_preset(self, datapoint_id: str, preset: str) -> None:
+        """Set a thermostat preset (``none`` / ``frost`` / ``eco`` / ``comfort``)."""
+        message = {
+            "type": "datapoint",
+            "data": {
+                "id": datapoint_id,
+                "type": "temperature_ctrl",
+                "values": [{"key": "temperature_ctrl_preset", "value": preset}],
             },
         }
         await self.send_websocket_message(message)

@@ -93,8 +93,19 @@ Common `values` keys by device type:
 | Switch / light on-off | `switch` = `"0"` / `"1"` |
 | Dimmer | `brightness` = `"0".."100"` (device scale) |
 | Tunable white | `color_temperature` = Kelvin, e.g. `"2700"` |
+| Cover position | `level` = `"0".."100"` (device scale; see note below) |
+| Cover move / stop | `level_move` = `"1"` / `"-1"` (move) / `"0"` (stop) |
+| Cover slat tilt | `angle` = `"0".."100"` |
+| Thermostat target | `temperature_ctrl` = °C, e.g. `"21.5"` (range 5..30) |
+| Thermostat preset | `temperature_ctrl_preset` = `none` / `frost` / `eco` / `comfort` |
 | Status LED (rocker) | `status_led` = `"0"` / `"1"` |
 | Rocker press (read-only events) | `up_request` / `down_request` / `trigger_request` = `"1"` |
+
+> **Cover `level` direction is unconfirmed.** The dump used to reverse-engineer
+> this was factory-reset (no live cover), and neither the gateway nor its docs
+> state whether `level` is percent-open or percent-closed. The integration
+> assumes percent-*closed* (HA position = `100 - level`). Verify against
+> hardware; the inversion lives in one place (`cover.py` `_to_ha`/`_to_device`).
 
 ### Other command types
 
@@ -117,6 +128,9 @@ Any failure is returned as a `message` frame:
 
 - State updates arrive as `datapoint` broadcasts; the coordinator matches them to
   entities. Commands are sent as `datapoint` set frames.
+- The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
+  broadcasts to populate the scene platform (recall is REST-only). `groups`
+  broadcasts are still ignored.
 - Reconnect on drop: the gateway sends the full `functions`/`groups`/`scenes`
   snapshot again on every new connection, so re-syncing is automatic.
 - Watch `functions` / `*-new` / `*-deleted` frames to pick up devices added or

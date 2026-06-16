@@ -10,8 +10,18 @@ Currently functional things:
 - BT S1 B2 U switch actuators.
 - Dimmers (DALI, etc.) - color and brightness as well as On/Off.
 - Sockets - On/Off, energy statistics, etc.
+- Blinds / shutters (covers) - open/close/stop, position, and slat tilt.
+- Thermostats (room temperature regulators) - target temperature and presets.
+- Scenes - recall any Jung Home scene from Home Assistant.
+- Measurement sensors (e.g. ambient brightness on presence detectors).
 - IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.
 - Button LED On/Off (unfortunately, color can only be configured via app or BT Mesh/NRF).
+
+> Note: covers, thermostats, scenes and measurement sensors are implemented from
+> the gateway protocol but have **not yet been verified against real hardware**.
+> If you have such a device, feedback is very welcome — in particular whether a
+> blind's open/closed position reads the right way round (the direction is an
+> assumption; see `docs/gateway-websocket.md`).
 
 All communication is via WebSockets. I've managed to reliably automate:
 - Single click

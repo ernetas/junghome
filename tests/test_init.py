@@ -60,7 +60,7 @@ DEVICES = [
     },
     {
         "id": "iddim1",
-        "type": "ColorLight",
+        "type": "DimmerLight",
         "label": "Dimmer",
         "datapoints": [
             {
@@ -72,6 +72,48 @@ DEVICES = [
                 "id": "iddim1-002",
                 "type": "brightness",
                 "values": [{"key": "brightness", "value": "30"}],
+            },
+        ],
+    },
+    {
+        "id": "idblind1",
+        "type": "PositionAndAngle",
+        "label": "Bedroom Blind",
+        "datapoints": [
+            {
+                "id": "idblind1-001",
+                "type": "level",
+                # device level 30% closed -> HA position 70 (open)
+                "values": [{"key": "level", "value": "30"}],
+            },
+            {
+                "id": "idblind1-002",
+                "type": "angle",
+                "values": [{"key": "angle", "value": "40"}],
+            },
+        ],
+    },
+    {
+        "id": "idrtr1",
+        "type": "Thermostat",
+        "label": "Living Room",
+        "datapoints": [
+            {
+                "id": "idrtr1-001",
+                "type": "temperature_ctrl",
+                "values": [
+                    {"key": "temperature_ctrl", "value": "21.5"},
+                    {"key": "temperature_ctrl_preset", "value": "comfort"},
+                ],
+            },
+            {
+                "id": "idrtr1-010",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "20.0"},
+                    {"key": "quantity_label", "value": "Temperature "},
+                    {"key": "quantity_unit", "value": "°C"},
+                ],
             },
         ],
     },
@@ -101,6 +143,22 @@ DEVICES = [
                     {"key": "quantity", "value": "42"},
                     {"key": "quantity_label", "value": "Status "},
                     {"key": "quantity_unit", "value": "?"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "idmeas1",
+        "type": "Measurement",
+        "label": "Hallway Sensor",
+        "datapoints": [
+            {
+                "id": "idmeas1-010",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "120"},
+                    {"key": "quantity_label", "value": "Illuminance "},
+                    {"key": "quantity_unit", "value": "lux"},
                 ],
             },
         ],
@@ -918,3 +976,133 @@ async def test_migration_per_item_error_leaves_flag_unset(
     assert entry.data.get("stable_ids_migrated") is not True
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_dimmer_light_created(hass: HomeAssistant, init_integration) -> None:
+    """A DimmerLight (switch + brightness, no color temp) becomes a brightness light."""
+    state = hass.states.get("light.dimmer")
+    assert state is not None
+    assert state.attributes["supported_color_modes"] == ["brightness"]
+    # 30% device brightness -> round(30 * 255 / 100) = 77
+    # (light is off in the fixture, so brightness is reported but state is off)
+
+
+async def test_dimmer_brightness_command(hass: HomeAssistant, init_integration) -> None:
+    coordinator = init_integration.runtime_data
+    with patch.object(coordinator, "set_brightness", AsyncMock()) as sb:
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.dimmer", "brightness": 255},
+            blocking=True,
+        )
+    assert sb.called
+    assert sb.call_args.args[1] == 100  # 255 HA -> 100 device
+
+
+async def test_cover_created_and_position(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Position is inverted: device level 30 (closed%) -> HA position 70 (open%)."""
+    state = hass.states.get("cover.bedroom_blind")
+    assert state is not None
+    assert state.attributes["current_position"] == 70
+    assert state.attributes["current_tilt_position"] == 40
+    assert state.state == "open"
+
+
+async def test_cover_commands(hass: HomeAssistant, init_integration) -> None:
+    coordinator = init_integration.runtime_data
+    with (
+        patch.object(coordinator, "set_level", AsyncMock()) as sl,
+        patch.object(coordinator, "set_angle", AsyncMock()) as sa,
+        patch.object(coordinator, "move_level", AsyncMock()) as ml,
+    ):
+        await hass.services.async_call(
+            "cover", "open_cover", {"entity_id": "cover.bedroom_blind"}, blocking=True
+        )
+        await hass.services.async_call(
+            "cover", "close_cover", {"entity_id": "cover.bedroom_blind"}, blocking=True
+        )
+        await hass.services.async_call(
+            "cover",
+            "set_cover_position",
+            {"entity_id": "cover.bedroom_blind", "position": 25},
+            blocking=True,
+        )
+        await hass.services.async_call(
+            "cover", "stop_cover", {"entity_id": "cover.bedroom_blind"}, blocking=True
+        )
+        await hass.services.async_call(
+            "cover",
+            "set_cover_tilt_position",
+            {"entity_id": "cover.bedroom_blind", "tilt_position": 60},
+            blocking=True,
+        )
+    # open -> device level 0, close -> device level 100, position 25 -> device 75
+    assert [c.args[1] for c in sl.call_args_list] == [0, 100, 75]
+    assert sa.call_args.args[1] == 60
+    assert ml.call_args.args[1] == 0  # stop
+
+
+async def test_climate_created(hass: HomeAssistant, init_integration) -> None:
+    state = hass.states.get("climate.living_room")
+    assert state is not None
+    assert state.attributes["temperature"] == 21.5
+    assert state.attributes["preset_mode"] == "comfort"
+    # Current temperature read from the sibling °C quantity datapoint.
+    assert state.attributes["current_temperature"] == 20.0
+
+
+async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
+    coordinator = init_integration.runtime_data
+    with (
+        patch.object(coordinator, "set_temperature", AsyncMock()) as st,
+        patch.object(coordinator, "set_temperature_preset", AsyncMock()) as sp,
+    ):
+        await hass.services.async_call(
+            "climate",
+            "set_temperature",
+            {"entity_id": "climate.living_room", "temperature": 22.5},
+            blocking=True,
+        )
+        await hass.services.async_call(
+            "climate",
+            "set_preset_mode",
+            {"entity_id": "climate.living_room", "preset_mode": "eco"},
+            blocking=True,
+        )
+    assert st.call_args.args[1] == 22.5
+    assert sp.call_args.args[1] == "eco"
+
+
+async def test_measurement_sensor_created(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A Measurement function's quantity surfaces as a sensor (lux -> illuminance)."""
+    state = hass.states.get("sensor.hallway_sensor_illuminance")
+    assert state is not None
+    assert state.state == "120.0"
+    assert state.attributes["unit_of_measurement"] == "lx"
+    assert state.attributes["device_class"] == "illuminance"
+
+
+async def test_scene_created_and_activated(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Scenes arrive over the WebSocket and recall via REST with a re-resolved id."""
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "scenes",
+            "data": [{"id": "idscene1", "label": "Movie Night"}],
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night") is not None
+
+    with patch.object(coordinator, "activate_scene", AsyncMock()) as act:
+        await hass.services.async_call(
+            "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
+        )
+    assert act.call_args.args[0] == "idscene1"

@@ -12,11 +12,21 @@ JUNG HOME Gateway over its REST API and WebSocket.
     app-approval registration.
   - `const.py` — `DOMAIN` and the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`).
-  - `light.py`, `switch.py`, `sensor.py`, `event.py` — platforms (each does live
-    discovery of devices added at runtime). `event.py` exposes RockerSwitch
-    buttons; the gateway only reports raw `pressed` / `depressed` edges (no
-    native single/double/hold) and alternates a button between its `up_request`
-    and `down_request` events on consecutive presses.
+  - `light.py`, `switch.py`, `sensor.py`, `event.py`, `cover.py`, `climate.py`,
+    `scene.py` — platforms (each does live discovery of devices added at
+    runtime). `event.py` exposes RockerSwitch buttons; the gateway only reports
+    raw `pressed` / `depressed` edges (no native single/double/hold) and
+    alternates a button between its `up_request` and `down_request` events on
+    consecutive presses. Function-type → platform map:
+    `OnOff`/`DimmerLight`/`ColorLight` → light (capabilities follow the
+    datapoints present, not the type name); `Socket` → switch + sensor;
+    `Measurement` → sensor; `Position`/`PositionAndAngle` → cover;
+    `Thermostat` → climate; `RockerSwitch` → event + switch (status LED).
+    Scenes come from the WebSocket `scenes` broadcast and recall over REST
+    (`POST /scenes/{id}`; the WebSocket `scene` command is unimplemented).
+    **Cover position convention is an unverified assumption** — the gateway
+    `level` is treated as percent-*closed* (HA position = `100 - level`); the
+    single inversion point is `_to_ha`/`_to_device` in `cover.py`.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped HA blueprint
   deriving single/double/hold from those raw edges. Users import it by URL; it is
   **not** distributed by HACS (HACS only installs `custom_components/`).
