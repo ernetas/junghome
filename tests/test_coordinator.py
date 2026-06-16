@@ -149,3 +149,25 @@ async def test_activate_scene_raises_on_error(hass: HomeAssistant) -> None:
         pytest.raises(HomeAssistantError),
     ):
         await coordinator.activate_scene("idX")
+
+
+async def test_scene_recall_fires_event(hass: HomeAssistant) -> None:
+    """A `scene` recall frame fires junghome_scene_recalled (not a datapoint)."""
+    coordinator = _coordinator(hass)
+    events = []
+    hass.bus.async_listen(f"{DOMAIN}_scene_recalled", events.append)
+    coordinator._handle_websocket_message(
+        {
+            "type": "scene",
+            "data": {
+                "id": "id0001",
+                "label": "Išjungti WC",
+                "related_functions": [],
+                "value": "0001",
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    assert events[0].data["scene_id"] == "id0001"
+    assert events[0].data["label"] == "Išjungti WC"
