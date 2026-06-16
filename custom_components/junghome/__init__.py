@@ -46,9 +46,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # Expose the coordinator as runtime data for the platforms.
     entry.runtime_data = coordinator
 
-    # Connect to the WebSocket for live updates
-    await coordinator.start()
-
     # One-time migration of registry entries from the gateway's volatile device
     # ids to firmware-stable, label-based ids. Must run while the gateway's ids
     # still match the registry (i.e. before the platforms create new entities).
@@ -60,6 +57,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
     # Forward the setup to the appropriate platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Connect to the WebSocket only after the platforms exist, so live pushes
+    # (datapoint updates, scene broadcasts/recalls) flow to registered entities
+    # rather than being dispatched into the void during setup. The initial state
+    # already came from async_config_entry_first_refresh() above.
+    await coordinator.start()
 
     # Prune HA devices the gateway no longer reports (quality-scale stale-devices).
     @callback

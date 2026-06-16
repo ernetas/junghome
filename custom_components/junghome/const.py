@@ -7,6 +7,21 @@ from .models import Datapoint, Device
 DOMAIN = "junghome"
 
 
+def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
+    """Return the value for ``key`` in a datapoint's ``values``, or ``None``.
+
+    Centralises the "scan the ``[{key, value}, ...]`` list for a key" loop that
+    every platform otherwise repeats. Callers convert/interpret the raw string
+    value themselves (``== "1"``, ``float(...)``, scaling, ...).
+    """
+    if not datapoint:
+        return None
+    for value in datapoint.get("values", []):
+        if value.get("key") == key:
+            return value.get("value")
+    return None
+
+
 def datapoint_suffix(datapoint_id: str) -> str:
     """Return the stable element index of a datapoint id.
 

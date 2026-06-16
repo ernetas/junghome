@@ -363,12 +363,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The gateway broadcasts ``{"type":"scene","data":{...scene...}}`` whenever a
         scene is activated — including by a physical button, not just by this
         integration. Re-emitting it on the HA event bus lets users automate on
-        "scene X was recalled". The frame is sometimes delivered more than once
-        for a single recall, so automations should be idempotent (e.g. ``mode:
-        single`` with a short cooldown).
+        "scene X was recalled".
         """
         scene_id = data.get("id")
         label = data.get("label")
+        if scene_id is None:
+            _LOGGER.debug("Ignoring scene recall frame without an id: %s", data)
+            return
         _LOGGER.debug("Scene recalled: %s (%s)", label, scene_id)
         event_data: dict[str, Any] = {"scene_id": scene_id, "label": label}
         if self.config_entry is not None:

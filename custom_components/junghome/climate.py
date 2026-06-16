@@ -25,12 +25,11 @@ from homeassistant.components.climate.const import (
 )
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,11 +92,13 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_climates))
 
 
-class JungHomeClimate(CoordinatorEntity[JungHomeDataUpdateCoordinator], ClimateEntity):
+class JungHomeClimate(JungHomeEntity, ClimateEntity):
     """Representation of a Jung Home thermostat."""
 
-    _attr_has_entity_name = True
     _attr_name = None
+    # Drives attribute translations (the custom `frost` preset has no HA core
+    # string). With _attr_name = None the entity still adopts the device name.
+    _attr_translation_key = "thermostat"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_min_temp = DEFAULT_MIN_TEMP
@@ -118,8 +119,7 @@ class JungHomeClimate(CoordinatorEntity[JungHomeDataUpdateCoordinator], ClimateE
         ctrl_datapoint: Datapoint,
     ) -> None:
         """Initialize the thermostat."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = ctrl_datapoint
         self._ctrl_datapoint_id = ctrl_datapoint["id"]
         self._name = device.get("label", "Jung Thermostat")
@@ -147,24 +147,6 @@ class JungHomeClimate(CoordinatorEntity[JungHomeDataUpdateCoordinator], ClimateE
     def preset_mode(self) -> str | None:
         """Return the active preset."""
         return self._preset_mode
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this thermostat."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available."""
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set a new target temperature."""
@@ -194,23 +176,9 @@ class JungHomeClimate(CoordinatorEntity[JungHomeDataUpdateCoordinator], ClimateE
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
+        device = self._current_device()
         if device:
-            ctrl_dp = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp.get("id") == self._ctrl_datapoint_id
-                ),
-                None,
-            )
+            ctrl_dp = self._find_datapoint(self._ctrl_datapoint_id)
             if ctrl_dp:
                 self._target_temperature = self._get_target_from_datapoint(ctrl_dp)
                 self._preset_mode = self._get_preset_from_datapoint(ctrl_dp)
@@ -218,43 +186,33 @@ class JungHomeClimate(CoordinatorEntity[JungHomeDataUpdateCoordinator], ClimateE
         self.async_write_ha_state()
 
     def _get_target_from_datapoint(self, datapoint: Datapoint | None) -> float | None:
-        if not datapoint:
+        value = datapoint_value(datapoint, "temperature_ctrl")
+        if value is None:
             return None
-        for value in datapoint.get("values", []):
-            if value["key"] == "temperature_ctrl":
-                try:
-                    return float(value["value"])
-                except (TypeError, ValueError):
-                    return None
-        return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _get_preset_from_datapoint(self, datapoint: Datapoint | None) -> str | None:
-        if not datapoint:
+        value = datapoint_value(datapoint, "temperature_ctrl_preset")
+        if value is None:
             return None
-        for value in datapoint.get("values", []):
-            if value["key"] == "temperature_ctrl_preset":
-                return _DEVICE_TO_HA_PRESET.get(value["value"])
-        return None
+        return _DEVICE_TO_HA_PRESET.get(value)
 
     def _get_current_temperature(self, device: Device) -> float | None:
         """Read an ambient temperature from a sibling °C quantity datapoint, if any."""
         for dp in device.get("datapoints", []):
             if dp.get("type") != "quantity":
                 continue
-            unit = next(
-                (
-                    (v.get("value") or "").strip().lower()
-                    for v in dp.get("values", [])
-                    if v.get("key") == "quantity_unit"
-                ),
-                None,
-            )
+            unit = (datapoint_value(dp, "quantity_unit") or "").strip().lower()
             if unit not in ("°c", "c"):
                 continue
-            for v in dp.get("values", []):
-                if v.get("key") == "quantity":
-                    try:
-                        return float(v["value"])
-                    except (TypeError, ValueError):
-                        return None
+            value = datapoint_value(dp, "quantity")
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
         return None

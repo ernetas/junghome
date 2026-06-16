@@ -41,23 +41,36 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home scenes from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    entities: dict[str, JungHomeScene] = {}
 
     @callback
     def _discover_scenes() -> None:
-        """Add entities for any scenes not yet created."""
-        new_entities: list[JungHomeScene] = []
+        """Add scenes that appeared and remove scenes the gateway deleted.
+
+        Unlike the device platforms (which prune whole devices in __init__),
+        scenes have no backing device, so they are added and removed here as the
+        gateway's ``scenes`` / ``scenes-deleted`` broadcasts change the list.
+        """
+        current: dict[str, str] = {}  # unique_id -> label
         for scene in coordinator.scenes or []:
             label = scene.get("label")
-            if not label:
-                continue
-            uid = f"{_scene_slug(label)}_scene"
-            if uid in known:
-                continue
-            known.add(uid)
-            new_entities.append(JungHomeScene(coordinator, label, uid))
+            if label:
+                current[f"{_scene_slug(label)}_scene"] = label
+
+        new_entities: list[JungHomeScene] = []
+        for uid, label in current.items():
+            if uid not in entities:
+                entity = JungHomeScene(coordinator, label, uid)
+                entities[uid] = entity
+                new_entities.append(entity)
         if new_entities:
             async_add_entities(new_entities)
+
+        # Drop entities whose scene no longer exists, so a deleted scene doesn't
+        # linger as an always-failing entity.
+        for uid in list(entities):
+            if uid not in current:
+                hass.async_create_task(entities.pop(uid).async_remove())
 
     _discover_scenes()
     entry.async_on_unload(coordinator.async_add_listener(_discover_scenes))
@@ -66,6 +79,10 @@ async def async_setup_entry(
 class JungHomeScene(CoordinatorEntity[JungHomeDataUpdateCoordinator], SceneEntity):
     """Representation of a Jung Home scene."""
 
+    # Scenes have no backing JUNG device, so (like Home Assistant's own scene
+    # platform) the scene's own label is the entity name rather than a
+    # device-prefixed one. This is why the scene entity does not use
+    # JungHomeEntity and sets has_entity_name = False with an explicit name.
     _attr_has_entity_name = False
 
     def __init__(

@@ -171,3 +171,15 @@ async def test_scene_recall_fires_event(hass: HomeAssistant) -> None:
     assert len(events) == 1
     assert events[0].data["scene_id"] == "id0001"
     assert events[0].data["label"] == "Išjungti WC"
+
+
+async def test_scene_recall_without_id_is_ignored(hass: HomeAssistant) -> None:
+    """A scene recall frame with no id fires no event."""
+    coordinator = _coordinator(hass)
+    events = []
+    hass.bus.async_listen(f"{DOMAIN}_scene_recalled", events.append)
+    coordinator._handle_websocket_message(
+        {"type": "scene", "data": {"label": "No id here"}}
+    )
+    await hass.async_block_till_done()
+    assert events == []

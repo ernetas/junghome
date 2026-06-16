@@ -6,12 +6,11 @@ from typing import Any
 from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,13 +53,12 @@ async def async_setup_entry(
     config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))
 
 
-class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntity):
+class JungHomeLight(JungHomeEntity, LightEntity):
     """Representation of a Jung Home light."""
 
     # The light is the device's main feature, so it adopts the device name. With
     # has_entity_name the entity_id is `light.<device>` instead of the old
     # `light.<device>_<device>` (label was previously baked into the name too).
-    _attr_has_entity_name = True
     _attr_name = None
 
     def __init__(
@@ -70,8 +68,7 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         datapoint: Datapoint,
     ) -> None:
         """Initialize the light."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = datapoint
         # Find related datapoints (brightness / color_temperature) for ColorLight
         self._brightness_datapoint = next(
@@ -156,68 +153,25 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         """Return the color temperature in Kelvin (device-native)."""
         return self._color_temp
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this light."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for light %s", self._name)
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        if device:
-            datapoint = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp.get("id") == self._datapoint["id"]
-                ),
-                None,
-            )
-            if datapoint:
-                self._is_on = self._get_state_from_datapoint(datapoint)
-                if self._has_brightness:
-                    # Update brightness/color_temp from their respective datapoints (if available)
-                    if self._brightness_datapoint_id:
-                        brightness_dp = next(
-                            (
-                                dp
-                                for dp in device.get("datapoints", [])
-                                if dp.get("id") == self._brightness_datapoint_id
-                            ),
-                            None,
-                        )
-                        self._brightness = self._get_brightness_from_datapoint(
-                            brightness_dp
-                        )
-                    if self._color_temp_datapoint_id:
-                        color_dp = next(
-                            (
-                                dp
-                                for dp in device.get("datapoints", [])
-                                if dp.get("id") == self._color_temp_datapoint_id
-                            ),
-                            None,
-                        )
-                        self._color_temp = self._get_color_temp_from_datapoint(color_dp)
-                _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
-                self.async_write_ha_state()
+        datapoint = self._find_datapoint(self._datapoint["id"])
+        if datapoint:
+            self._is_on = self._get_state_from_datapoint(datapoint)
+            if self._has_brightness:
+                # Update brightness/color_temp from their respective datapoints.
+                if self._brightness_datapoint_id:
+                    self._brightness = self._get_brightness_from_datapoint(
+                        self._find_datapoint(self._brightness_datapoint_id)
+                    )
+                if self._color_temp_datapoint_id:
+                    self._color_temp = self._get_color_temp_from_datapoint(
+                        self._find_datapoint(self._color_temp_datapoint_id)
+                    )
+            _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
+            self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on."""
@@ -239,41 +193,21 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         self._is_on = False
         self.async_write_ha_state()
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed for this entity."""
-        return False
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        A live WebSocket link means the gateway is reachable, so it is the
-        primary availability signal; fall back to the last REST poll result
-        until the socket first connects (or while it is reconnecting).
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
-
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         """Extract the state of the light from its datapoint."""
-        for value in datapoint.get("values", []):
-            if value["key"] == "switch":
-                return value["value"] == "1"
-        return False
+        return datapoint_value(datapoint, "switch") == "1"
 
     def _get_brightness_from_datapoint(self, datapoint: Datapoint | None) -> int:
         """Extract the brightness of the light from its datapoint."""
-        if not datapoint:
+        value = datapoint_value(datapoint, "brightness")
+        if value is None:
             return 0
-        for value in datapoint.get("values", []):
-            if value["key"] == "brightness":
-                try:
-                    raw = int(value["value"])
-                except (TypeError, ValueError):
-                    raw = 0
-                # Device reports 0-100; convert linearly to HA 0-255
-                return round(raw * 255 / 100)
-        return 0
+        try:
+            raw = int(value)
+        except (TypeError, ValueError):
+            raw = 0
+        # Device reports 0-100; convert linearly to HA 0-255
+        return round(raw * 255 / 100)
 
     def _ha_to_raw_brightness(self, ha_brightness: int) -> int:
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
@@ -284,16 +218,14 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
 
     def _get_color_temp_from_datapoint(self, datapoint: Datapoint | None) -> int | None:
         """Extract the color temperature of the light from its datapoint."""
-        if not datapoint:
+        value = datapoint_value(datapoint, "color_temperature")
+        if value is None:
             return None
-        for value in datapoint.get("values", []):
-            if value["key"] == "color_temperature":
-                try:
-                    # Device reports Kelvin; store Kelvin
-                    return int(value["value"])
-                except (TypeError, ValueError):
-                    return None
-        return None
+        try:
+            # Device reports Kelvin; store Kelvin
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""

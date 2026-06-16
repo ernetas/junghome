@@ -4,12 +4,11 @@ import logging
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,14 +65,11 @@ async def async_setup_entry(
 # ------------------------------------------
 # 🔹 EVENT ENTITY (For UI Integration)
 # ------------------------------------------
-class JungHomeEventEntity(
-    CoordinatorEntity[JungHomeDataUpdateCoordinator], EventEntity
-):
+class JungHomeEventEntity(JungHomeEntity, EventEntity):
     """Event entity for Jung Home button presses."""
 
     _attr_event_types = ["pressed", "depressed"]
     _attr_device_class = EventDeviceClass.BUTTON
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -82,8 +78,7 @@ class JungHomeEventEntity(
         datapoint: Datapoint,
     ) -> None:
         """Initialize the event entity."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = datapoint
         dp_type = datapoint.get("type", "Unknown")
         translation_key = _EVENT_TRANSLATION_KEYS.get(dp_type)
@@ -93,30 +88,6 @@ class JungHomeEventEntity(
             self._attr_name = dp_type
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
         # Icon comes from icons.json (icon-translations).
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        Matches the light/socket/LED entities: a live WebSocket link is the
-        primary availability signal, falling back to the last REST poll, so an
-        event entity doesn't go unavailable on a transient REST-poll miss while
-        the WebSocket (which actually delivers its presses) is still connected.
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information for this event entity."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -134,22 +105,7 @@ class JungHomeEventEntity(
         # write state below, so availability tracks the gateway connection without
         # ever emitting a phantom press.
         if self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
-            device = next(
-                (
-                    d
-                    for d in self.coordinator.data or []
-                    if d.get("id") == self._device["id"]
-                ),
-                None,
-            )
-            datapoint = next(
-                (
-                    dp
-                    for dp in (device["datapoints"] if device else [])
-                    if dp.get("id") == self._datapoint["id"]
-                ),
-                None,
-            )
+            datapoint = self._find_datapoint(self._datapoint["id"])
             if datapoint:
                 event_type = (
                     "pressed"
@@ -165,10 +121,4 @@ class JungHomeEventEntity(
 
         Scoped to this datapoint's own type so bundled request keys don't merge.
         """
-        for value in datapoint.get("values", []):
-            if (
-                value.get("key") == self._datapoint.get("type")
-                and value.get("value") == "1"
-            ):
-                return True
-        return False
+        return datapoint_value(datapoint, self._datapoint.get("type", "")) == "1"

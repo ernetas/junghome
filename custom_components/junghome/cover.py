@@ -32,12 +32,11 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,8 +49,12 @@ _MOVE_STOP = 0
 
 
 def _to_ha(device_level: int) -> int:
-    """Convert a device level (% closed) to a Home Assistant position (% open)."""
-    return 100 - device_level
+    """Convert a device level (% closed) to a Home Assistant position (% open).
+
+    Clamped to 0..100: the gateway level is untrusted JSON, and an out-of-range
+    value would otherwise produce an invalid HA position and break ``is_closed``.
+    """
+    return max(0, min(100, 100 - device_level))
 
 
 def _to_device(ha_position: int) -> int:
@@ -97,12 +100,11 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_covers))
 
 
-class JungHomeCover(CoordinatorEntity[JungHomeDataUpdateCoordinator], CoverEntity):
+class JungHomeCover(JungHomeEntity, CoverEntity):
     """Representation of a Jung Home cover (blind / shutter)."""
 
     # The cover is the device's main feature, so it adopts the device name
     # (entity_id `cover.<device>`).
-    _attr_has_entity_name = True
     _attr_name = None
     _attr_device_class = CoverDeviceClass.BLIND
 
@@ -113,8 +115,7 @@ class JungHomeCover(CoordinatorEntity[JungHomeDataUpdateCoordinator], CoverEntit
         level_datapoint: Datapoint,
     ) -> None:
         """Initialize the cover."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = level_datapoint
         self._level_datapoint_id = level_datapoint["id"]
         self._angle_datapoint = next(
@@ -166,28 +167,6 @@ class JungHomeCover(CoordinatorEntity[JungHomeDataUpdateCoordinator], CoverEntit
             return None
         return self._position == 0
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this cover."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        Matches the other platforms: a live WebSocket link is the primary
-        availability signal, falling back to the last REST poll.
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
-
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover fully."""
         await self.coordinator.set_level(self._level_datapoint_id, _to_device(100))
@@ -212,6 +191,10 @@ class JungHomeCover(CoordinatorEntity[JungHomeDataUpdateCoordinator], CoverEntit
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         await self.coordinator.move_level(self._level_datapoint_id, _MOVE_STOP)
+        # A stop ends travel at an unknown position, so the optimistic
+        # open/close/set_position write is now stale. Re-read the real level
+        # instead of waiting up to a minute for the next REST poll.
+        await self.coordinator.async_request_refresh()
 
     async def async_open_cover_tilt(self, **kwargs: Any) -> None:
         """Tilt the slats fully open."""
@@ -236,58 +219,31 @@ class JungHomeCover(CoordinatorEntity[JungHomeDataUpdateCoordinator], CoverEntit
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        if device:
-            level_dp = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp.get("id") == self._level_datapoint_id
-                ),
-                None,
-            )
-            if level_dp:
-                self._position = self._get_position_from_datapoint(level_dp)
-            if self._angle_datapoint_id is not None:
-                angle_dp = next(
-                    (
-                        dp
-                        for dp in device.get("datapoints", [])
-                        if dp.get("id") == self._angle_datapoint_id
-                    ),
-                    None,
-                )
-                if angle_dp:
-                    self._tilt = self._get_tilt_from_datapoint(angle_dp)
+        level_dp = self._find_datapoint(self._level_datapoint_id)
+        if level_dp:
+            self._position = self._get_position_from_datapoint(level_dp)
+        if self._angle_datapoint_id is not None:
+            angle_dp = self._find_datapoint(self._angle_datapoint_id)
+            if angle_dp:
+                self._tilt = self._get_tilt_from_datapoint(angle_dp)
         self.async_write_ha_state()
 
     def _get_position_from_datapoint(self, datapoint: Datapoint | None) -> int | None:
         """Extract the HA position (% open) from a level datapoint."""
-        if not datapoint:
+        value = datapoint_value(datapoint, "level")
+        if value is None:
             return None
-        for value in datapoint.get("values", []):
-            if value["key"] == "level":
-                try:
-                    return _to_ha(round(float(value["value"])))
-                except (TypeError, ValueError):
-                    return None
-        return None
+        try:
+            return _to_ha(round(float(value)))
+        except (TypeError, ValueError):
+            return None
 
     def _get_tilt_from_datapoint(self, datapoint: Datapoint | None) -> int | None:
         """Extract the tilt position (0..100) from an angle datapoint."""
-        if not datapoint:
+        value = datapoint_value(datapoint, "angle")
+        if value is None:
             return None
-        for value in datapoint.get("values", []):
-            if value["key"] == "angle":
-                try:
-                    return round(float(value["value"]))
-                except (TypeError, ValueError):
-                    return None
-        return None
+        try:
+            return round(float(value))
+        except (TypeError, ValueError):
+            return None
