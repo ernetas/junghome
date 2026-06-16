@@ -5,6 +5,8 @@ from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.components.climate.const import HVACMode
+from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -13,13 +15,16 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome import async_unload_entry
+from custom_components.junghome.climate import JungHomeClimate
 from custom_components.junghome.const import DOMAIN, device_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.cover import JungHomeCover
 from custom_components.junghome.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.junghome.event import JungHomeEventEntity
 from custom_components.junghome.light import JungHomeLight
+from custom_components.junghome.scene import JungHomeScene, _scene_slug
 from custom_components.junghome.sensor import JungHomeQuantity
 from custom_components.junghome.switch import JungHomeSocket, JungHomeSwitch
 
@@ -90,6 +95,18 @@ DEVICES = [
                 "id": "idblind1-002",
                 "type": "angle",
                 "values": [{"key": "angle", "value": "40"}],
+            },
+        ],
+    },
+    {
+        "id": "idblind2",
+        "type": "Position",
+        "label": "Kitchen Shade",
+        "datapoints": [
+            {
+                "id": "idblind2-001",
+                "type": "level",
+                "values": [{"key": "level", "value": "0"}],
             },
         ],
     },
@@ -1106,3 +1123,255 @@ async def test_scene_created_and_activated(
             "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
         )
     assert act.call_args.args[0] == "idscene1"
+
+
+def _cover(
+    coordinator: JungHomeDataUpdateCoordinator, with_angle: bool = True
+) -> JungHomeCover:
+    dps = [{"id": "b-1", "type": "level", "values": [{"key": "level", "value": "30"}]}]
+    if with_angle:
+        dps.append(
+            {"id": "b-2", "type": "angle", "values": [{"key": "angle", "value": "40"}]}
+        )
+    device = {
+        "id": "b",
+        "type": "PositionAndAngle" if with_angle else "Position",
+        "label": "B",
+        "datapoints": dps,
+    }
+    return JungHomeCover(coordinator, device, dps[0])
+
+
+async def test_cover_position_only_has_no_tilt(hass: HomeAssistant, init_integration):
+    """A Position (level-only) device exposes no tilt and creates a cover."""
+    state = hass.states.get("cover.kitchen_shade")
+    assert state is not None
+    assert state.attributes.get("current_tilt_position") is None
+    assert not (
+        state.attributes["supported_features"] & CoverEntityFeature.SET_TILT_POSITION
+    )
+
+
+async def test_cover_extractors_defensive(hass: HomeAssistant) -> None:
+    """Cover value extractors tolerate missing/garbage datapoints."""
+    cover = _cover(_bare_coordinator(hass))
+    assert cover._get_position_from_datapoint(None) is None
+    assert cover._get_tilt_from_datapoint(None) is None
+    assert (
+        cover._get_position_from_datapoint(
+            {"id": "x", "values": [{"key": "level", "value": "NaN"}]}
+        )
+        is None
+    )
+    assert (
+        cover._get_tilt_from_datapoint(
+            {"id": "x", "values": [{"key": "angle", "value": "NaN"}]}
+        )
+        is None
+    )
+    assert cover._get_position_from_datapoint({"id": "x", "values": []}) is None
+
+
+async def test_cover_is_closed_none_when_position_unknown(hass: HomeAssistant) -> None:
+    """is_closed is None when the level can't be read."""
+    cover = _cover(_bare_coordinator(hass))
+    cover._position = None
+    assert cover.is_closed is None
+
+
+async def test_cover_tilt_commands(hass: HomeAssistant) -> None:
+    """open/close tilt drive the angle command to 100/0."""
+    coordinator = _bare_coordinator(hass)
+    cover = _cover(coordinator)
+    with (
+        patch.object(coordinator, "set_angle", AsyncMock()) as sa,
+        patch.object(cover, "async_write_ha_state"),
+    ):
+        await cover.async_open_cover_tilt()
+        await cover.async_close_cover_tilt()
+    assert [c.args[1] for c in sa.call_args_list] == [100, 0]
+
+
+async def test_cover_stop_requests_refresh(hass: HomeAssistant) -> None:
+    """Stop sends level_move 0 and re-reads the real position."""
+    coordinator = _bare_coordinator(hass)
+    cover = _cover(coordinator)
+    with (
+        patch.object(coordinator, "move_level", AsyncMock()) as ml,
+        patch.object(coordinator, "async_request_refresh", AsyncMock()) as rr,
+    ):
+        await cover.async_stop_cover()
+    ml.assert_called_once()
+    rr.assert_called_once()
+
+
+async def test_cover_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
+    """Cover update writes state even when the device is gone."""
+    cover = _cover(_bare_coordinator(hass))  # coordinator.data is []
+    with patch.object(cover, "async_write_ha_state") as write_state:
+        cover._handle_coordinator_update()
+    write_state.assert_called_once()
+
+
+def _climate(
+    coordinator: JungHomeDataUpdateCoordinator,
+    current_unit: str | None = "°C",
+    target: str = "21.5",
+    preset: str = "comfort",
+) -> JungHomeClimate:
+    dps = [
+        {
+            "id": "t-1",
+            "type": "temperature_ctrl",
+            "values": [
+                {"key": "temperature_ctrl", "value": target},
+                {"key": "temperature_ctrl_preset", "value": preset},
+            ],
+        }
+    ]
+    if current_unit is not None:
+        dps.append(
+            {
+                "id": "t-10",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "20.0"},
+                    {"key": "quantity_unit", "value": current_unit},
+                ],
+            }
+        )
+    device = {"id": "t", "type": "Thermostat", "label": "T", "datapoints": dps}
+    return JungHomeClimate(coordinator, device, dps[0])
+
+
+async def test_climate_extractors_defensive(hass: HomeAssistant) -> None:
+    """Climate target/preset extractors tolerate missing/garbage datapoints."""
+    climate = _climate(_bare_coordinator(hass))
+    assert climate._get_target_from_datapoint(None) is None
+    assert (
+        climate._get_target_from_datapoint(
+            {"id": "x", "values": [{"key": "temperature_ctrl", "value": "abc"}]}
+        )
+        is None
+    )
+    assert climate._get_preset_from_datapoint(None) is None
+    # An unknown device preset maps to None.
+    assert (
+        climate._get_preset_from_datapoint(
+            {"id": "x", "values": [{"key": "temperature_ctrl_preset", "value": "huh"}]}
+        )
+        is None
+    )
+
+
+async def test_climate_current_temperature_paths(hass: HomeAssistant) -> None:
+    """current_temperature ignores non-°C siblings and unparseable values."""
+    coordinator = _bare_coordinator(hass)
+    # A "%" sibling is not a temperature -> None.
+    assert _climate(coordinator, current_unit="%").current_temperature is None
+    # No sibling quantity at all -> None.
+    assert _climate(coordinator, current_unit=None).current_temperature is None
+    # A °C sibling with a garbage value -> None.
+    climate = _climate(coordinator)
+    assert (
+        climate._get_current_temperature(
+            {
+                "datapoints": [
+                    {
+                        "type": "quantity",
+                        "values": [
+                            {"key": "quantity", "value": "abc"},
+                            {"key": "quantity_unit", "value": "°C"},
+                        ],
+                    }
+                ]
+            }
+        )
+        is None
+    )
+
+
+async def test_climate_set_temperature_without_value_noops(hass: HomeAssistant) -> None:
+    coordinator = _bare_coordinator(hass)
+    climate = _climate(coordinator)
+    with patch.object(coordinator, "set_temperature", AsyncMock()) as st:
+        await climate.async_set_temperature()
+    st.assert_not_called()
+
+
+async def test_climate_unknown_preset_noops(hass: HomeAssistant) -> None:
+    coordinator = _bare_coordinator(hass)
+    climate = _climate(coordinator)
+    with patch.object(coordinator, "set_temperature_preset", AsyncMock()) as sp:
+        await climate.async_set_preset_mode("nonsense")
+    sp.assert_not_called()
+
+
+async def test_climate_set_hvac_mode_is_noop(hass: HomeAssistant) -> None:
+    """The single-mode thermostat accepts set_hvac_mode without sending anything."""
+    coordinator = _bare_coordinator(hass)
+    climate = _climate(coordinator)
+    with patch.object(coordinator, "send_websocket_message", AsyncMock()) as send:
+        await climate.async_set_hvac_mode(HVACMode.HEAT)  # must not raise
+    send.assert_not_called()
+
+
+async def test_climate_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
+    climate = _climate(_bare_coordinator(hass))  # coordinator.data is []
+    with patch.object(climate, "async_write_ha_state") as write_state:
+        climate._handle_coordinator_update()
+    write_state.assert_called_once()
+
+
+def test_scene_slug_fallback() -> None:
+    """Unsluggable labels fall back to a stable 'scene' slug."""
+    assert _scene_slug("") == "scene"
+    assert _scene_slug("Movie Night") == "movie_night"
+
+
+async def test_scene_removed_when_deleted(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A scene the gateway deletes has its entity removed."""
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {"type": "scenes", "data": [{"id": "s1", "label": "Movie Night"}]}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night") is not None
+    # Gateway removes it (scene list now empty) -> the live entity is removed,
+    # leaving only a restored/unavailable placeholder that can't be activated.
+    coordinator._handle_websocket_message({"type": "scenes", "data": []})
+    await hass.async_block_till_done()
+    state = hass.states.get("scene.movie_night")
+    assert state is None or state.state == "unavailable"
+
+
+async def test_scene_activate_raises_when_missing(hass: HomeAssistant) -> None:
+    """Activating a scene absent from the coordinator raises a translated error."""
+    coordinator = _bare_coordinator(hass)
+    coordinator.scenes = []
+    scene = JungHomeScene(coordinator, "Ghost", "ghost_scene")
+    with pytest.raises(HomeAssistantError):
+        await scene.async_activate()
+
+
+async def test_scene_reresolves_id_after_firmware_change(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Activation re-resolves the volatile scene id from the stable label."""
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {"type": "scenes", "data": [{"id": "old", "label": "Movie Night"}]}
+    )
+    await hass.async_block_till_done()
+    # Firmware update regenerates the scene id under the same label.
+    coordinator._handle_websocket_message(
+        {"type": "scenes", "data": [{"id": "new", "label": "Movie Night"}]}
+    )
+    await hass.async_block_till_done()
+    with patch.object(coordinator, "activate_scene", AsyncMock()) as act:
+        await hass.services.async_call(
+            "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
+        )
+    assert act.call_args.args[0] == "new"

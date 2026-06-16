@@ -18,12 +18,11 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,22 +77,9 @@ async def async_setup_entry(
             if device.get("type") in ("Socket", "Measurement"):
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "quantity":
-                        label = next(
-                            (
-                                (value.get("value") or "").strip()
-                                for value in datapoint.get("values", [])
-                                if value.get("key") == "quantity_label"
-                            ),
-                            None,
-                        )
-                        unit = next(
-                            (
-                                value.get("value")
-                                for value in datapoint.get("values", [])
-                                if value.get("key") == "quantity_unit"
-                            ),
-                            None,
-                        )
+                        raw_label = datapoint_value(datapoint, "quantity_label")
+                        label = raw_label.strip() if raw_label else None
+                        unit = datapoint_value(datapoint, "quantity_unit")
                         if label and unit:
                             uid = stable_unique_id(
                                 device, datapoint, label.replace(" ", "_").lower()
@@ -112,13 +98,12 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_sensors))
 
 
-class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorEntity):
+class JungHomeQuantity(JungHomeEntity, SensorEntity):
     """Representation of a Jung Home quantity."""
 
     # Secondary entity on the device; HA prepends the device name, so the
     # entity_id becomes `sensor.<device>_<quantity>` (the label is no longer
     # baked into the entity name).
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -129,8 +114,7 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
         unit: str,
     ) -> None:
         """Initialize the quantity."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = datapoint
         self._attr_name = label
         self._name = f"{device.get('label', 'Jung Device')} {label}"  # for logging
@@ -163,17 +147,6 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
         return self._unique_id
 
     @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        Matches the light/socket/LED/event entities: a live WebSocket link is the
-        primary availability signal, falling back to the last REST poll, so all
-        entities on a device go (un)available together rather than the sensor
-        diverging on a transient poll miss.
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
-
-    @property
     def native_value(self) -> float | str | None:
         """Return the measured value (numeric when the unit has a state class)."""
         if self._value is None:
@@ -185,50 +158,17 @@ class JungHomeQuantity(CoordinatorEntity[JungHomeDataUpdateCoordinator], SensorE
                 return None
         return self._value
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this quantity."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for quantity %s", self._name)
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        if device:
-            datapoint = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp.get("id") == self._datapoint["id"]
-                ),
-                None,
-            )
-            if datapoint:
-                self._value = self._get_value_from_datapoint(datapoint)
-                _LOGGER.debug(
-                    "Updated state for quantity %s: %s", self._name, self._value
-                )
-                self.async_write_ha_state()
+        datapoint = self._find_datapoint(self._datapoint["id"])
+        if datapoint:
+            self._value = self._get_value_from_datapoint(datapoint)
+            _LOGGER.debug("Updated state for quantity %s: %s", self._name, self._value)
+            self.async_write_ha_state()
 
     def _get_value_from_datapoint(self, datapoint: Datapoint) -> str | None:
         """Extract the value of the quantity from its datapoint."""
-        for value in datapoint.get("values", []):
-            if value["key"] == "quantity":
-                return str(value["value"])
-        return None
+        value = datapoint_value(datapoint, "quantity")
+        return None if value is None else str(value)

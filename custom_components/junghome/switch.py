@@ -5,12 +5,11 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, stable_unique_id
+from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import JungHomeEntity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,12 +57,11 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_discover_switches))
 
 
-class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEntity):
+class JungHomeSocket(JungHomeEntity, SwitchEntity):
     """Representation of a Jung Home socket."""
 
     # The socket is the device's main feature, so it adopts the device name
     # (entity_id `switch.<device>`, not the old `switch.<device>_<device>`).
-    _attr_has_entity_name = True
     _attr_name = None
     _attr_device_class = SwitchDeviceClass.OUTLET
 
@@ -74,8 +72,7 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         datapoint: Datapoint,
     ) -> None:
         """Initialize the socket."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = datapoint
         self._name = device.get("label", "Jung Socket")
         # Firmware-stable id derived from the label, not the volatile device id.
@@ -92,46 +89,15 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         """Return the state of the socket."""
         return self._is_on
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this socket."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},  # Link to the device
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for socket %s", self._name)
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        if device:
-            datapoint = next(
-                (
-                    dp
-                    for dp in device.get("datapoints", [])
-                    if dp.get("id") == self._datapoint["id"]
-                ),
-                None,
-            )
-            if datapoint:
-                self._is_on = self._get_state_from_datapoint(datapoint)
-                _LOGGER.debug(
-                    "Updated state for socket %s: %s", self._name, self._is_on
-                )
-                self.async_write_ha_state()
+        datapoint = self._find_datapoint(self._datapoint["id"])
+        if datapoint:
+            self._is_on = self._get_state_from_datapoint(datapoint)
+            _LOGGER.debug("Updated state for socket %s: %s", self._name, self._is_on)
+            self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the socket on."""
@@ -147,36 +113,17 @@ class JungHomeSocket(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         self._is_on = False
         self.async_write_ha_state()
 
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed for this entity."""
-        return False
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        A live WebSocket link means the gateway is reachable, so it is the
-        primary availability signal; fall back to the last REST poll result
-        until the socket first connects (or while it is reconnecting).
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
-
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
         """Extract the state of the socket from its datapoint."""
-        for value in datapoint.get("values", []):
-            if value["key"] == "switch":
-                return value["value"] == "1"
-        return False
+        return datapoint_value(datapoint, "switch") == "1"
 
 
-class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEntity):
+class JungHomeSwitch(JungHomeEntity, SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
 
     # Secondary entity on the rocker device; HA prepends the device name, so the
     # entity_id becomes `switch.<device>_status_led`. The name comes from the
     # entity.switch.status_led translation.
-    _attr_has_entity_name = True
     _attr_translation_key = "status_led"
 
     def __init__(
@@ -186,47 +133,18 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
         datapoint: Datapoint,
     ) -> None:
         """Initialize the status LED switch."""
-        super().__init__(coordinator)
-        self._device = device
+        super().__init__(coordinator, device)
         self._datapoint = datapoint
         self._attr_unique_id = stable_unique_id(device, datapoint, "switch")
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information for the rocker this LED belongs to."""
-        return {
-            "identifiers": {(DOMAIN, device_slug(self._device))},
-            "name": self._device.get("label", "Jung Device"),
-            "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
-        }
-
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
-        for value in datapoint.get("values", []):
-            if value["key"] == "status_led":
-                return value["value"] == "1"
-        return False
+        return datapoint_value(datapoint, "status_led") == "1"
 
     @property
     def is_on(self) -> bool | None:
         """Return whether the status LED is on."""
         return self._attr_is_on
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available.
-
-        Matches the light/socket entities: a live WebSocket link is the primary
-        availability signal, falling back to the last REST poll. (Inheriting the
-        CoordinatorEntity default would key only on the 1-minute REST poll, so a
-        transient poll miss would mark this LED unavailable while the light on the
-        same device stayed up.)
-        """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the status LED on."""
@@ -247,22 +165,7 @@ class JungHomeSwitch(CoordinatorEntity[JungHomeDataUpdateCoordinator], SwitchEnt
     @callback
     def _handle_coordinator_update(self) -> None:
         _LOGGER.debug("Updating switch for %s", self._attr_unique_id)
-        device = next(
-            (
-                d
-                for d in self.coordinator.data or []
-                if d.get("id") == self._device["id"]
-            ),
-            None,
-        )
-        datapoint = next(
-            (
-                dp
-                for dp in (device["datapoints"] if device else [])
-                if dp.get("id") == self._datapoint["id"]
-            ),
-            None,
-        )
+        datapoint = self._find_datapoint(self._datapoint["id"])
         if datapoint is not None:
             self._attr_is_on = self._get_state_from_datapoint(datapoint)
         # Write unconditionally (even when the datapoint is momentarily absent) so

@@ -79,6 +79,31 @@ Import the blueprint by URL (Settings → Automations & scenes → Blueprints �
 Import), select **all** of the button's event entities (JUNG alternates between
 the up/down events), and assign actions for single / double / hold.
 
+# Scenes
+
+Scenes defined in the JUNG app appear as Home Assistant **`scene.*` entities** —
+activating one (or calling `scene.turn_on`) recalls it on the gateway.
+
+The gateway also reports when a scene is recalled **by any source**, including a
+physical wall button. The integration re-emits that as a Home Assistant event,
+`junghome_scene_recalled`, so you can trigger automations from a physical scene
+button:
+
+```yaml
+automation:
+  - trigger:
+      - platform: event
+        event_type: junghome_scene_recalled
+        event_data:
+          label: "Išjungti WC"
+    action:
+      - service: notify.notify
+        data:
+          message: "WC scene was triggered"
+```
+
+The event data is `{ scene_id, label, entry_id }`.
+
 # How updates work
 
 The integration is **local push**: it holds a WebSocket to the gateway and
@@ -89,8 +114,12 @@ reconnects automatically with backoff. No cloud and no account are involved.
 
 # Known limitations
 
-- **Scenes and groups** defined in the JUNG app aren't exposed; use Home
-  Assistant scenes/areas instead.
+- **Groups** defined in the JUNG app aren't exposed; use Home Assistant areas
+  instead. (Scenes *are* exposed — see [Scenes](#scenes).)
+- **Covers, thermostats, scenes and measurement sensors are not yet verified
+  against real hardware** — they're implemented from the gateway protocol but I
+  don't own those devices. Feedback welcome, especially whether a blind's
+  open/closed position reads the right way round.
 - **Metering sockets report instantaneous power (W) and current (A), not
   cumulative energy (kWh)**, so they can't go straight onto the Energy Dashboard.
   To track energy/cost, add a Riemann-sum
@@ -101,7 +130,10 @@ reconnects automatically with backoff. No cloud and no account are involved.
   [blueprint](#button-automations-rocker-switches).
 - The rocker **status-LED colour** can't be set from here (on/off only); colour
   is configured in the JUNG app or over BT-Mesh.
-- Curtains/covers, thermostats and the puck aren't supported yet.
+- The **puck** isn't supported yet.
+- Standalone **presence/motion sensors** (e.g. a JUNG "daviklis") aren't exposed
+  yet — they live in the gateway's lower-level `/devices` view, which this
+  integration doesn't read.
 - The gateway uses a **self-signed certificate**, so TLS verification is disabled
   for the local connection (expected for a LAN device).
 
@@ -119,12 +151,12 @@ device-mesh architecture are documented in **[docs/](docs/README.md)**. Release
 and HACS-publishing steps are in **[docs/publishing.md](docs/publishing.md)**.
 
 # TODO
-- Bring back binary sensors (motion/presence, which was previously removed).
+- Presence/motion binary sensors, sourced from the gateway's `/devices` view
+  (standalone sensors don't appear in the `/functions` data this integration
+  currently uses).
 - Puck support.
-
-Unlikely to be completed by me, since I don't have these devices:
-- Curtain control.
-- Thermostats.
+- Hardware verification of covers, thermostats and measurement sensors (these are
+  implemented but I don't own the devices — testers welcome).
 
 # Development / Testing
 

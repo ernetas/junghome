@@ -63,6 +63,29 @@ A pushed `datapoint` frame carries the updated datapoint object, e.g.:
   } }
 ```
 
+### Scene recall (`scene`, singular)
+
+When a scene is activated — including by a **physical button**, not just via the
+REST recall — the gateway broadcasts a `scene` frame whose `data` is the recalled
+scene object (note: singular `scene` with an object, distinct from the plural
+`scenes` list broadcast):
+
+```jsonc
+{ "type": "scene",
+  "data": {
+    "id": "id0001",
+    "label": "Išjungti WC",
+    "related_functions": [ "id9dc9e42e3bbb3da", "idef507c9c9a01d16" ],
+    "value": "0001"
+  } }
+```
+
+The integration re-emits each recall on the Home Assistant event bus as
+`junghome_scene_recalled` (`{scene_id, label, entry_id}`) so automations can react
+to physical scene buttons. (One recall produces one frame — back-to-back
+duplicates you may see while testing are just the scene being triggered twice,
+e.g. a double press.)
+
 ## Client → server commands
 
 Send a JSON frame with a `type`. An optional `message_id` is echoed back on the
@@ -129,8 +152,9 @@ Any failure is returned as a `message` frame:
 - State updates arrive as `datapoint` broadcasts; the coordinator matches them to
   entities. Commands are sent as `datapoint` set frames.
 - The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
-  broadcasts to populate the scene platform (recall is REST-only). `groups`
-  broadcasts are still ignored.
+  broadcasts to populate the scene platform (recall is REST-only). The singular
+  `scene` recall frame is re-emitted as a `junghome_scene_recalled` HA event.
+  `groups` broadcasts are still ignored.
 - Reconnect on drop: the gateway sends the full `functions`/`groups`/`scenes`
   snapshot again on every new connection, so re-syncing is automatic.
 - Watch `functions` / `*-new` / `*-deleted` frames to pick up devices added or

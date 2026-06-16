@@ -276,6 +276,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         data = message.get("data")
         msg_type = message.get("type")
         if isinstance(data, dict):
+            if msg_type == "scene":
+                # A scene was recalled (e.g. from a physical button). This is a
+                # different frame from the `scenes` list broadcast: data is the
+                # recalled scene object, not a datapoint. Without this branch it
+                # would fall through to the datapoint lookup below and log a
+                # spurious "no matching datapoint" warning.
+                self._handle_scene_recall(data)
+                return
             datapoint_id = data.get("id")
             if not datapoint_id:
                 _LOGGER.error(
@@ -348,6 +356,25 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             removed = {s.get("id") for s in items}
             self.scenes = [s for s in self.scenes if s.get("id") not in removed]
         self.async_update_listeners()
+
+    def _handle_scene_recall(self, data: dict[str, Any]) -> None:
+        """Fire a Home Assistant event when the gateway reports a scene recall.
+
+        The gateway broadcasts ``{"type":"scene","data":{...scene...}}`` whenever a
+        scene is activated — including by a physical button, not just by this
+        integration. Re-emitting it on the HA event bus lets users automate on
+        "scene X was recalled".
+        """
+        scene_id = data.get("id")
+        label = data.get("label")
+        if scene_id is None:
+            _LOGGER.debug("Ignoring scene recall frame without an id: %s", data)
+            return
+        _LOGGER.debug("Scene recalled: %s (%s)", label, scene_id)
+        event_data: dict[str, Any] = {"scene_id": scene_id, "label": label}
+        if self.config_entry is not None:
+            event_data["entry_id"] = self.config_entry.entry_id
+        self.hass.bus.async_fire(f"{DOMAIN}_scene_recalled", event_data)
 
     def _apply_gateway_version(self) -> None:
         """Push the gateway firmware version onto our devices in the registry.
