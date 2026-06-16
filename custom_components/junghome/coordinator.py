@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import timedelta
 from typing import Any, cast
+from urllib.parse import quote
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -153,7 +154,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def activate_scene(self, scene_id: str) -> None:
         """Activate a scene via REST (the WebSocket scene command is unimplemented)."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{self.config['host']}/api/junghome/scenes/{scene_id}"
+        # scene_id comes from untrusted gateway JSON; percent-encode it so a
+        # crafted id can't break out of the path segment (e.g. via ?/#//).
+        safe_scene_id = quote(str(scene_id), safe="")
+        url = f"https://{self.config['host']}/api/junghome/scenes/{safe_scene_id}"
         headers = {
             "token": f"{self.config['token']}",
             "Content-Type": "application/json",

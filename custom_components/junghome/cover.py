@@ -126,7 +126,7 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
             self._angle_datapoint.get("id") if self._angle_datapoint else None
         )
         self._name = device.get("label", "Jung Cover")
-        self._unique_id = stable_unique_id(device, level_datapoint)
+        self._attr_unique_id = stable_unique_id(device, level_datapoint)
 
         features = (
             CoverEntityFeature.OPEN
@@ -144,11 +144,6 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
 
         self._position = self._get_position_from_datapoint(level_datapoint)
         self._tilt = self._get_tilt_from_datapoint(self._angle_datapoint)
-
-    @property
-    def unique_id(self) -> str | None:
-        """Return a unique ID for the cover."""
-        return self._unique_id
 
     @property
     def current_cover_position(self) -> int | None:
@@ -244,6 +239,8 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         if value is None:
             return None
         try:
-            return round(float(value))
+            # Clamp to 0..100, mirroring the position guard in _to_ha: the
+            # untrusted angle must satisfy HA's tilt-position contract.
+            return max(0, min(100, round(float(value))))
         except (TypeError, ValueError):
             return None

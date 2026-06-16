@@ -42,6 +42,21 @@ async def async_setup_entry(
     """Set up Jung Home scenes from a config entry."""
     coordinator = entry.runtime_data
     entities: dict[str, JungHomeScene] = {}
+    # unique_ids with an in-flight async_remove(). Kept out of `entities` only
+    # once removal completes (see _remove_scene), so a same-tick re-add can't
+    # construct a duplicate entity with the same unique_id while the old one is
+    # still deregistering.
+    removing: set[str] = set()
+
+    async def _remove_scene(uid: str) -> None:
+        try:
+            await entities[uid].async_remove()
+        finally:
+            entities.pop(uid, None)
+            removing.discard(uid)
+        # The scene may have reappeared during removal; re-run discovery so it is
+        # re-added rather than lost.
+        _discover_scenes()
 
     @callback
     def _discover_scenes() -> None:
@@ -59,7 +74,9 @@ async def async_setup_entry(
 
         new_entities: list[JungHomeScene] = []
         for uid, label in current.items():
-            if uid not in entities:
+            # Skip uids still deregistering — re-adding now would collide on the
+            # unique_id; _remove_scene re-runs discovery once removal completes.
+            if uid not in entities and uid not in removing:
                 entity = JungHomeScene(coordinator, label, uid)
                 entities[uid] = entity
                 new_entities.append(entity)
@@ -67,10 +84,14 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
         # Drop entities whose scene no longer exists, so a deleted scene doesn't
-        # linger as an always-failing entity.
+        # linger as an always-failing entity. The removal is an entry-scoped
+        # background task (cancelled on unload, exceptions tracked).
         for uid in list(entities):
-            if uid not in current:
-                hass.async_create_task(entities.pop(uid).async_remove())
+            if uid not in current and uid not in removing:
+                removing.add(uid)
+                entry.async_create_background_task(
+                    hass, _remove_scene(uid), name=f"junghome_scene_remove_{uid}"
+                )
 
     _discover_scenes()
     entry.async_on_unload(coordinator.async_add_listener(_discover_scenes))
