@@ -15,11 +15,11 @@ sensor entity).
 import logging
 from typing import Any
 
-from homeassistant.components.climate import (
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import (
     PRESET_COMFORT,
     PRESET_ECO,
     PRESET_NONE,
-    ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
 )

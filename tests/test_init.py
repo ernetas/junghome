@@ -1000,7 +1000,9 @@ async def test_dimmer_brightness_command(hass: HomeAssistant, init_integration) 
     assert sb.call_args.args[1] == 100  # 255 HA -> 100 device
 
 
-async def test_cover_created_and_position(hass: HomeAssistant, init_integration) -> None:
+async def test_cover_created_and_position(
+    hass: HomeAssistant, init_integration
+) -> None:
     """Position is inverted: device level 30 (closed%) -> HA position 70 (open%)."""
     state = hass.states.get("cover.bedroom_blind")
     assert state is not None
