@@ -7,12 +7,14 @@ keys (see ``cdb_types_datapoints.json``):
 - ``temperature_ctrl_preset`` — ``none`` / ``frost`` / ``eco`` / ``comfort``.
 
 The function carries no ambient reading, so ``current_temperature`` is only
-populated if the device also exposes a temperature ``quantity`` datapoint;
-otherwise it stays ``None`` (the measured value, if any, shows up as a separate
-sensor entity).
+populated if the device also exposes a sibling temperature ``quantity``
+datapoint; otherwise it stays ``None``. (That sibling reading is surfaced only
+here as ``current_temperature`` — sensor discovery does not turn a Thermostat's
+quantity into a standalone sensor entity.)
 """
 
 import logging
+import math
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -123,15 +125,10 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self._datapoint = ctrl_datapoint
         self._ctrl_datapoint_id = ctrl_datapoint["id"]
         self._name = device.get("label", "Jung Thermostat")
-        self._unique_id = stable_unique_id(device, ctrl_datapoint)
+        self._attr_unique_id = stable_unique_id(device, ctrl_datapoint)
         self._target_temperature = self._get_target_from_datapoint(ctrl_datapoint)
         self._preset_mode = self._get_preset_from_datapoint(ctrl_datapoint)
         self._current_temperature = self._get_current_temperature(device)
-
-    @property
-    def unique_id(self) -> str | None:
-        """Return a unique ID for the thermostat."""
-        return self._unique_id
 
     @property
     def target_temperature(self) -> float | None:
@@ -190,9 +187,14 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         if value is None:
             return None
         try:
-            return float(value)
+            target = float(value)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(target):
+            return None
+        # Clamp to the advertised range so an out-of-range gateway value doesn't
+        # surface a target outside the thermostat's declared min/max.
+        return max(DEFAULT_MIN_TEMP, min(DEFAULT_MAX_TEMP, target))
 
     def _get_preset_from_datapoint(self, datapoint: Datapoint | None) -> str | None:
         value = datapoint_value(datapoint, "temperature_ctrl_preset")
@@ -212,7 +214,11 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
             if value is None:
                 continue
             try:
-                return float(value)
+                ambient = float(value)
             except (TypeError, ValueError):
-                return None
+                # A malformed reading shouldn't abort the search for a usable
+                # sibling; keep looking rather than returning None outright.
+                continue
+            if math.isfinite(ambient):
+                return ambient
         return None

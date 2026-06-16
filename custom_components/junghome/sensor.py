@@ -1,6 +1,7 @@
 """Sensor platform for Jung Home (socket energy quantities)."""
 
 import logging
+import math
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -119,7 +120,7 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         self._attr_name = label
         self._name = f"{device.get('label', 'Jung Device')} {label}"  # for logging
         # Firmware-stable id derived from the label, not the volatile device id.
-        self._unique_id = stable_unique_id(
+        self._attr_unique_id = stable_unique_id(
             device, datapoint, label.replace(" ", "_").lower()
         )
         mapped = _UNIT_MAP.get(unit.strip().lower())
@@ -142,20 +143,18 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         self._value = self._get_value_from_datapoint(datapoint)
 
     @property
-    def unique_id(self) -> str | None:
-        """Return a unique ID for the quantity."""
-        return self._unique_id
-
-    @property
     def native_value(self) -> float | str | None:
         """Return the measured value (numeric when the unit has a state class)."""
         if self._value is None:
             return None
         if self._attr_state_class is not None:
             try:
-                return float(self._value)
+                numeric = float(self._value)
             except (TypeError, ValueError):
                 return None
+            # Reject NaN/inf (which float() parses): they would pollute the
+            # long-term-statistics / energy pipeline for a numeric sensor.
+            return numeric if math.isfinite(numeric) else None
         return self._value
 
     @callback

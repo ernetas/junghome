@@ -102,22 +102,26 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         # Device brightness scale is 0-100 (device) — Home Assistant uses 0-255
         self._name = device.get("label", "Jung Light")
         # Firmware-stable id derived from the label, not the volatile device id.
-        self._unique_id = stable_unique_id(device, datapoint)
+        self._attr_unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
 
-        if self._has_brightness:
-            # Read brightness and color_temp from their specific datapoints (if present)
-            self._brightness: int | None = self._get_brightness_from_datapoint(
-                self._brightness_datapoint
-            )
-            self._color_temp: int | None = self._get_color_temp_from_datapoint(
-                self._color_temp_datapoint
-            )
+        # Brightness and color temperature are read independently: a device could
+        # (unusually) expose color_temperature without a brightness datapoint, and
+        # COLOR_TEMP still needs its kelvin range set, so this is not gated on
+        # _has_brightness.
+        self._brightness: int | None = (
+            self._get_brightness_from_datapoint(self._brightness_datapoint)
+            if self._has_brightness
+            else None
+        )
+        self._color_temp: int | None = (
+            self._get_color_temp_from_datapoint(self._color_temp_datapoint)
+            if self._has_color_temp
+            else None
+        )
+        if self._has_color_temp:
             self._attr_min_color_temp_kelvin = DEFAULT_MIN_KELVIN
             self._attr_max_color_temp_kelvin = DEFAULT_MAX_KELVIN
-        else:
-            self._brightness = None
-            self._color_temp = None
 
         # Color mode is fixed by the device's capabilities (datapoints), not by
         # the current value. Home Assistant requires supported_color_modes to be
@@ -132,11 +136,6 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         else:
             self._attr_supported_color_modes = {ColorMode.ONOFF}
             self._attr_color_mode = ColorMode.ONOFF
-
-    @property
-    def unique_id(self) -> str | None:
-        """Return a unique ID for the light."""
-        return self._unique_id
 
     @property
     def is_on(self) -> bool | None:
@@ -160,16 +159,15 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         datapoint = self._find_datapoint(self._datapoint["id"])
         if datapoint:
             self._is_on = self._get_state_from_datapoint(datapoint)
-            if self._has_brightness:
-                # Update brightness/color_temp from their respective datapoints.
-                if self._brightness_datapoint_id:
-                    self._brightness = self._get_brightness_from_datapoint(
-                        self._find_datapoint(self._brightness_datapoint_id)
-                    )
-                if self._color_temp_datapoint_id:
-                    self._color_temp = self._get_color_temp_from_datapoint(
-                        self._find_datapoint(self._color_temp_datapoint_id)
-                    )
+            # Refresh brightness/color_temp from their datapoints independently.
+            if self._brightness_datapoint_id:
+                self._brightness = self._get_brightness_from_datapoint(
+                    self._find_datapoint(self._brightness_datapoint_id)
+                )
+            if self._color_temp_datapoint_id:
+                self._color_temp = self._get_color_temp_from_datapoint(
+                    self._find_datapoint(self._color_temp_datapoint_id)
+                )
             _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
             self.async_write_ha_state()
 
@@ -206,8 +204,9 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             raw = int(value)
         except (TypeError, ValueError):
             raw = 0
-        # Device reports 0-100; convert linearly to HA 0-255
-        return round(raw * 255 / 100)
+        # Device reports 0-100; convert linearly to HA 0-255, clamping the
+        # untrusted gateway value into HA's documented 0-255 brightness range.
+        return max(0, min(255, round(raw * 255 / 100)))
 
     def _ha_to_raw_brightness(self, ha_brightness: int) -> int:
         """Convert Home Assistant 0-255 brightness to device raw scale (0-100)."""
@@ -222,10 +221,12 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         if value is None:
             return None
         try:
-            # Device reports Kelvin; store Kelvin
-            return int(value)
+            kelvin = int(value)
         except (TypeError, ValueError):
             return None
+        # Clamp to the advertised range so an out-of-range gateway value doesn't
+        # violate the declared min/max color-temperature contract.
+        return max(DEFAULT_MIN_KELVIN, min(DEFAULT_MAX_KELVIN, kelvin))
 
     async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""

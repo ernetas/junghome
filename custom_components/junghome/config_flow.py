@@ -66,6 +66,8 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not self._host:
                 errors["base"] = "invalid_host"
             else:
+                # Populate the {host} flow_title placeholder for later steps.
+                self.context["title_placeholders"] = {"host": self._host}
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
                 return await self.async_step_register()
@@ -123,6 +125,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Start reauth when the gateway rejects the stored token."""
         self._host = entry_data[CONF_HOST]
+        self.context["title_placeholders"] = {"host": self._host}
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(

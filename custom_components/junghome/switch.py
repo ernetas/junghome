@@ -76,13 +76,8 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
         self._datapoint = datapoint
         self._name = device.get("label", "Jung Socket")
         # Firmware-stable id derived from the label, not the volatile device id.
-        self._unique_id = stable_unique_id(device, datapoint)
+        self._attr_unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
-
-    @property
-    def unique_id(self) -> str | None:
-        """Return a unique ID for the socket."""
-        return self._unique_id
 
     @property
     def is_on(self) -> bool | None:

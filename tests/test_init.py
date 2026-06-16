@@ -881,6 +881,10 @@ async def test_sensor_value_extractor_defensive(hass: HomeAssistant) -> None:
     # native_value is None when the stored value is None.
     q._value = None
     assert q.native_value is None
+    # NaN/inf parse through float() but must not reach a numeric sensor's state.
+    for bad in ("nan", "inf", "-inf"):
+        q._value = bad
+        assert q.native_value is None
 
 
 async def test_command_failure_when_ws_down_surfaces(
@@ -1170,6 +1174,19 @@ async def test_cover_extractors_defensive(hass: HomeAssistant) -> None:
         is None
     )
     assert cover._get_position_from_datapoint({"id": "x", "values": []}) is None
+    # Out-of-range tilt is clamped to 0..100 (mirrors the position clamp).
+    assert (
+        cover._get_tilt_from_datapoint(
+            {"id": "x", "values": [{"key": "angle", "value": "150"}]}
+        )
+        == 100
+    )
+    assert (
+        cover._get_tilt_from_datapoint(
+            {"id": "x", "values": [{"key": "angle", "value": "-10"}]}
+        )
+        == 0
+    )
 
 
 async def test_cover_is_closed_none_when_position_unknown(hass: HomeAssistant) -> None:
@@ -1262,6 +1279,26 @@ async def test_climate_extractors_defensive(hass: HomeAssistant) -> None:
         )
         is None
     )
+    # Out-of-range target clamps to 5..30; non-finite values -> None.
+    assert (
+        climate._get_target_from_datapoint(
+            {"id": "x", "values": [{"key": "temperature_ctrl", "value": "99"}]}
+        )
+        == 30.0
+    )
+    assert (
+        climate._get_target_from_datapoint(
+            {"id": "x", "values": [{"key": "temperature_ctrl", "value": "-5"}]}
+        )
+        == 5.0
+    )
+    for bad in ("inf", "-inf", "nan"):
+        assert (
+            climate._get_target_from_datapoint(
+                {"id": "x", "values": [{"key": "temperature_ctrl", "value": bad}]}
+            )
+            is None
+        )
 
 
 async def test_climate_current_temperature_paths(hass: HomeAssistant) -> None:
@@ -1325,7 +1362,9 @@ async def test_climate_handle_update_missing_device_noops(hass: HomeAssistant) -
 
 def test_scene_slug_fallback() -> None:
     """Unsluggable labels fall back to a stable 'scene' slug."""
-    assert _scene_slug("") == "scene"
+    assert _scene_slug("") == "scene"  # empty -> falsy
+    assert _scene_slug("❤") == "scene"  # slugify maps to "unknown" -> fallback
+    assert _scene_slug("   ") == "scene"  # whitespace -> "unknown" -> fallback
     assert _scene_slug("Movie Night") == "movie_night"
 
 
@@ -1375,3 +1414,81 @@ async def test_scene_reresolves_id_after_firmware_change(
             "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
         )
     assert act.call_args.args[0] == "new"
+
+
+async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) -> None:
+    """Out-of-range gateway values are clamped to HA's contracts."""
+    light = _color_light(_bare_coordinator(hass))
+    # Device brightness 150 (>100) would scale to 383; clamp to 255.
+    assert (
+        light._get_brightness_from_datapoint(
+            {"id": "x", "values": [{"key": "brightness", "value": "150"}]}
+        )
+        == 255
+    )
+    # A negative value clamps to 0.
+    assert (
+        light._get_brightness_from_datapoint(
+            {"id": "x", "values": [{"key": "brightness", "value": "-10"}]}
+        )
+        == 0
+    )
+    # Color temp outside the advertised 2000-6500 K window is clamped.
+    assert (
+        light._get_color_temp_from_datapoint(
+            {"id": "x", "values": [{"key": "color_temperature", "value": "9000"}]}
+        )
+        == 6500
+    )
+    assert (
+        light._get_color_temp_from_datapoint(
+            {"id": "x", "values": [{"key": "color_temperature", "value": "1000"}]}
+        )
+        == 2000
+    )
+
+
+async def test_colortemp_light_without_brightness(hass: HomeAssistant) -> None:
+    """A ColorLight exposing color_temp but no brightness still tracks color temp.
+
+    Regression guard: the color_temp init used to be gated on _has_brightness, so
+    such a device advertised COLOR_TEMP yet reported color_temp_kelvin == None.
+    """
+    coordinator = _bare_coordinator(hass)
+    device = {
+        "id": "ct",
+        "type": "ColorLight",
+        "label": "CT",
+        "datapoints": [
+            {
+                "id": "ct-1",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+            {
+                "id": "ct-4",
+                "type": "color_temperature",
+                "values": [{"key": "color_temperature", "value": "3000"}],
+            },
+        ],
+    }
+    light = JungHomeLight(coordinator, device, device["datapoints"][0])
+    assert light.color_mode == "color_temp"
+    assert light.color_temp_kelvin == 3000
+    assert light.min_color_temp_kelvin == 2000
+    assert light.max_color_temp_kelvin == 6500
+
+
+async def test_cover_set_position_is_optimistic(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """set_cover_position writes the optimistic HA position immediately."""
+    coordinator = init_integration.runtime_data
+    with patch.object(coordinator, "set_level", AsyncMock()):
+        await hass.services.async_call(
+            "cover",
+            "set_cover_position",
+            {"entity_id": "cover.bedroom_blind", "position": 25},
+            blocking=True,
+        )
+    assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 25
