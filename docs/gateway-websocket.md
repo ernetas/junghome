@@ -80,11 +80,11 @@ scene object (note: singular `scene` with an object, distinct from the plural
   } }
 ```
 
-Observed behaviour: a single recall is sometimes delivered as **two identical
-frames**. The integration re-emits each recall on the Home Assistant event bus as
+The integration re-emits each recall on the Home Assistant event bus as
 `junghome_scene_recalled` (`{scene_id, label, entry_id}`) so automations can react
-to physical scene buttons; because of the duplicate delivery, such automations
-should be idempotent (`mode: single` with a short cooldown).
+to physical scene buttons. (One recall produces one frame — back-to-back
+duplicates you may see while testing are just the scene being triggered twice,
+e.g. a double press.)
 
 ## Client → server commands
 
