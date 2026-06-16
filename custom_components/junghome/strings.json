@@ -75,6 +75,9 @@
     },
     "invalid_response": {
       "message": "The Jung Home gateway returned an unexpected response."
+    },
+    "scene_not_found": {
+      "message": "The Jung Home scene {label} is no longer available on the gateway."
     }
   }
 }

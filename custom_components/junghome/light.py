@@ -37,7 +37,7 @@ async def async_setup_entry(
         """Add entities for any lights not yet created (handles devices added later)."""
         new_entities: list[JungHomeLight] = []
         for device in coordinator.data or []:
-            if device.get("type") in ("OnOff", "ColorLight"):
+            if device.get("type") in ("OnOff", "DimmerLight", "ColorLight"):
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "switch":
                         uid = stable_unique_id(device, datapoint)
@@ -96,13 +96,19 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         self._color_temp_datapoint_id = (
             self._color_temp_datapoint.get("id") if self._color_temp_datapoint else None
         )
+        # Capabilities follow the datapoints the device actually exposes, not the
+        # function type name: DimmerLight has brightness, ColorLight adds
+        # color_temperature, OnOff has neither. (Before, brightness was gated on
+        # type == "ColorLight", so DimmerLight produced no entity at all.)
+        self._has_brightness = self._brightness_datapoint_id is not None
+        self._has_color_temp = self._color_temp_datapoint_id is not None
         # Device brightness scale is 0-100 (device) — Home Assistant uses 0-255
         self._name = device.get("label", "Jung Light")
         # Firmware-stable id derived from the label, not the volatile device id.
         self._unique_id = stable_unique_id(device, datapoint)
         self._is_on = self._get_state_from_datapoint(datapoint)
 
-        if device["type"] == "ColorLight":
+        if self._has_brightness:
             # Read brightness and color_temp from their specific datapoints (if present)
             self._brightness: int | None = self._get_brightness_from_datapoint(
                 self._brightness_datapoint
@@ -120,10 +126,10 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         # the current value. Home Assistant requires supported_color_modes to be
         # a stable set, so decide it once here. COLOR_TEMP already implies
         # brightness support.
-        if self._color_temp_datapoint_id:
+        if self._has_color_temp:
             self._attr_supported_color_modes = {ColorMode.COLOR_TEMP}
             self._attr_color_mode = ColorMode.COLOR_TEMP
-        elif device["type"] == "ColorLight":
+        elif self._has_brightness:
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
             self._attr_color_mode = ColorMode.BRIGHTNESS
         else:
@@ -186,7 +192,7 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
             )
             if datapoint:
                 self._is_on = self._get_state_from_datapoint(datapoint)
-                if self._device["type"] == "ColorLight":
+                if self._has_brightness:
                     # Update brightness/color_temp from their respective datapoints (if available)
                     if self._brightness_datapoint_id:
                         brightness_dp = next(
@@ -220,12 +226,10 @@ class JungHomeLight(CoordinatorEntity[JungHomeDataUpdateCoordinator], LightEntit
         # device-side overrides (some devices reset brightness on power-on).
         await self.coordinator.turn_on_light(self._datapoint["id"])
         self._is_on = True
-        if self._device["type"] == "ColorLight":
-            if "brightness" in kwargs:
-                brightness = kwargs["brightness"]
-                await self._set_brightness(brightness)
-            if "color_temp_kelvin" in kwargs:
-                await self._set_color_temp(kwargs["color_temp_kelvin"])
+        if self._has_brightness and "brightness" in kwargs:
+            await self._set_brightness(kwargs["brightness"])
+        if self._has_color_temp and "color_temp_kelvin" in kwargs:
+            await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:

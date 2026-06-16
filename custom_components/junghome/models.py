@@ -34,3 +34,17 @@ class Device(TypedDict):
     label: str
     datapoints: list[Datapoint]
     sw_version: NotRequired[str]
+
+
+class Scene(TypedDict):
+    """A gateway scene (``GET /scenes``).
+
+    ``id`` is volatile (regenerated on firmware updates, like a device id), so
+    the scene platform anchors identity on the stable ``label`` and re-resolves
+    ``id`` from the coordinator's scene list at activation time.
+    """
+
+    id: str
+    label: str
+    related_functions: NotRequired[list[str]]
+    value: NotRequired[str]

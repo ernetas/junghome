@@ -8,6 +8,8 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    LIGHT_LUX,
+    PERCENTAGE,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -36,7 +38,7 @@ _TOTAL = SensorStateClass.TOTAL_INCREASING
 # (device_class, state_class, Home Assistant unit). Energy is TOTAL_INCREASING so
 # it feeds the energy dashboard; the rest are MEASUREMENT. Unknown units fall
 # back to a plain string sensor with no class.
-_UNIT_MAP: dict[str, tuple[SensorDeviceClass, SensorStateClass, str]] = {
+_UNIT_MAP: dict[str, tuple[SensorDeviceClass | None, SensorStateClass, str]] = {
     "w": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.WATT),
     "kw": (SensorDeviceClass.POWER, _MEAS, UnitOfPower.KILO_WATT),
     "wh": (SensorDeviceClass.ENERGY, _TOTAL, UnitOfEnergy.WATT_HOUR),
@@ -45,6 +47,11 @@ _UNIT_MAP: dict[str, tuple[SensorDeviceClass, SensorStateClass, str]] = {
     "a": (SensorDeviceClass.CURRENT, _MEAS, UnitOfElectricCurrent.AMPERE),
     "hz": (SensorDeviceClass.FREQUENCY, _MEAS, UnitOfFrequency.HERTZ),
     "°c": (SensorDeviceClass.TEMPERATURE, _MEAS, UnitOfTemperature.CELSIUS),
+    "lux": (SensorDeviceClass.ILLUMINANCE, _MEAS, LIGHT_LUX),
+    "lx": (SensorDeviceClass.ILLUMINANCE, _MEAS, LIGHT_LUX),
+    # "%" is ambiguous (humidity, power factor, ...): keep the unit but assert no
+    # device class rather than risk mislabelling.
+    "%": (None, _MEAS, PERCENTAGE),
 }
 
 # Raw units we've already warned about, so each unmapped unit logs only once.
@@ -65,7 +72,10 @@ async def async_setup_entry(
         """Add entities for any sensors not yet created (handles devices added later)."""
         new_entities: list[JungHomeQuantity] = []
         for device in coordinator.data or []:
-            if device.get("type") == "Socket":
+            # Sockets expose energy quantities; Measurement functions (e.g. the
+            # ambient readings on a presence detector) expose their own quantity
+            # datapoints — both surface here as quantity sensors.
+            if device.get("type") in ("Socket", "Measurement"):
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "quantity":
                         label = next(
