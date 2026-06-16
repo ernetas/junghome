@@ -299,3 +299,62 @@ All runtime state lives here. `/opt` and `/etc` are read-only firmware; everythi
 5. **nginx is the only external-facing surface.** Port 443 (and 80→redirect). No other ports in UFW profiles. The WAF (`6G.conf`) and DNS rebind protection make it reasonably hardened despite the self-signed cert.
 
 6. **Security weak spots.** Root SSH login enabled with password auth and no key pre-configuration. No persistent firewall rules. UART exposed (physical access to NCP co-processor).
+
+---
+
+## Companion partitions and live captures
+
+This analysis is built primarily from the active root partition (`sdc2`), but the
+larger dump contains more:
+
+### Partition layout (A/B + boot + data)
+
+| Partition | Role | Contents |
+|---|---|---|
+| `sdc1` | Boot (FAT) | Kernel, DTBs, `bootcode.bin`, `config.txt`, GPU firmware. pi-gen base 2020-12-02. |
+| `sdc2` | Root slot **A** (active) | Firmware **2.1.3 (2840)** — the subject of this doc. |
+| `sdc3` | Root slot **B** (previous) | Firmware **2.0.0 (2242)** — the prior image, kept for rollback. |
+| `sdc4` | Persistent `/data` | Live runtime state (mesh DB, certs, tokens, update history). |
+
+This confirms the A/B update scheme: the bootloader flips between `sdc2`/`sdc3`,
+and `/data` (`sdc4`) is shared across both slots. `sdc4/update/history.txt`
+records a real update (2026-05-12) doing, in order: save `/data` → migrate →
+update `fstab` → flash boot partition → update bootloader config → mark slot
+active. The on-disk device DB in this image is empty (a reset/test gateway).
+
+### Matter — provisioned but inactive
+
+`sdc4/matter-interface/matter_setup_data.json` holds real commissioning data:
+vendor `0x1429`, product `11`, discriminator `1538`, and a SPAKE2+ verifier +
+salt. But the bridge daemon is not installed (the `res/` directory is empty and
+nothing references it), so it is staged for a future firmware rather than active.
+See [matter-bridge.md](matter-bridge.md).
+
+### Secrets present on `/data` (`sdc4`)
+
+The data partition contains live secrets — handle the dump accordingly
+(`disk_dump/` is gitignored):
+
+- BT-Mesh `netKeys` / `appKeys` in `middleware/res*/bt_mesh_project.json` (the
+  mesh encryption keys — enough for direct mesh control).
+- nginx private key `etc/nginx/svs.key`.
+- Cloud token `jungremote-client/res/api_token.tk` and the per-user API token
+  secrets in `api-server/res/tokens/*.tkn` (these sign the gateway's JWTs).
+
+### Live WebSocket capture (`disk_dump/ws-capture/`)
+
+A real session from a **production** gateway (fw 1.5.0), separate from the disk
+image. It validates the protocol the integration depends on:
+
+- Connect frame order: `message → version → functions → groups → scenes` — the
+  gateway pushes the full `scenes` list on connect (what the scene platform
+  relies on).
+- `functions` shape `{id, type, label, parent_groups, datapoints}` and `scenes`
+  shape `{id, label, related_functions, value}` match the integration's models.
+- Device types seen in the wild: `OnOff`, `ColorLight`, `Socket`, `RockerSwitch`
+  only — no covers/thermostats/dimmers/measurement in this installation, so those
+  platforms remain unverified against hardware.
+
+`disk_dump/config_entry-junghome-*.json` is a Home Assistant diagnostics export
+of this integration (v1.2.0b15, 36 devices) from the same live install; it
+confirms host/token redaction works.
