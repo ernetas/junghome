@@ -167,9 +167,16 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         if self._brightness_datapoint_id and self._should_refresh(
             self._brightness_datapoint_id
         ):
-            self._brightness = self._get_brightness_from_datapoint(
+            new_brightness = self._get_brightness_from_datapoint(
                 self._find_datapoint(self._brightness_datapoint_id)
             )
+            # The device reports brightness 0 when the light is off (on/off is the
+            # separate switch datapoint). Ignore a 0 so an off->on transition keeps
+            # the last level instead of briefly showing 0% until the device echoes
+            # the restored brightness a frame later. HA delivers "set brightness 0"
+            # as turn_off, so a genuine "on at 0%" never occurs.
+            if new_brightness:
+                self._brightness = new_brightness
         if self._color_temp_datapoint_id and self._should_refresh(
             self._color_temp_datapoint_id
         ):

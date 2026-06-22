@@ -434,6 +434,53 @@ async def test_switch_echo_does_not_reset_brightness(
     )
 
 
+async def test_brightness_preserved_across_off_on(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Device brightness 0 (reported while off) must not blank the slider on off->on.
+
+    The dimmer reports brightness 0 when off (on/off is the switch datapoint), so
+    applying that 0 would briefly show the light at 0% on the next turn-on, before
+    the device echoes the restored level a frame later.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200},
+        blocking=True,
+    )
+    assert hass.states.get("light.strip").attributes["brightness"] == 200
+
+    # Turn off: the device echoes switch=0 and then brightness=0.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idcolor1-001", "values": [{"key": "switch", "value": "0"}]},
+        }
+    )
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idcolor1-002",
+                "values": [{"key": "brightness", "value": "0"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").state == "off"
+
+    # Turn back on (no brightness): the slider must show the kept level, not 0%.
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("light.strip")
+    assert state.state == "on"
+    assert state.attributes["brightness"] == 200
+
+
 async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
     coordinator = init_integration.runtime_data
     coordinator._handle_websocket_message(
