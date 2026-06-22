@@ -455,11 +455,16 @@ async def test_light_external_change_applied(
 
 
 async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
+    coordinator = init_integration.runtime_data
+    coordinator.scenes = [{"id": "s1", "label": "Movie"}]
     diag = await async_get_config_entry_diagnostics(hass, init_integration)
     assert diag["device_count"] == len(DEVICES)
     assert diag["gateway_version"] == "1.5.0"
     assert diag["entry"]["data"][CONF_TOKEN] == "**REDACTED**"
     assert diag["entry"]["data"][CONF_HOST] == "**REDACTED**"
+    # Scenes are a separate coordinator data category, surfaced for debugging.
+    assert diag["scene_count"] == 1
+    assert diag["scenes"] == [{"id": "s1", "label": "Movie"}]
 
 
 async def test_stale_device_pruned(hass: HomeAssistant) -> None:
