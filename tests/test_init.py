@@ -388,6 +388,52 @@ async def test_colorlight_brightness_and_color_update(
     assert state.attributes["brightness"] == round(80 * 255 / 100)
 
 
+async def test_switch_echo_does_not_reset_brightness(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A switch=on echo must not clobber the optimistic brightness (UI flicker).
+
+    The gateway echoes switch-on and brightness as separate frames; the switch
+    one arrives first, while coordinator data still holds the old brightness.
+    Re-reading brightness on that frame would momentarily reset the slider.
+    """
+    coordinator = init_integration.runtime_data
+    # Drag brightness up: HA turns the light on AND sets brightness optimistically.
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200},
+        blocking=True,
+    )
+    assert hass.states.get("light.strip").attributes["brightness"] == 200
+
+    # The switch=on echo arrives FIRST; the brightness datapoint in coordinator
+    # data still holds the old "50". This must NOT reset brightness to ~128.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idcolor1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").attributes["brightness"] == 200
+
+    # The brightness echo then lands and is applied normally.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idcolor1-002",
+                "values": [{"key": "brightness", "value": "80"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").attributes["brightness"] == round(
+        80 * 255 / 100
+    )
+
+
 async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
     coordinator = init_integration.runtime_data
     coordinator._handle_websocket_message(

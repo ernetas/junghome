@@ -80,3 +80,16 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             (dp for dp in device.get("datapoints", []) if dp.get("id") == datapoint_id),
             None,
         )
+
+    def _should_refresh(self, datapoint_id: str) -> bool:
+        """Whether the attribute backed by ``datapoint_id`` should refresh now.
+
+        The gateway sends each datapoint change as its own WebSocket frame, so on
+        a push only the pushed datapoint's attribute should be re-read. Refreshing
+        a *sibling* attribute here would read a not-yet-updated (stale) snapshot —
+        e.g. a switch=on echo arriving before the brightness echo would momentarily
+        reset the brightness slider to the old value (a UI flicker). On a REST poll
+        (``pushed_datapoint_id`` is None) every datapoint is fresh, so refresh all.
+        """
+        pushed = self.coordinator.pushed_datapoint_id
+        return pushed is None or pushed == datapoint_id

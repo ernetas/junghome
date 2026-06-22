@@ -156,20 +156,27 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for light %s", self._name)
-        datapoint = self._find_datapoint(self._datapoint["id"])
-        if datapoint:
-            self._is_on = self._get_state_from_datapoint(datapoint)
-            # Refresh brightness/color_temp from their datapoints independently.
-            if self._brightness_datapoint_id:
-                self._brightness = self._get_brightness_from_datapoint(
-                    self._find_datapoint(self._brightness_datapoint_id)
-                )
-            if self._color_temp_datapoint_id:
-                self._color_temp = self._get_color_temp_from_datapoint(
-                    self._find_datapoint(self._color_temp_datapoint_id)
-                )
-            _LOGGER.debug("Updated state for light %s: %s", self._name, self._is_on)
-            self.async_write_ha_state()
+        # Refresh each attribute only from its own datapoint's push, so a switch=on
+        # echo arriving before the brightness echo can't momentarily reset the
+        # brightness slider to the stale snapshot value (UI flicker). On a REST
+        # poll (no push marker) all three refresh together.
+        if self._should_refresh(self._datapoint["id"]):
+            switch_dp = self._find_datapoint(self._datapoint["id"])
+            if switch_dp:
+                self._is_on = self._get_state_from_datapoint(switch_dp)
+        if self._brightness_datapoint_id and self._should_refresh(
+            self._brightness_datapoint_id
+        ):
+            self._brightness = self._get_brightness_from_datapoint(
+                self._find_datapoint(self._brightness_datapoint_id)
+            )
+        if self._color_temp_datapoint_id and self._should_refresh(
+            self._color_temp_datapoint_id
+        ):
+            self._color_temp = self._get_color_temp_from_datapoint(
+                self._find_datapoint(self._color_temp_datapoint_id)
+            )
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on."""
