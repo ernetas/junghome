@@ -33,4 +33,9 @@ async def async_get_config_entry_diagnostics(
         "gateway_version": coordinator.gateway_version,
         "device_count": len(coordinator.data or []),
         "devices": coordinator.data or [],
+        # Scenes are a separate coordinator data category (not backed by a
+        # device); include them so a diagnostics dump is complete for debugging
+        # scene discovery/recall. Scene labels are retained like device labels.
+        "scene_count": len(coordinator.scenes),
+        "scenes": coordinator.scenes,
     }
