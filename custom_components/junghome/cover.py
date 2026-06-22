@@ -214,10 +214,16 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        level_dp = self._find_datapoint(self._level_datapoint_id)
-        if level_dp:
-            self._position = self._get_position_from_datapoint(level_dp)
-        if self._angle_datapoint_id is not None:
+        # Refresh position/tilt only from their own datapoint's push (see
+        # JungHomeEntity._should_refresh) so a level echo can't momentarily reset
+        # tilt to the stale snapshot value, and vice versa.
+        if self._should_refresh(self._level_datapoint_id):
+            level_dp = self._find_datapoint(self._level_datapoint_id)
+            if level_dp:
+                self._position = self._get_position_from_datapoint(level_dp)
+        if self._angle_datapoint_id is not None and self._should_refresh(
+            self._angle_datapoint_id
+        ):
             angle_dp = self._find_datapoint(self._angle_datapoint_id)
             if angle_dp:
                 self._tilt = self._get_tilt_from_datapoint(angle_dp)
