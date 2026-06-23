@@ -372,15 +372,19 @@ async def test_ws_frame_log_truncates_large_frames(hass: HomeAssistant) -> None:
 
 
 async def test_ws_frame_log_keeps_latest_per_type(hass: HomeAssistant) -> None:
-    """The latest frame of each type is retained (handshake survives churn)."""
+    """The latest frame of each type is kept IN FULL (handshake survives churn)."""
     coordinator = _coordinator(hass)
-    # A large functions handshake frame: body truncates, but its type is read
-    # from the full payload first, so it is still keyed as "functions".
+    # A large functions handshake frame: it exceeds the rolling-log truncation
+    # cap, but the per-type store keeps it complete for direct wire comparison.
     big = '{"type":"functions","data":[' + ",".join(['{"id":"x"}'] * 500) + "]}"
+    assert len(big) > 2000
     coordinator._log_ws_frame(big)
     coordinator._log_ws_frame('{"type":"version","data":"1.5.0"}')
     coordinator._log_ws_frame("not json")  # unparseable -> not keyed by type
     by_type = coordinator.ws_last_frame_by_type
-    assert by_type["functions"].endswith("…[truncated]")
+    # Per-type store: full, untruncated.
+    assert by_type["functions"] == big
     assert by_type["version"] == '{"type":"version","data":"1.5.0"}'
     assert set(by_type) == {"functions", "version"}
+    # Rolling log: same large frame is truncated there.
+    assert coordinator.ws_frame_log[0].endswith("…[truncated]")
