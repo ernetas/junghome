@@ -95,7 +95,11 @@ async def async_get_config_entry_diagnostics(
         "scenes": coordinator.scenes,
         "group_count": len(coordinator.groups),
         "groups": coordinator.groups,
-        # The most recent raw WebSocket frames (handshake + live pushes), so the
-        # real wire format can be matched against our parsing.
+        # The most recent raw WebSocket frames (live pushes), so the real wire
+        # format can be matched against our parsing...
         "recent_websocket_frames": list(coordinator.ws_frame_log),
+        # ...plus the latest frame of each type, which always retains the
+        # connect-time handshake (functions / groups / scenes / version) even on a
+        # spammy gateway where the rolling log above has churned past it.
+        "latest_websocket_frame_by_type": coordinator.ws_last_frame_by_type,
     }

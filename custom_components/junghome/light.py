@@ -194,6 +194,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         self._is_on = True
         if self._has_brightness and "brightness" in kwargs:
             await self._set_brightness(kwargs["brightness"])
+        elif self._has_brightness:
+            # No explicit brightness: the device restores its own level on
+            # power-on. Don't guess — showing a kept/stale value looked like the
+            # light jumping to 100%. Clear it and let the device's own brightness
+            # report populate the real current value (its WS push, or the periodic
+            # poll as a fallback).
+            self._brightness = None
         if self._has_color_temp and "color_temp_kelvin" in kwargs:
             await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
