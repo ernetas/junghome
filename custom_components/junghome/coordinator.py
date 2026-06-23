@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections import deque
 from datetime import timedelta
 from typing import Any, cast
 from urllib.parse import quote
@@ -23,6 +24,15 @@ _LOGGER = logging.getLogger(__name__)
 # WebSocket reconnect backoff bounds (seconds).
 INITIAL_RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
+
+# Diagnostics: a bounded log of the most recent raw WebSocket frames so a
+# downloadable report shows what the gateway actually sends (the connect-time
+# handshake — version/message/functions/groups/scenes — plus live datapoint
+# pushes) against how we parse it. Frames carry no secrets (the token is a
+# connect header, never a frame body), but can be large, so each is truncated and
+# only the most recent are kept.
+WS_FRAME_LOG_SIZE = 60
+WS_FRAME_MAX_CHARS = 2000
 
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
@@ -51,6 +61,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # platform discovers from this; recall goes over REST because the
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
+        # Last `groups` broadcast (per-room capability metadata, e.g. which groups
+        # advertise color_temperature_range). Not consumed by any entity; kept for
+        # diagnostics so unimplemented capabilities are visible.
+        self.groups: list[dict[str, Any]] = []
+        # Bounded log of recent raw WebSocket frames for diagnostics.
+        self.ws_frame_log: deque[str] = deque(maxlen=WS_FRAME_LOG_SIZE)
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
         self._ws_task: asyncio.Task[None] | None = None
@@ -228,6 +244,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         _LOGGER.debug("Received WebSocket message: %s", msg.data)
+                        self._log_ws_frame(msg.data)
                         try:
                             data = json.loads(msg.data)
                             if isinstance(data, list):
@@ -270,6 +287,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             finally:
                 self.websocket = None
                 self.ws_connected = False
+
+    def _log_ws_frame(self, raw: str) -> None:
+        """Append a truncated raw WebSocket frame to the diagnostics log."""
+        if len(raw) > WS_FRAME_MAX_CHARS:
+            raw = raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
+        self.ws_frame_log.append(raw)
 
     def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
@@ -330,8 +353,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         elif isinstance(data, list):
             if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
                 self._handle_scenes_broadcast(msg_type, data)
+            elif msg_type == "groups":
+                # Full groups list (on connect and on change). Not consumed by any
+                # entity, but kept for diagnostics (capability metadata).
+                self.groups = [g for g in data if isinstance(g, dict)]
             else:
-                # groups broadcasts — not consumed by any entity; ignore.
                 _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
         else:
             _LOGGER.warning(

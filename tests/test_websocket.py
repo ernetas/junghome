@@ -346,3 +346,26 @@ async def test_handle_message_non_dict_is_ignored(hass: HomeAssistant) -> None:
     """A non-dict message payload hits the defensive guard and is ignored."""
     coordinator = _coordinator(hass)
     coordinator._handle_websocket_message(["not-a-dict"])  # type: ignore[arg-type]
+
+
+async def test_groups_broadcast_is_stored(hass: HomeAssistant) -> None:
+    """A `groups` broadcast is cached for diagnostics (not consumed by entities)."""
+    coordinator = _coordinator(hass)
+    coordinator._handle_websocket_message(
+        {"type": "groups", "data": [{"id": "g1", "name": "Living room"}, "junk"]}
+    )
+    # Non-dict items are filtered out.
+    assert coordinator.groups == [{"id": "g1", "name": "Living room"}]
+    # An unrelated list broadcast (e.g. devices) is just debug-logged, not stored.
+    coordinator._handle_websocket_message({"type": "devices", "data": [{"id": "d"}]})
+    assert coordinator.groups == [{"id": "g1", "name": "Living room"}]
+
+
+async def test_ws_frame_log_truncates_large_frames(hass: HomeAssistant) -> None:
+    """The diagnostics frame log keeps recent frames and truncates large ones."""
+    coordinator = _coordinator(hass)
+    coordinator._log_ws_frame("x" * 5000)
+    coordinator._log_ws_frame("short")
+    assert coordinator.ws_frame_log[-1] == "short"
+    assert coordinator.ws_frame_log[0].endswith("…[truncated]")
+    assert len(coordinator.ws_frame_log[0]) < 5000

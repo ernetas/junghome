@@ -20,6 +20,7 @@ from custom_components.junghome.const import DOMAIN, device_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
 from custom_components.junghome.diagnostics import (
+    _support_summary,
     async_get_config_entry_diagnostics,
 )
 from custom_components.junghome.event import JungHomeEventEntity
@@ -555,6 +556,8 @@ async def test_light_external_change_applied(
 async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     coordinator = init_integration.runtime_data
     coordinator.scenes = [{"id": "s1", "label": "Movie"}]
+    coordinator.groups = [{"id": "g1", "name": "Living room"}]
+    coordinator.ws_frame_log.append('{"type":"version","data":"1.5.0"}')
     diag = await async_get_config_entry_diagnostics(hass, init_integration)
     assert diag["device_count"] == len(DEVICES)
     assert diag["gateway_version"] == "1.5.0"
@@ -563,6 +566,37 @@ async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     # Scenes are a separate coordinator data category, surfaced for debugging.
     assert diag["scene_count"] == 1
     assert diag["scenes"] == [{"id": "s1", "label": "Movie"}]
+    # Groups, raw WebSocket frames and the support summary are surfaced too.
+    assert diag["group_count"] == 1
+    assert diag["groups"] == [{"id": "g1", "name": "Living room"}]
+    assert '{"type":"version"' in diag["recent_websocket_frames"][0]
+    # Every type the fixture uses is handled, so nothing is flagged unsupported.
+    assert diag["support_summary"]["unhandled_function_types"] == []
+    assert diag["support_summary"]["unhandled_datapoint_types"] == []
+    assert diag["support_summary"]["function_types"]["ColorLight"] >= 1
+
+
+def test_support_summary_flags_unhandled_types() -> None:
+    """An unknown function/datapoint type is surfaced in the support summary."""
+    devices = [
+        {
+            "id": "a",
+            "type": "OnOff",
+            "label": "A",
+            "datapoints": [{"id": "a-1", "type": "switch", "values": []}],
+        },
+        {
+            "id": "b",
+            "type": "FutureGizmo",
+            "label": "B",
+            "datapoints": [{"id": "b-1", "type": "mystery", "values": []}],
+        },
+    ]
+    summary = _support_summary(devices)
+    assert summary["unhandled_function_types"] == ["FutureGizmo"]
+    assert summary["unhandled_datapoint_types"] == ["mystery"]
+    assert summary["function_types"]["OnOff"] == 1
+    assert summary["datapoint_types"]["switch"] == 1
 
 
 async def test_stale_device_pruned(hass: HomeAssistant) -> None:
