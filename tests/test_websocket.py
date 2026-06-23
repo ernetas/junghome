@@ -288,3 +288,61 @@ async def test_update_data_raises_update_failed_on_timeout(
         pytest.raises(UpdateFailed),
     ):
         await coordinator._async_update_data()
+
+
+async def test_update_data_5xx_maps_to_update_failed(hass: HomeAssistant) -> None:
+    """A non-auth ClientResponseError (e.g. 500) surfaces as UpdateFailed."""
+    coordinator = _coordinator(hass)
+    err = aiohttp.ClientResponseError(Mock(), (), status=500)
+    with (
+        patch.object(
+            coordinator, "_fetch_devices_from_api", AsyncMock(side_effect=err)
+        ),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_update_data()
+
+
+async def test_ws_handshake_non_auth_error_reconnects(hass: HomeAssistant) -> None:
+    """A non-401/403 handshake error reconnects with backoff (not reauth)."""
+    coordinator = _coordinator(hass)
+    err = aiohttp.WSServerHandshakeError(Mock(), (), status=500, message="x")
+    calls: list[int] = []
+
+    async def flaky(self: JungHomeDataUpdateCoordinator) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise err
+        self._closing = True  # clean exit on the second attempt
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", flaky),
+        patch("custom_components.junghome.coordinator.asyncio.sleep", AsyncMock()),
+    ):
+        await coordinator._websocket_loop()
+    assert len(calls) == 2  # reconnected rather than giving up
+
+
+async def test_send_raises_when_send_str_fails(hass: HomeAssistant) -> None:
+    """A send failure on a live socket surfaces as HomeAssistantError."""
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    ws.send_str = AsyncMock(side_effect=RuntimeError("boom"))
+    coordinator.websocket = ws
+    with pytest.raises(HomeAssistantError):
+        await coordinator.send_websocket_message({"type": "datapoint"})
+
+
+async def test_ws_message_without_datapoint_id_is_ignored(hass: HomeAssistant) -> None:
+    """A datapoint frame with a dict payload but no id is logged and ignored."""
+    coordinator = _coordinator(hass)
+    coordinator._handle_websocket_message(  # must not raise
+        {"type": "datapoint", "data": {"values": []}}
+    )
+
+
+async def test_handle_message_non_dict_is_ignored(hass: HomeAssistant) -> None:
+    """A non-dict message payload hits the defensive guard and is ignored."""
+    coordinator = _coordinator(hass)
+    coordinator._handle_websocket_message(["not-a-dict"])  # type: ignore[arg-type]

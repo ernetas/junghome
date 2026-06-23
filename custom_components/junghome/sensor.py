@@ -155,7 +155,9 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
             # Reject NaN/inf (which float() parses): they would pollute the
             # long-term-statistics / energy pipeline for a numeric sensor.
             return numeric if math.isfinite(numeric) else None
-        return self._value
+        # Unreachable: every sensor gets a state class (mapped, or MEASUREMENT for
+        # an unknown unit), so this only exists to satisfy the return type.
+        return self._value  # pragma: no cover
 
     @callback
     def _handle_coordinator_update(self) -> None:
