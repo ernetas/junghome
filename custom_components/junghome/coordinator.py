@@ -295,21 +295,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     def _log_ws_frame(self, raw: str) -> None:
         """Record a raw WebSocket frame for diagnostics.
 
-        Appends to the rolling recent-frames buffer and also keeps the latest
-        frame of each type. The frame `type` is read from the *full* payload
-        before truncation, so a large `functions` handshake frame is still keyed
-        correctly even though its stored body is truncated.
+        The per-type store keeps the latest frame of each type IN FULL — it holds
+        at most one frame per type, so it cannot grow unbounded, and keeping the
+        connect-time handshake (functions/groups/scenes/version/message) complete
+        makes it directly comparable to the raw wire format. The rolling buffer,
+        which fills with high-frequency datapoint pushes, stays truncated.
         """
         frame_type = None
         try:
             frame_type = json.loads(raw).get("type")
         except (json.JSONDecodeError, AttributeError):
             pass
+        if isinstance(frame_type, str):
+            self.ws_last_frame_by_type[frame_type] = raw
         if len(raw) > WS_FRAME_MAX_CHARS:
             raw = raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
         self.ws_frame_log.append(raw)
-        if isinstance(frame_type, str):
-            self.ws_last_frame_by_type[frame_type] = raw
 
     def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
