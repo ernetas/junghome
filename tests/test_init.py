@@ -20,6 +20,7 @@ from custom_components.junghome.const import DOMAIN, device_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
 from custom_components.junghome.diagnostics import (
+    _support_summary,
     async_get_config_entry_diagnostics,
 )
 from custom_components.junghome.event import JungHomeEventEntity
@@ -439,16 +440,17 @@ async def test_switch_echo_does_not_reset_brightness(
     )
 
 
-async def test_brightness_preserved_across_off_on(
+async def test_plain_turn_on_waits_for_device_brightness(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """Device brightness 0 (reported while off) must not blank the slider on off->on.
+    """A plain turn-on clears the optimistic brightness and waits for the device.
 
-    The dimmer reports brightness 0 when off (on/off is the switch datapoint), so
-    applying that 0 would briefly show the light at 0% on the next turn-on, before
-    the device echoes the restored level a frame later.
+    Without an explicit brightness the device restores its own level; the
+    integration must not keep a stale/guessed value (which looked like the light
+    jumping to 100%) — it clears brightness and applies what the device reports.
     """
     coordinator = init_integration.runtime_data
+    # Set a high brightness via the slider (optimistic 200).
     await hass.services.async_call(
         "light",
         "turn_on",
@@ -457,33 +459,27 @@ async def test_brightness_preserved_across_off_on(
     )
     assert hass.states.get("light.strip").attributes["brightness"] == 200
 
-    # Turn off: the device echoes switch=0 and then brightness=0.
-    coordinator._handle_websocket_message(
-        {
-            "type": "datapoint",
-            "data": {"id": "idcolor1-001", "values": [{"key": "switch", "value": "0"}]},
-        }
+    # A plain toggle-on must NOT keep 200; brightness is cleared, pending report.
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
     )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").attributes.get("brightness") is None
+
+    # The device then reports its restored level; that is what shows.
     coordinator._handle_websocket_message(
         {
             "type": "datapoint",
             "data": {
                 "id": "idcolor1-002",
-                "values": [{"key": "brightness", "value": "0"}],
+                "values": [{"key": "brightness", "value": "80"}],
             },
         }
     )
     await hass.async_block_till_done()
-    assert hass.states.get("light.strip").state == "off"
-
-    # Turn back on (no brightness): the slider must show the kept level, not 0%.
-    await hass.services.async_call(
-        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    assert hass.states.get("light.strip").attributes["brightness"] == round(
+        80 * 255 / 100
     )
-    await hass.async_block_till_done()
-    state = hass.states.get("light.strip")
-    assert state.state == "on"
-    assert state.attributes["brightness"] == 200
 
 
 async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
@@ -555,6 +551,9 @@ async def test_light_external_change_applied(
 async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     coordinator = init_integration.runtime_data
     coordinator.scenes = [{"id": "s1", "label": "Movie"}]
+    coordinator.groups = [{"id": "g1", "name": "Living room"}]
+    coordinator.ws_frame_log.append('{"type":"version","data":"1.5.0"}')
+    coordinator.ws_last_frame_by_type = {"functions": '{"type":"functions"}'}
     diag = await async_get_config_entry_diagnostics(hass, init_integration)
     assert diag["device_count"] == len(DEVICES)
     assert diag["gateway_version"] == "1.5.0"
@@ -563,6 +562,38 @@ async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     # Scenes are a separate coordinator data category, surfaced for debugging.
     assert diag["scene_count"] == 1
     assert diag["scenes"] == [{"id": "s1", "label": "Movie"}]
+    # Groups, raw WebSocket frames and the support summary are surfaced too.
+    assert diag["group_count"] == 1
+    assert diag["groups"] == [{"id": "g1", "name": "Living room"}]
+    assert '{"type":"version"' in diag["recent_websocket_frames"][0]
+    assert diag["latest_websocket_frame_by_type"]["functions"] == '{"type":"functions"}'
+    # Every type the fixture uses is handled, so nothing is flagged unsupported.
+    assert diag["support_summary"]["unhandled_function_types"] == []
+    assert diag["support_summary"]["unhandled_datapoint_types"] == []
+    assert diag["support_summary"]["function_types"]["ColorLight"] >= 1
+
+
+def test_support_summary_flags_unhandled_types() -> None:
+    """An unknown function/datapoint type is surfaced in the support summary."""
+    devices = [
+        {
+            "id": "a",
+            "type": "OnOff",
+            "label": "A",
+            "datapoints": [{"id": "a-1", "type": "switch", "values": []}],
+        },
+        {
+            "id": "b",
+            "type": "FutureGizmo",
+            "label": "B",
+            "datapoints": [{"id": "b-1", "type": "mystery", "values": []}],
+        },
+    ]
+    summary = _support_summary(devices)
+    assert summary["unhandled_function_types"] == ["FutureGizmo"]
+    assert summary["unhandled_datapoint_types"] == ["mystery"]
+    assert summary["function_types"]["OnOff"] == 1
+    assert summary["datapoint_types"]["switch"] == 1
 
 
 async def test_stale_device_pruned(hass: HomeAssistant) -> None:
