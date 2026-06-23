@@ -116,6 +116,11 @@ DEVICES = [
         "label": "Living Room",
         "datapoints": [
             {
+                "id": "idrtr1-000",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+            {
                 "id": "idrtr1-001",
                 "type": "temperature_ctrl",
                 "values": [
@@ -1171,6 +1176,53 @@ async def test_climate_created(hass: HomeAssistant, init_integration) -> None:
     assert state.attributes["preset_mode"] == "comfort"
     # Current temperature read from the sibling °C quantity datapoint.
     assert state.attributes["current_temperature"] == 20.0
+    # The switch datapoint (value "1") maps to HVAC HEAT, with OFF available.
+    assert state.state == "heat"
+    assert set(state.attributes["hvac_modes"]) == {"off", "heat"}
+
+
+async def test_climate_hvac_on_off(hass: HomeAssistant, init_integration) -> None:
+    """HVAC OFF / HEAT drives the thermostat's switch datapoint."""
+    coordinator = init_integration.runtime_data
+    assert hass.states.get("climate.living_room").state == "heat"
+    with (
+        patch.object(coordinator, "turn_off_switch", AsyncMock()) as off,
+        patch.object(coordinator, "turn_on_switch", AsyncMock()) as on,
+    ):
+        await hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": "climate.living_room", "hvac_mode": "off"},
+            blocking=True,
+        )
+        await hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": "climate.living_room", "hvac_mode": "heat"},
+            blocking=True,
+        )
+    off.assert_called_once_with("idrtr1-000")
+    on.assert_called_once_with("idrtr1-000")
+
+
+async def test_climate_hvac_mode_follows_switch_echo(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A switch=0 echo flips the thermostat to OFF without touching target/preset."""
+    coordinator = init_integration.runtime_data
+    assert hass.states.get("climate.living_room").state == "heat"
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idrtr1-000", "values": [{"key": "switch", "value": "0"}]},
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("climate.living_room")
+    assert state.state == "off"
+    # Target temperature/preset unchanged by the switch echo.
+    assert state.attributes["temperature"] == 21.5
+    assert state.attributes["preset_mode"] == "comfort"
 
 
 async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
@@ -1333,17 +1385,26 @@ def _climate(
     current_unit: str | None = "°C",
     target: str = "21.5",
     preset: str = "comfort",
+    switch: str | None = None,
 ) -> JungHomeClimate:
-    dps = [
-        {
-            "id": "t-1",
-            "type": "temperature_ctrl",
-            "values": [
-                {"key": "temperature_ctrl", "value": target},
-                {"key": "temperature_ctrl_preset", "value": preset},
-            ],
-        }
-    ]
+    ctrl_dp = {
+        "id": "t-1",
+        "type": "temperature_ctrl",
+        "values": [
+            {"key": "temperature_ctrl", "value": target},
+            {"key": "temperature_ctrl_preset", "value": preset},
+        ],
+    }
+    dps = [ctrl_dp]
+    if switch is not None:
+        dps.insert(
+            0,
+            {
+                "id": "t-0",
+                "type": "switch",
+                "values": [{"key": "switch", "value": switch}],
+            },
+        )
     if current_unit is not None:
         dps.append(
             {
@@ -1356,7 +1417,20 @@ def _climate(
             }
         )
     device = {"id": "t", "type": "Thermostat", "label": "T", "datapoints": dps}
-    return JungHomeClimate(coordinator, device, dps[0])
+    return JungHomeClimate(coordinator, device, ctrl_dp)
+
+
+async def test_climate_hvac_mode_from_switch_value(hass: HomeAssistant) -> None:
+    """Switch 1/0 maps to HEAT/OFF; a thermostat without a switch stays HEAT-only."""
+    coord = _bare_coordinator(hass)
+    on = _climate(coord, switch="1")
+    assert on._attr_hvac_mode == HVACMode.HEAT
+    assert set(on._attr_hvac_modes) == {HVACMode.OFF, HVACMode.HEAT}
+    off = _climate(coord, switch="0")
+    assert off._attr_hvac_mode == HVACMode.OFF
+    none = _climate(coord)  # no switch datapoint
+    assert none._switch_datapoint_id is None
+    assert none._attr_hvac_modes == [HVACMode.HEAT]
 
 
 async def test_climate_extractors_defensive(hass: HomeAssistant) -> None:
@@ -1442,10 +1516,10 @@ async def test_climate_unknown_preset_noops(hass: HomeAssistant) -> None:
     sp.assert_not_called()
 
 
-async def test_climate_set_hvac_mode_is_noop(hass: HomeAssistant) -> None:
-    """The single-mode thermostat accepts set_hvac_mode without sending anything."""
+async def test_switchless_thermostat_hvac_mode_is_noop(hass: HomeAssistant) -> None:
+    """A thermostat without a switch datapoint accepts set_hvac_mode but sends nothing."""
     coordinator = _bare_coordinator(hass)
-    climate = _climate(coordinator)
+    climate = _climate(coordinator)  # no switch datapoint
     with patch.object(coordinator, "send_websocket_message", AsyncMock()) as send:
         await climate.async_set_hvac_mode(HVACMode.HEAT)  # must not raise
     send.assert_not_called()
@@ -1456,6 +1530,108 @@ async def test_climate_handle_update_missing_device_noops(hass: HomeAssistant) -
     with patch.object(climate, "async_write_ha_state") as write_state:
         climate._handle_coordinator_update()
     write_state.assert_called_once()
+
+
+async def test_climate_current_temp_skips_valueless_quantity(
+    hass: HomeAssistant,
+) -> None:
+    """A °C quantity datapoint with no value is skipped (current_temperature None)."""
+    coordinator = _bare_coordinator(hass)
+    device = {
+        "id": "t",
+        "type": "Thermostat",
+        "label": "T",
+        "datapoints": [
+            {
+                "id": "t-1",
+                "type": "temperature_ctrl",
+                "values": [{"key": "temperature_ctrl", "value": "21"}],
+            },
+            {
+                "id": "t-10",
+                "type": "quantity",
+                "values": [{"key": "quantity_unit", "value": "°C"}],  # no value key
+            },
+        ],
+    }
+    climate = JungHomeClimate(coordinator, device, device["datapoints"][0])
+    assert climate.current_temperature is None
+
+
+async def test_cover_set_tilt_without_angle_noops(hass: HomeAssistant) -> None:
+    """_set_tilt is a no-op on a position-only cover (no angle datapoint)."""
+    coordinator = _bare_coordinator(hass)
+    cover = _cover(coordinator, with_angle=False)
+    assert cover._angle_datapoint_id is None
+    with patch.object(coordinator, "set_angle", AsyncMock()) as set_angle:
+        await cover._set_tilt(50)
+    set_angle.assert_not_called()
+
+
+async def test_sensor_native_value_rejects_nan(hass: HomeAssistant) -> None:
+    """A NaN reading on a numeric sensor yields None (never pollutes statistics)."""
+    coordinator = _bare_coordinator(hass)
+    device = {"id": "s", "type": "Socket", "label": "S", "datapoints": []}
+    dp = {"id": "s-1", "values": [{"key": "quantity", "value": "nan"}]}
+    # An unknown unit makes a numeric MEASUREMENT sensor; NaN must read as None.
+    quantity = JungHomeQuantity(coordinator, device, dp, "Status", "?")
+    assert quantity.native_value is None
+
+
+async def test_malformed_cover_and_thermostat_skipped(hass: HomeAssistant) -> None:
+    """A Position with no level / Thermostat with no temperature_ctrl is skipped."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="m", data={CONF_HOST: "h", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    devices = [
+        {"id": "badc", "type": "Position", "label": "Bad Cover", "datapoints": []},
+        {"id": "badt", "type": "Thermostat", "label": "Bad Therm", "datapoints": []},
+    ]
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=devices),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert hass.states.get("cover.bad_cover") is None
+    assert hass.states.get("climate.bad_therm") is None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_migration_device_repoint_error_isolated(hass: HomeAssistant) -> None:
+    """A failure re-pointing a device identifier is isolated and blocks the done flag."""
+    dev_reg = dr.async_get(hass)
+
+    def prepare(entry: MockConfigEntry) -> None:
+        # A device under the old volatile gateway id, so the migration tries to
+        # re-point it (the only path that calls async_update_device with
+        # new_identifiers).
+        dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, "idlight1")}
+        )
+
+    orig = dr.DeviceRegistry.async_update_device
+
+    def boom(self, device_id, **kwargs):
+        if "new_identifiers" in kwargs:
+            raise RuntimeError("boom")  # only the migration re-point fails
+        return orig(self, device_id, **kwargs)
+
+    with patch.object(dr.DeviceRegistry, "async_update_device", boom):
+        entry = await _setup_with_registry(hass, prepare)
+
+    # Setup succeeds, but the per-device error means migration isn't marked done.
+    assert entry.data.get("stable_ids_migrated") is not True
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 def test_scene_slug_fallback() -> None:
