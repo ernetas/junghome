@@ -10,18 +10,20 @@ Currently functional things:
 - BT S1 B2 U switch actuators.
 - Dimmers (DALI, etc.) - color and brightness as well as On/Off.
 - Sockets - On/Off, energy statistics, etc.
-- Blinds / shutters (covers) - open/close/stop, position, and slat tilt.
+- Blinds / shutters (covers) - open/close/stop, position, and slat tilt. Awnings,
+  which report position inverted, can be flagged in the integration's options.
 - Thermostats (room temperature regulators) - target temperature and presets.
 - Scenes - recall any Jung Home scene from Home Assistant.
 - Measurement sensors (e.g. ambient brightness on presence detectors).
 - IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.
 - Button LED On/Off (unfortunately, color can only be configured via app or BT Mesh/NRF).
 
-> Note: covers, thermostats, scenes and measurement sensors are implemented from
-> the gateway protocol but have **not yet been verified against real hardware**.
-> If you have such a device, feedback is very welcome — in particular whether a
-> blind's open/closed position reads the right way round (the direction is an
-> assumption; see `docs/gateway-websocket.md`).
+> Note: thermostats, scenes and measurement sensors are implemented from the
+> gateway protocol but have **not yet been fully verified against real hardware**,
+> so feedback is very welcome if you own one. Cover position direction is now
+> confirmed against the gateway firmware (percent-closed) and reads correctly for
+> roller shutters/blinds; **awnings** report it inverted, so flag them under
+> Settings → Devices & Services → Jung Home → **Configure**.
 
 All communication is via WebSockets. I've managed to reliably automate:
 - Single click
@@ -116,10 +118,11 @@ reconnects automatically with backoff. No cloud and no account are involved.
 
 - **Groups** defined in the JUNG app aren't exposed; use Home Assistant areas
   instead. (Scenes *are* exposed — see [Scenes](#scenes).)
-- **Covers, thermostats, scenes and measurement sensors are not yet verified
+- **Thermostats, scenes and measurement sensors are not yet fully verified
   against real hardware** — they're implemented from the gateway protocol but I
-  don't own those devices. Feedback welcome, especially whether a blind's
-  open/closed position reads the right way round.
+  don't own those devices. Feedback welcome. Cover position direction is
+  confirmed (percent-closed); **awnings** read inverted and can be flagged in the
+  integration's options to flip them.
 - **Metering sockets report instantaneous power (W) and current (A), not
   cumulative energy (kWh)**, so they can't go straight onto the Energy Dashboard.
   To track energy/cost, add a Riemann-sum

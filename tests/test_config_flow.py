@@ -1,6 +1,7 @@
 """Tests for the Jung Home config flow."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -15,10 +16,28 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.junghome.config_flow import (
     CannotRegister,
     JungHomeConfigFlow,
+    _cover_choices,
     _normalize_host,
 )
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+
+# A single cover so the options flow has something to list. stable_unique_id =
+# slug("Awning") + suffix("idawn-001") = "awning_001".
+_COVERS = [
+    {
+        "id": "idawn",
+        "type": "Position",
+        "label": "Awning",
+        "datapoints": [
+            {
+                "id": "idawn-001",
+                "type": "level",
+                "values": [{"key": "level", "value": "0"}],
+            }
+        ],
+    }
+]
 
 
 def _flow(hass: HomeAssistant, host: str = "gw") -> JungHomeConfigFlow:
@@ -349,3 +368,88 @@ async def test_reauth_failed_step_shows_form(hass: HomeAssistant) -> None:
     result = await _flow(hass).async_step_reauth_failed()
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "reauth_failed"
+
+
+def test_cover_choices_skips_malformed_and_falls_back_to_uid() -> None:
+    """_cover_choices skips a Position without a level dp and labels blanks by uid."""
+    data = [
+        # No level datapoint -> skipped (mirrors cover.py discovery).
+        {"id": "x", "type": "Position", "label": "Lbl", "datapoints": []},
+        # Blank label -> the stable unique_id is used as the display label.
+        {
+            "id": "y",
+            "type": "Position",
+            "label": "",
+            "datapoints": [{"id": "y-001", "type": "level", "values": []}],
+        },
+    ]
+    assert _cover_choices(SimpleNamespace(data=data)) == {"y_001": "y_001"}
+
+
+async def test_options_flow_lists_and_saves_inverted_covers(
+    hass: HomeAssistant,
+) -> None:
+    """The options flow lists discovered covers and stores the chosen ids."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="gw", data={CONF_HOST: "gw", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    _, ws = _no_network()
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=_COVERS),
+        ),
+        ws,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "init"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_INVERTED_COVERS: ["awning_001"]}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_INVERTED_COVERS] == ["awning_001"]
+
+
+async def test_options_flow_aborts_without_covers(hass: HomeAssistant) -> None:
+    """With no covers (and none previously flagged) the options flow aborts."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="gw", data={CONF_HOST: "gw", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    fetch, ws = _no_network()  # fetch returns [] -> no covers
+    with fetch, ws:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_covers"
+
+
+async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> None:
+    """A flagged cover the gateway isn't currently reporting is preserved."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="gw",
+        data={CONF_HOST: "gw", CONF_TOKEN: "t"},
+        options={CONF_INVERTED_COVERS: ["ghost_001"]},
+    )
+    entry.add_to_hass(hass)
+    fetch, ws = _no_network()  # no covers reported right now
+    with fetch, ws:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        # Not aborted: the already-flagged "ghost" cover stays selectable.
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == FlowResultType.FORM
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_INVERTED_COVERS: ["ghost_001"]}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_INVERTED_COVERS] == ["ghost_001"]

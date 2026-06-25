@@ -201,14 +201,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
-    """Reload when the stored host changes (e.g. zeroconf re-discovery).
+    """Reload when the stored host or the entry options change.
 
-    Registered as an update listener. The coordinator caches the host at
-    construction, so a host change in the stored data only takes effect after a
-    reload. Guard on an actual host change so reauth's token-only update (which
+    Registered as an update listener. The coordinator caches the host and an
+    options snapshot at construction, so a change to either only takes effect
+    after a reload (options drive cover inversion; the host drives the API/WS
+    target). Guard on an actual change so reauth's token-only update (which
     already reloads via ``async_update_reload_and_abort``) doesn't trigger a
     redundant second reload.
     """
     coordinator = entry.runtime_data
-    if coordinator.config.get("host") != entry.data.get("host"):
+    host_changed = coordinator.config.get("host") != entry.data.get("host")
+    options_changed = coordinator.options_snapshot != dict(entry.options)
+    if host_changed or options_changed:
         await hass.config_entries.async_reload(entry.entry_id)

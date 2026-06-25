@@ -10,10 +10,13 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.core import callback
+from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .const import DOMAIN
+from .const import CONF_INVERTED_COVERS, DOMAIN, stable_unique_id
+from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,10 +47,82 @@ def _normalize_host(host: str) -> str:
     return host.rstrip("/").lower()
 
 
+def _cover_choices(coordinator: JungHomeDataUpdateCoordinator) -> dict[str, str]:
+    """Map cover stable unique_id -> device label for the options selector.
+
+    Mirrors cover.py discovery (Position/PositionAndAngle with a level datapoint)
+    so the options flow lists exactly the covers the platform creates.
+    """
+    choices: dict[str, str] = {}
+    for device in coordinator.data or []:
+        if device.get("type") not in ("Position", "PositionAndAngle"):
+            continue
+        level_dp = next(
+            (dp for dp in device.get("datapoints", []) if dp.get("type") == "level"),
+            None,
+        )
+        if level_dp is None:
+            continue
+        uid = stable_unique_id(device, level_dp)
+        choices[uid] = device.get("label") or uid
+    return choices
+
+
+class JungHomeOptionsFlow(config_entries.OptionsFlow):
+    """Options: flag covers whose reported position is inverted (e.g. awnings)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show/persist the set of inverted covers."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={CONF_INVERTED_COVERS: user_input.get(CONF_INVERTED_COVERS, [])}
+            )
+
+        entry: JungHomeConfigEntry = self.config_entry
+        coordinator = getattr(entry, "runtime_data", None)
+        choices = _cover_choices(coordinator) if coordinator is not None else {}
+        current = list(entry.options.get(CONF_INVERTED_COVERS, []))
+        # Keep any already-flagged cover that the gateway isn't currently
+        # reporting (e.g. offline) so saving the form doesn't silently clear it.
+        for uid in current:
+            choices.setdefault(uid, uid)
+        if not choices:
+            return self.async_abort(reason="no_covers")
+
+        options = [
+            selector.SelectOptionDict(value=uid, label=label)
+            for uid, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
+        ]
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_INVERTED_COVERS, default=current
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                )
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+
 class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Jung Home."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: JungHomeConfigEntry,
+    ) -> JungHomeOptionsFlow:
+        """Return the options flow handler."""
+        return JungHomeOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the config flow."""

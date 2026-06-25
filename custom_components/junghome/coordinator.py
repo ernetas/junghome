@@ -46,6 +46,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     ) -> None:
         """Initialize the coordinator."""
         self.config = config
+        # Snapshot of the entry options at setup, so the update listener can tell
+        # an options change (e.g. the inverted-covers set) from a token/host-only
+        # update and reload exactly when the platforms need rebuilding.
+        self.options_snapshot: dict[str, Any] = dict(config_entry.options)
         self.websocket: aiohttp.ClientWebSocketResponse | None = None
         self.ws_connected: bool = False
         # The datapoint id whose WebSocket push is being dispatched right now, or

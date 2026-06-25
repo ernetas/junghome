@@ -24,9 +24,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
     `Thermostat` → climate; `RockerSwitch` → event + switch (status LED).
     Scenes come from the WebSocket `scenes` broadcast and recall over REST
     (`POST /scenes/{id}`; the WebSocket `scene` command is unimplemented).
-    **Cover position convention is an unverified assumption** — the gateway
-    `level` is treated as percent-*closed* (HA position = `100 - level`); the
-    single inversion point is `_to_ha`/`_to_device` in `cover.py`.
+    **Cover position convention is confirmed against gateway firmware** — a
+    *close* maps to BT-Mesh "down" (`0x7FFF`, drives `level`→100%) and an *open*
+    to "up" (`0x8000`, →0%), so `level` is percent-*closed* (HA position =
+    `100 - level`), correct for roller shutters/blinds. **Awnings are mounted
+    the opposite way** and read inverted; users flag them in the options flow
+    (`CONF_INVERTED_COVERS`), which makes that cover use an identity mapping. The
+    single inversion point is `_to_ha`/`_to_device` in `cover.py` (both take an
+    `inverted` flag). Changing the inverted set reloads the entry (see
+    `async_reload_entry`, gated on an options snapshot in the coordinator).
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped HA blueprint
   deriving single/double/hold from those raw edges. Users import it by URL; it is
   **not** distributed by HACS (HACS only installs `custom_components/`).

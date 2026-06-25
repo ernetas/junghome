@@ -53,6 +53,20 @@
       "reconfigure_successful": "The gateway address was updated."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home cover options",
+        "description": "Select any covers whose position is reported inverted, such as awnings. Their position is flipped so fully closed reads as 0 percent (closed) and fully open as 100 percent (open). Leave roller shutters and blinds unselected.",
+        "data": {
+          "inverted_covers": "Inverted covers (awnings)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "No covers were found on this gateway, so there is nothing to configure."
+    }
+  },
   "entity": {
     "climate": {
       "thermostat": {
