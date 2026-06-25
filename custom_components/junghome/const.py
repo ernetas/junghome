@@ -6,6 +6,15 @@ from .models import Datapoint, Device
 
 DOMAIN = "junghome"
 
+# Options-flow key: the stable unique_ids of covers whose position the gateway
+# reports inverted relative to Home Assistant's convention. The gateway's native
+# `level` is percent-*closed* (firmware: closing drives the BT-Mesh Generic Level
+# toward 100 %, opening toward 0 %), which is correct for roller shutters/blinds.
+# Awnings (Markise) mount the motor the opposite way — "extended" is what the user
+# calls open — so for them the mapping must be flipped. There is no awning hint in
+# the gateway's function data, so the user marks them here. See cover.py.
+CONF_INVERTED_COVERS = "inverted_covers"
+
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
     """Return the value for ``key`` in a datapoint's ``values``, or ``None``.

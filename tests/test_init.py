@@ -9,6 +9,7 @@ from homeassistant.components.climate.const import HVACMode
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -16,7 +17,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome import async_unload_entry
 from custom_components.junghome.climate import JungHomeClimate
-from custom_components.junghome.const import DOMAIN, device_slug
+from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN, device_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
 from custom_components.junghome.diagnostics import (
@@ -1198,6 +1199,99 @@ async def test_cover_commands(hass: HomeAssistant, init_integration) -> None:
     assert [c.args[1] for c in sl.call_args_list] == [0, 100, 75]
     assert sa.call_args.args[1] == 60
     assert ml.call_args.args[1] == 0  # stop
+
+
+async def test_cover_inverted_awning_position(hass: HomeAssistant) -> None:
+    """A flagged (awning) cover maps the gateway level straight through.
+
+    The reporter's awning sends level 0 when physically retracted ("closed") and
+    100 when extended ("open"). Inverted, HA reads those as 0/closed and 100/open
+    instead of the shutter convention's 100/open and 0/closed.
+    """
+    coordinator = _bare_coordinator(hass)
+
+    def _awning(level: str) -> JungHomeCover:
+        dps = [
+            {"id": "a-1", "type": "level", "values": [{"key": "level", "value": level}]}
+        ]
+        device = {"id": "a", "type": "Position", "label": "Awning", "datapoints": dps}
+        return JungHomeCover(coordinator, device, dps[0], inverted=True)
+
+    retracted = _awning("0")
+    assert retracted.current_cover_position == 0
+    assert retracted.is_closed is True
+
+    extended = _awning("100")
+    assert extended.current_cover_position == 100
+    assert extended.is_closed is False
+
+
+async def test_cover_inverted_commands_pass_through(hass: HomeAssistant) -> None:
+    """Inverted covers send the HA position to the gateway unchanged (no 100-x)."""
+    coordinator = _bare_coordinator(hass)
+    dps = [{"id": "a-1", "type": "level", "values": [{"key": "level", "value": "0"}]}]
+    device = {"id": "a", "type": "Position", "label": "Awning", "datapoints": dps}
+    cover = JungHomeCover(coordinator, device, dps[0], inverted=True)
+    with (
+        patch.object(coordinator, "set_level", AsyncMock()) as sl,
+        patch.object(cover, "async_write_ha_state"),
+    ):
+        await cover.async_open_cover()  # HA open -> device level 100
+        await cover.async_close_cover()  # HA close -> device level 0
+        await cover.async_set_cover_position(position=25)  # -> device level 25
+    assert [c.args[1] for c in sl.call_args_list] == [100, 0, 25]
+
+
+async def test_cover_inverted_via_options(hass: HomeAssistant) -> None:
+    """A cover listed in entry options uses the awning mapping end to end."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        options={CONF_INVERTED_COVERS: ["bedroom_blind_001"]},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=DEVICES),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        # Flagged inverted: device level 30 -> HA position 30 (not the 70 a shutter
+        # would show); the unflagged kitchen shade keeps the inverting convention.
+        bedroom = hass.states.get("cover.bedroom_blind")
+        assert bedroom.attributes["current_position"] == 30
+        kitchen = hass.states.get("cover.kitchen_shade")
+        assert kitchen.attributes["current_position"] == 100  # device level 0 -> open
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_options_flow_inverts_cover_after_reload(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Saving the inverted-covers option reloads the entry and flips the cover."""
+    # Default (shutter) convention: device level 30 -> HA position 70.
+    assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 70
+
+    result = await hass.config_entries.options.async_init(init_integration.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "init"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_INVERTED_COVERS: ["bedroom_blind_001"]}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    # The options change reloaded the entry; the blind now uses the awning mapping.
+    assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 30
+    assert init_integration.options[CONF_INVERTED_COVERS] == ["bedroom_blind_001"]
 
 
 async def test_climate_created(hass: HomeAssistant, init_integration) -> None:

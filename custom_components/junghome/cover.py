@@ -6,19 +6,25 @@ Two function types map here:
 - ``PositionAndAngle`` — a ``level`` datapoint plus an ``angle`` datapoint
   (slat tilt).
 
-## Position convention (hardware-verifiable assumption)
+## Position convention (confirmed against gateway firmware)
 
 The gateway's ``level`` datapoint is a 0-100 ``%`` value (Generic Level model).
-The dump used to build this integration was factory-reset, so it carries no live
-cover to confirm direction, and the gateway docs don't state it. This platform
-follows the common JUNG/European blind convention where ``level`` is **percent
-closed**, so it inverts to Home Assistant's "percent open" position:
+Its direction was confirmed from the gateway middleware (``disk_dump``): a *close*
+maps to BT-Mesh "down" (``0x7FFF`` ⇒ drives ``level`` toward 100 %) and an *open*
+to "up" (``0x8000`` ⇒ toward 0 %). So ``level`` is **percent closed**, which this
+platform inverts to Home Assistant's "percent open" position:
 
     ha_position = 100 - device_level
 
-If a real device turns out to report percent-open instead, flip ``_to_ha`` /
-``_to_device`` below (they are the single inversion point) — nothing else needs
-to change. The slat ``angle`` is mapped straight through (0-100%).
+This is correct for roller shutters/blinds. **Awnings (Markise) are mounted the
+opposite way** — the motor's "down/extended" is what the user calls *open* — so
+for them the position reads inverted (fully retracted shows as 100 % open). The
+gateway exposes no awning hint in its function data (both are ``Position``), and
+even has a per-device ``Blinds Invert Output`` firmware property, so direction is
+genuinely per-device. Such covers are flagged in the options flow
+(``CONF_INVERTED_COVERS``); a flagged cover uses an identity mapping
+(``ha_position = device_level``) instead. ``_to_ha`` / ``_to_device`` are the
+single inversion point. The slat ``angle`` is mapped straight through (0-100%).
 """
 
 import logging
@@ -34,7 +40,7 @@ from homeassistant.components.cover import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_value, stable_unique_id
+from .const import CONF_INVERTED_COVERS, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity
 from .models import Datapoint, Device
@@ -48,18 +54,23 @@ PARALLEL_UPDATES = 0
 _MOVE_STOP = 0
 
 
-def _to_ha(device_level: int) -> int:
-    """Convert a device level (% closed) to a Home Assistant position (% open).
+def _to_ha(device_level: int, *, inverted: bool = False) -> int:
+    """Convert a device level to a Home Assistant position (% open).
+
+    For a normal cover the device level is percent-*closed*, so it inverts
+    (``100 - level``); for an ``inverted`` cover (e.g. an awning) the device level
+    already matches HA's percent-open convention and maps through unchanged.
 
     Clamped to 0..100: the gateway level is untrusted JSON, and an out-of-range
     value would otherwise produce an invalid HA position and break ``is_closed``.
     """
-    return max(0, min(100, 100 - device_level))
+    position = device_level if inverted else 100 - device_level
+    return max(0, min(100, position))
 
 
-def _to_device(ha_position: int) -> int:
-    """Convert a Home Assistant position (% open) to a device level (% closed)."""
-    return 100 - ha_position
+def _to_device(ha_position: int, *, inverted: bool = False) -> int:
+    """Convert a Home Assistant position (% open) to a device level."""
+    return ha_position if inverted else 100 - ha_position
 
 
 async def async_setup_entry(
@@ -70,6 +81,10 @@ async def async_setup_entry(
     """Set up Jung Home covers from a config entry."""
     coordinator = entry.runtime_data
     known: set[str] = set()
+    # Covers the user has flagged as inverted (e.g. awnings); their position maps
+    # through unchanged instead of being inverted. Read once here — an options
+    # change reloads the entry (see __init__.async_reload_entry), re-running setup.
+    inverted = set(entry.options.get(CONF_INVERTED_COVERS, []))
 
     @callback
     def _discover_covers() -> None:
@@ -92,7 +107,9 @@ async def async_setup_entry(
             if uid in known:
                 continue
             known.add(uid)
-            new_entities.append(JungHomeCover(coordinator, device, level_dp))
+            new_entities.append(
+                JungHomeCover(coordinator, device, level_dp, inverted=uid in inverted)
+            )
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)
 
@@ -113,11 +130,15 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         coordinator: JungHomeDataUpdateCoordinator,
         device: Device,
         level_datapoint: Datapoint,
+        *,
+        inverted: bool = False,
     ) -> None:
         """Initialize the cover."""
         super().__init__(coordinator, device)
         self._datapoint = level_datapoint
         self._level_datapoint_id = level_datapoint["id"]
+        # Awning-style cover whose level is reported percent-open, not -closed.
+        self._inverted = inverted
         self._angle_datapoint = next(
             (dp for dp in device.get("datapoints", []) if dp.get("type") == "angle"),
             None,
@@ -164,13 +185,17 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover fully."""
-        await self.coordinator.set_level(self._level_datapoint_id, _to_device(100))
+        await self.coordinator.set_level(
+            self._level_datapoint_id, _to_device(100, inverted=self._inverted)
+        )
         self._position = 100
         self.async_write_ha_state()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover fully."""
-        await self.coordinator.set_level(self._level_datapoint_id, _to_device(0))
+        await self.coordinator.set_level(
+            self._level_datapoint_id, _to_device(0, inverted=self._inverted)
+        )
         self._position = 0
         self.async_write_ha_state()
 
@@ -178,7 +203,7 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         """Move the cover to a specific position."""
         ha_position = int(kwargs[ATTR_POSITION])
         await self.coordinator.set_level(
-            self._level_datapoint_id, _to_device(ha_position)
+            self._level_datapoint_id, _to_device(ha_position, inverted=self._inverted)
         )
         self._position = ha_position
         self.async_write_ha_state()
@@ -235,7 +260,7 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         if value is None:
             return None
         try:
-            return _to_ha(round(float(value)))
+            return _to_ha(round(float(value)), inverted=self._inverted)
         except (TypeError, ValueError):
             return None
 
