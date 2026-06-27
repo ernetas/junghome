@@ -16,6 +16,29 @@ DOMAIN = "junghome"
 CONF_INVERTED_COVERS = "inverted_covers"
 
 
+# Quantity labels that denote a boolean *state* rather than a measured value.
+# Presence/motion detectors (JUNG "BWM") report detection as a `quantity`
+# datapoint with an empty `quantity_unit` and a 0/1 `quantity` value, so it is
+# surfaced as an occupancy binary_sensor, not a numeric sensor. Matched as
+# case-insensitive substrings of the (English) label the gateway reports, e.g.
+# "Presence Detected". ("Present Illuminance" has unit "lux" and the substring
+# "present", not "presence", so it stays a numeric illuminance sensor.)
+_PRESENCE_LABEL_KEYWORDS = ("presence", "occupancy", "motion")
+
+
+def is_presence_quantity(label: str | None) -> bool:
+    """Whether a quantity datapoint's label denotes presence/occupancy (boolean).
+
+    The binary_sensor platform claims such datapoints and the numeric sensor
+    platform skips them, so the two never double-expose the same datapoint (see
+    ``binary_sensor.py`` / ``sensor.py``).
+    """
+    if not label:
+        return False
+    text = label.strip().lower()
+    return any(keyword in text for keyword in _PRESENCE_LABEL_KEYWORDS)
+
+
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
     """Return the value for ``key`` in a datapoint's ``values``, or ``None``.
 
