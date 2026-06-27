@@ -8,6 +8,7 @@ device id.
 from custom_components.junghome.const import (
     datapoint_suffix,
     device_slug,
+    is_presence_quantity,
     stable_unique_id,
 )
 
@@ -88,3 +89,20 @@ def test_stable_unique_id_is_independent_of_the_gateway_device_id():
     before = {"id": "idAAAA1111-010"}
     after = {"id": "idBBBB2222-010"}
     assert stable_unique_id(device, before) == stable_unique_id(device, after)
+
+
+def test_is_presence_quantity_matches_presence_labels():
+    """Presence/occupancy/motion labels are boolean states (binary_sensor)."""
+    # Trailing space mirrors the real gateway label "Presence Detected ".
+    assert is_presence_quantity("Presence Detected ") is True
+    assert is_presence_quantity("Occupancy") is True
+    assert is_presence_quantity("Motion Detected") is True
+
+
+def test_is_presence_quantity_rejects_measurement_labels():
+    """ "Present Illuminance" must NOT match (substring "present", not "presence"),
+    so it stays a numeric sensor; other measurements and empty/None too."""
+    assert is_presence_quantity("Present Illuminance ") is False
+    assert is_presence_quantity("Present Device Input Power ") is False
+    assert is_presence_quantity("") is False
+    assert is_presence_quantity(None) is False

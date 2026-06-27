@@ -21,7 +21,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_value, stable_unique_id
+from .const import datapoint_value, is_presence_quantity, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity
 from .models import Datapoint, Device
@@ -79,6 +79,11 @@ async def async_setup_entry(
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "quantity":
                         raw_label = datapoint_value(datapoint, "quantity_label")
+                        # Presence/occupancy is a boolean state, owned by the
+                        # binary_sensor platform — skip it here so the two never
+                        # double-expose the same datapoint.
+                        if is_presence_quantity(raw_label):
+                            continue
                         label = raw_label.strip() if raw_label else None
                         unit = datapoint_value(datapoint, "quantity_unit")
                         if label and unit:

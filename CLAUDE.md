@@ -12,16 +12,22 @@ JUNG HOME Gateway over its REST API and WebSocket.
     app-approval registration.
   - `const.py` — `DOMAIN` and the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`).
-  - `light.py`, `switch.py`, `sensor.py`, `event.py`, `cover.py`, `climate.py`,
-    `scene.py` — platforms (each does live discovery of devices added at
-    runtime). `event.py` exposes RockerSwitch buttons; the gateway only reports
-    raw `pressed` / `depressed` edges (no native single/double/hold) and
-    alternates a button between its `up_request` and `down_request` events on
-    consecutive presses. Function-type → platform map:
+  - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
+    `cover.py`, `climate.py`, `scene.py` — platforms (each does live discovery of
+    devices added at runtime). `event.py` exposes RockerSwitch buttons; the
+    gateway only reports raw `pressed` / `depressed` edges (no native
+    single/double/hold) and alternates a button between its `up_request` and
+    `down_request` events on consecutive presses. Function-type → platform map:
     `OnOff`/`DimmerLight`/`ColorLight` → light (capabilities follow the
     datapoints present, not the type name); `Socket` → switch + sensor;
-    `Measurement` → sensor; `Position`/`PositionAndAngle` → cover;
-    `Thermostat` → climate; `RockerSwitch` → event + switch (status LED).
+    `Measurement` → sensor + binary_sensor; `Position`/`PositionAndAngle` →
+    cover; `Thermostat` → climate; `RockerSwitch` → event + switch (status LED).
+    Datapoint mapping is not purely by function/datapoint *type*: a `quantity`
+    datapoint whose label denotes presence/occupancy (empty unit, 0/1 value, e.g.
+    a "BWM" detector's `Presence Detected`) becomes an **occupancy
+    binary_sensor**, while other `quantity` datapoints become numeric sensors.
+    `is_presence_quantity` (in `const.py`) is the single split point: the
+    binary_sensor platform claims those labels and `sensor.py` skips them.
     Scenes come from the WebSocket `scenes` broadcast and recall over REST
     (`POST /scenes/{id}`; the WebSocket `scene` command is unimplemented).
     **Cover position convention is confirmed against gateway firmware** — a
