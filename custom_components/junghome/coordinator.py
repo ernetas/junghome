@@ -175,7 +175,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Downstream code keeps defensive `.get(...)` access for malformed items.
         return cast("list[Device]", [d for d in data if isinstance(d, dict)])
 
-    async def _fetch_groups_from_api(self, host: str, token: str) -> list[dict[str, Any]]:
+    async def _fetch_groups_from_api(
+        self, host: str, token: str
+    ) -> list[dict[str, Any]]:
         """Fetch the gateway's groups (rooms) from the REST API.
 
         Groups also arrive over the WebSocket, but that connects only after the
@@ -217,9 +219,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         parents = device.get("parent_groups") or []
         if not parents:
             return None
-        by_id = {
-            g.get("id"): (g.get("name") or g.get("label")) for g in self.groups
-        }
+        by_id = {g.get("id"): (g.get("name") or g.get("label")) for g in self.groups}
         for parent in parents:
             name = by_id.get(parent)
             if name:
