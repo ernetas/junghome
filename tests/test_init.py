@@ -2227,3 +2227,49 @@ async def test_device_area_self_heals_when_groups_arrive_later(
 
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_gateway_connectivity_sensor(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The gateway connectivity sensor is on while the WebSocket is connected."""
+    coordinator = init_integration.runtime_data
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id(
+        "binary_sensor", DOMAIN, "gateway_1.2.3.4_connectivity"
+    )
+    assert entity_id is not None
+    # The real _run_websocket refreshes the coordinator right after connecting
+    # (the test's fake socket only parks), so drive one update to mirror that.
+    assert coordinator.ws_connected is True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.state == "on"
+    assert state.attributes["device_class"] == "connectivity"
+
+
+async def test_gateway_connectivity_reflects_disconnect(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """On a WebSocket drop the sensor reads off but stays available."""
+    coordinator = init_integration.runtime_data
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id(
+        "binary_sensor", DOMAIN, "gateway_1.2.3.4_connectivity"
+    )
+    coordinator.ws_connected = False
+    # REST poll still succeeds, so the entity must not go unavailable — it must
+    # report the disconnect as "off".
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "off"
+
+
+async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) -> None:
+    """The synthetic gateway device survives the stale-device prune."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    assert device is not None
+    assert device.name == "JUNG HOME Gateway"

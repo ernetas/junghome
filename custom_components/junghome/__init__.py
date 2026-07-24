@@ -9,7 +9,13 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DATA_AREA_ASSIGNED, DOMAIN, datapoint_suffix, device_slug
+from .const import (
+    DATA_AREA_ASSIGNED,
+    DOMAIN,
+    datapoint_suffix,
+    device_slug,
+    gateway_device_id,
+)
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,6 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
         if not coordinator.data:
             return  # don't prune on an empty/failed poll
         current = {device_slug(d) for d in coordinator.data}
+        # The synthetic gateway (hub) device never appears in the device list, so
+        # keep it in the live set or it would be pruned on every refresh.
+        current.add(gateway_device_id(entry))
         dev_reg = dr.async_get(hass)
         for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
             slugs = {

@@ -15,10 +15,19 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import datapoint_value, is_presence_quantity, stable_unique_id
+from .const import (
+    DOMAIN,
+    datapoint_value,
+    gateway_device_id,
+    is_presence_quantity,
+    stable_unique_id,
+)
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity
 from .models import Datapoint, Device
@@ -37,6 +46,11 @@ async def async_setup_entry(
     """Set up Jung Home binary sensors from a config entry."""
     coordinator = entry.runtime_data
     known: set[str] = set()
+
+    # One gateway-level connectivity sensor per entry. Added once at setup (not a
+    # per-device discovery) so the hub always exposes a reachability entity even
+    # before any device is discovered.
+    async_add_entities([JungHomeGatewayConnectivity(coordinator, entry)])
 
     @callback
     def _discover_binary_sensors() -> None:
@@ -122,3 +136,54 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
         except (TypeError, ValueError):
             return None
         return numeric != 0 if math.isfinite(numeric) else None
+
+
+class JungHomeGatewayConnectivity(
+    CoordinatorEntity[JungHomeDataUpdateCoordinator], BinarySensorEntity
+):
+    """Reports whether the gateway's live WebSocket link is up.
+
+    This is a hub-level diagnostic entity, not backed by a JUNG *function*, so it
+    is attached to a synthetic gateway device (shared by any future gateway-level
+    entities) rather than to ``JungHomeEntity``.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "gateway_connectivity"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: JungHomeDataUpdateCoordinator,
+        entry: JungHomeConfigEntry,
+    ) -> None:
+        """Initialize the gateway connectivity sensor."""
+        super().__init__(coordinator)
+        self._gateway_id = gateway_device_id(entry)
+        self._attr_unique_id = f"{self._gateway_id}_connectivity"
+
+    @property
+    def available(self) -> bool:
+        """Always available.
+
+        A connectivity sensor that went unavailable when the gateway dropped
+        would be useless — it must stay available to report ``off`` (offline).
+        """
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        """Return True while the gateway WebSocket is connected."""
+        return self.coordinator.ws_connected
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Attach to the synthetic gateway (hub) device."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._gateway_id)},
+            name="JUNG HOME Gateway",
+            manufacturer="Jung",
+            model="Gateway",
+            sw_version=self.coordinator.gateway_version,
+        )

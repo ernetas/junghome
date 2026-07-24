@@ -1,8 +1,13 @@
 """Constants and firmware-stable identity helpers for Jung Home."""
 
+from typing import TYPE_CHECKING
+
 from homeassistant.util import slugify
 
 from .models import Datapoint, Device
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
 
 DOMAIN = "junghome"
 
@@ -47,6 +52,21 @@ def is_presence_quantity(label: str | None) -> bool:
         return False
     text = label.strip().lower()
     return any(keyword in text for keyword in _PRESENCE_LABEL_KEYWORDS)
+
+
+def gateway_device_id(entry: "ConfigEntry") -> str:
+    """Return the stable identifier for the synthetic gateway (hub) device.
+
+    The gateway itself is not one of the gateway's *functions*, so it has no
+    device slug from the device list. Give it a fixed, per-entry identifier so
+    gateway-level entities (e.g. the connectivity sensor) can share one hub
+    device. Anchored on the entry's ``unique_id`` (the host/mDNS hostname, which
+    survives reconfigure) and falling back to the entry id.
+
+    The ``gateway_`` prefix is what ``__init__._prune_stale_devices`` keys off to
+    avoid pruning this device (it never appears in the gateway's device list).
+    """
+    return f"gateway_{entry.unique_id or entry.entry_id}"
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
