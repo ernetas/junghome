@@ -118,12 +118,11 @@ async def async_setup_entry(
 
 
 class JungHomeCover(JungHomeEntity, CoverEntity):
-    """Representation of a Jung Home cover (blind / shutter)."""
+    """Representation of a Jung Home cover (blind / shutter / awning)."""
 
     # The cover is the device's main feature, so it adopts the device name
     # (entity_id `cover.<device>`).
     _attr_name = None
-    _attr_device_class = CoverDeviceClass.BLIND
 
     def __init__(
         self,
@@ -139,6 +138,15 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         self._level_datapoint_id = level_datapoint["id"]
         # Awning-style cover whose level is reported percent-open, not -closed.
         self._inverted = inverted
+        # An inverted cover is, by the gateway's own reasoning (see the module
+        # docstring), a Markise/awning: the motor's "extended" is what the user
+        # calls open. Reflect that in the device class so the UI shows an awning
+        # icon and the correct open/close semantics; every other cover stays a
+        # blind. (This is the same per-device flag users already set for the
+        # position inversion, so no extra configuration is introduced.)
+        self._attr_device_class = (
+            CoverDeviceClass.AWNING if inverted else CoverDeviceClass.BLIND
+        )
         self._angle_datapoint = next(
             (dp for dp in device.get("datapoints", []) if dp.get("type") == "angle"),
             None,
