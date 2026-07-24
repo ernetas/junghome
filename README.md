@@ -17,9 +17,11 @@ Currently functional things:
 - Measurement sensors (e.g. ambient brightness on presence detectors).
 - IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.
 - Button LED On/Off (unfortunately, color can only be configured via app or BT Mesh/NRF).
-- Rooms - each device is suggested to the Home Assistant area matching its Jung
-  Home group. This only applies when a device is first added and never moves a
-  device you have already placed in an area yourself.
+- Rooms - each device is placed in the Home Assistant area matching its Jung
+  Home group. A device is only ever placed if it has no area yet, and each
+  device is considered just once, so this never moves a device you placed
+  yourself and never re-adds one whose area you deliberately cleared. A group
+  matching an existing area links to it instead of creating a duplicate.
 
 > Note: thermostats, scenes and measurement sensors are implemented from the
 > gateway protocol but have **not yet been fully verified against real hardware**,

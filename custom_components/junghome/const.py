@@ -15,6 +15,16 @@ DOMAIN = "junghome"
 # the gateway's function data, so the user marks them here. See cover.py.
 CONF_INVERTED_COVERS = "inverted_covers"
 
+# Entry-data key: the device slugs whose Home Assistant area has already been
+# considered for auto-placement from the gateway's group (room) data.
+#
+# Placement is a *one-time* decision per device, mirroring what HA's own
+# (deprecated) `suggested_area` did: a device is placed only if it has no area
+# at the moment we first see it, and once recorded here it is never touched
+# again. Without this record, a device whose area the user deliberately cleared
+# would be re-placed on the next refresh. See `_assign_areas` in __init__.py.
+DATA_AREA_ASSIGNED = "auto_area_assigned"
+
 
 # Quantity labels that denote a boolean *state* rather than a measured value.
 # Presence/motion detectors (JUNG "BWM") report detection as a `quantity`

@@ -50,7 +50,7 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information, linking the entity to its Jung Home device."""
-        info: DeviceInfo = {
+        return {
             "identifiers": {(DOMAIN, device_slug(self._device))},
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
@@ -59,14 +59,6 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             or self.coordinator.gateway_version
             or "Unknown Version",
         }
-        # Suggest the gateway's room as the device's Home Assistant area. This is
-        # only honoured by HA when the device entry is first created and never
-        # overrides an area the user has since chosen, so returning it on every
-        # read is safe (it does not move already-placed devices).
-        area = self.coordinator.area_for_device(self._device)
-        if area:
-            info["suggested_area"] = area
-        return info
 
     def _current_device(self) -> Device | None:
         """Return this entity's device from the latest coordinator data."""
