@@ -175,6 +175,57 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Downstream code keeps defensive `.get(...)` access for malformed items.
         return cast("list[Device]", [d for d in data if isinstance(d, dict)])
 
+    async def _fetch_groups_from_api(self, host: str, token: str) -> list[dict[str, Any]]:
+        """Fetch the gateway's groups (rooms) from the REST API.
+
+        Groups also arrive over the WebSocket, but that connects only after the
+        platforms are set up; fetching once here makes room data available in
+        time to suggest a device's area when its entities are first created.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/groups"
+        headers = {"token": f"{token}", "Content-Type": "application/json"}
+        async with asyncio.timeout(30):
+            async with session.get(url, headers=headers) as response:
+                response.raise_for_status()
+                data = await response.json()
+        if not isinstance(data, list):
+            return []
+        return [g for g in data if isinstance(g, dict)]
+
+    async def async_fetch_groups(self) -> None:
+        """Populate ``self.groups`` from REST, best-effort.
+
+        Room grouping is a nice-to-have (it only drives suggested areas), so a
+        failure here must never block setup or device polling — it just leaves
+        the groups empty until the WebSocket handshake delivers them.
+        """
+        try:
+            self.groups = await self._fetch_groups_from_api(
+                self.config["host"], self.config["token"]
+            )
+        except Exception as err:  # best-effort, never fatal
+            _LOGGER.debug("Could not fetch Jung Home groups: %s", err)
+
+    def area_for_device(self, device: Device) -> str | None:
+        """Return the room/area name for a device from its parent groups.
+
+        Resolves the device's ``parent_groups`` ids against the groups list and
+        returns the first group name found (a device is normally in one room).
+        Returns ``None`` when the device has no group or none resolve to a name.
+        """
+        parents = device.get("parent_groups") or []
+        if not parents:
+            return None
+        by_id = {
+            g.get("id"): (g.get("name") or g.get("label")) for g in self.groups
+        }
+        for parent in parents:
+            name = by_id.get(parent)
+            if name:
+                return str(name)
+        return None
+
     async def activate_scene(self, scene_id: str) -> None:
         """Activate a scene via REST (the WebSocket scene command is unimplemented)."""
         session = async_get_clientsession(self.hass, verify_ssl=False)

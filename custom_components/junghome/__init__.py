@@ -47,6 +47,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # Expose the coordinator as runtime data for the platforms.
     entry.runtime_data = coordinator
 
+    # Fetch room groups before the platforms create entities, so each device can
+    # suggest its area at creation time. Best-effort: never blocks setup.
+    await coordinator.async_fetch_groups()
+
     # One-time migration of registry entries from the gateway's volatile device
     # ids to firmware-stable, label-based ids. Must run while the gateway's ids
     # still match the registry (i.e. before the platforms create new entities).

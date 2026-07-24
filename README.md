@@ -17,6 +17,9 @@ Currently functional things:
 - Measurement sensors (e.g. ambient brightness on presence detectors).
 - IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.
 - Button LED On/Off (unfortunately, color can only be configured via app or BT Mesh/NRF).
+- Rooms - each device is suggested to the Home Assistant area matching its Jung
+  Home group. This only applies when a device is first added and never moves a
+  device you have already placed in an area yourself.
 
 > Note: thermostats, scenes and measurement sensors are implemented from the
 > gateway protocol but have **not yet been fully verified against real hardware**,
