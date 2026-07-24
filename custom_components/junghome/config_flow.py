@@ -171,9 +171,16 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     return await self.async_step_register()
 
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
-        )
+        # Re-shown after an error (e.g. a rejected password): keep the host the
+        # user already typed rather than making them enter it again. The password
+        # is deliberately not suggested back — it is a credential, and the retry
+        # is usually *because* it was wrong.
+        schema = STEP_USER_SCHEMA
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(
+                STEP_USER_SCHEMA, {CONF_HOST: user_input.get(CONF_HOST)}
+            )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_register(
         self, user_input: dict[str, Any] | None = None

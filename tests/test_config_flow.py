@@ -326,6 +326,10 @@ async def test_user_flow_password_rejected(hass: HomeAssistant) -> None:
         )
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
+    # The host the user already typed is kept so they don't retype it on retry;
+    # the password is not suggested back (it's a credential, and it was wrong).
+    host_key = next(k for k in result["data_schema"].schema if k == CONF_HOST)
+    assert host_key.description == {"suggested_value": "1.2.3.4"}
 
 
 async def test_async_register_by_password_returns_token(
