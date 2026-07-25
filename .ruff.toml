@@ -13,6 +13,7 @@ ignore = [
     "D213", # multi-line-summary-second-line (we summarise on the first line)
     "COM812", # incompatible with formatter
     "ISC001", # incompatible with formatter
+    "CPY001", # missing copyright notice (Home Assistant ignores this too)
 
     # Families this (largely pre-existing) codebase does not follow; relaxed so
     # CI lint is green without rewriting working code.
