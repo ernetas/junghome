@@ -181,8 +181,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """Fetch the gateway's groups (rooms) from the REST API.
 
         Groups also arrive over the WebSocket, but that connects only after the
-        platforms are set up; fetching once here makes room data available in
-        time to suggest a device's area when its entities are first created.
+        platforms are set up; fetching once here lets the first area-assignment
+        pass at the end of setup place devices straight away, instead of waiting
+        for the WebSocket handshake to deliver the groups a moment later.
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
         url = f"https://{host}/api/junghome/groups"
@@ -198,9 +199,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def async_fetch_groups(self) -> None:
         """Populate ``self.groups`` from REST, best-effort.
 
-        Room grouping is a nice-to-have (it only drives suggested areas), so a
-        failure here must never block setup or device polling — it just leaves
-        the groups empty until the WebSocket handshake delivers them.
+        Room grouping is a nice-to-have (it only drives placing a device in the
+        matching area), so a failure here must never block setup or device
+        polling — it just leaves the groups empty until the WebSocket handshake
+        delivers them, at which point the next refresh places any device that
+        was waiting on its room.
         """
         try:
             self.groups = await self._fetch_groups_from_api(

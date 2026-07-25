@@ -2109,3 +2109,121 @@ async def test_device_area_reuses_existing_area_by_name(hass: HomeAssistant) -> 
     )
     assert device_entry.area_id == existing.id
     assert len(area_reg.areas) == before  # no duplicate area was created
+
+
+def _ungrouped_lamp() -> dict:
+    """A lamp the gateway reports in no room (empty ``parent_groups``)."""
+    return {
+        "id": "idlamp2",
+        "type": "OnOff",
+        "label": "Hall Lamp",
+        "parent_groups": [],
+        "datapoints": [
+            {
+                "id": "idlamp2-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            }
+        ],
+    }
+
+
+async def test_ungrouped_device_is_left_unplaced_and_reconsidered(
+    hass: HomeAssistant,
+) -> None:
+    """A device with no resolvable room is not placed, and stays reconsiderable.
+
+    It must not be recorded as considered: a room could still arrive later (over
+    the WebSocket), and only then should the device be placed.
+    """
+    groups = [{"id": "grp-living", "name": "Living Room"}]
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp(), _ungrouped_lamp()]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=groups),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="1.2.3.4",
+            data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        )
+        entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        dev_reg = dr.async_get(hass)
+        grouped = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        ungrouped = dev_reg.async_get_device(identifiers={(DOMAIN, "hall_lamp")})
+        assert grouped.area_id is not None  # placed in its room
+        assert ungrouped.area_id is None  # no room -> not placed
+
+        # The grouped device is settled; the ungrouped one is NOT recorded, so a
+        # room arriving later still gets a chance to place it.
+        assigned = entry.data[DATA_AREA_ASSIGNED]
+        assert "sofa_lamp" in assigned
+        assert "hall_lamp" not in assigned
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_device_area_self_heals_when_groups_arrive_later(
+    hass: HomeAssistant,
+) -> None:
+    """If the REST groups fetch yields nothing, a later WebSocket delivery of the
+    groups still places the device on the next refresh."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp()]),
+        ),
+        # The pre-setup REST groups fetch comes back empty (e.g. it failed).
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        dev_reg = dr.async_get(hass)
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry.area_id is None  # no rooms known yet -> not placed
+        assert "sofa_lamp" not in entry.data.get(DATA_AREA_ASSIGNED, [])
+
+        # The WebSocket handshake later delivers the groups; the next coordinator
+        # update runs the placement again and now resolves the room.
+        coordinator = entry.runtime_data
+        coordinator.groups = [{"id": "grp-living", "name": "Living Room"}]
+        coordinator.async_set_updated_data([_grouped_lamp()])
+        await hass.async_block_till_done()
+
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry.area_id is not None
+        area_reg = ar.async_get(hass)
+        assert area_reg.async_get_area(device_entry.area_id).name == "Living Room"
+        assert "sofa_lamp" in entry.data[DATA_AREA_ASSIGNED]
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
