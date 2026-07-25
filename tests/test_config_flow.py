@@ -96,11 +96,47 @@ def test_normalize_host_strips_scheme_whitespace_and_slash():
         assert _normalize_host(raw) == expected
 
 
+async def _choose(hass: HomeAssistant, result: dict, option: str) -> dict:
+    """Pick an option from a menu step."""
+    assert result["type"] == FlowResultType.MENU
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": option}
+    )
+
+
+def _host_suggested(result: dict) -> str | None:
+    """Return the suggested_value pre-filled into a form's host field."""
+    host_key = next(k for k in result["data_schema"].schema if k == CONF_HOST)
+    return (host_key.description or {}).get("suggested_value")
+
+
+async def test_user_menu_lists_both_methods(hass: HomeAssistant) -> None:
+    """The user step is a menu offering both connection methods."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "user"
+    assert set(result["menu_options"]) == {"app_approval", "password"}
+
+
+async def test_user_flow_defaults_host_to_mdns(hass: HomeAssistant) -> None:
+    """The manual host field is pre-filled with the mDNS default."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await _choose(hass, result, "app_approval")
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "app_approval"
+    assert _host_suggested(result) == "junghome.local"
+
+
 async def test_user_flow_invalid_host(hass: HomeAssistant) -> None:
     """A blank host is rejected with an error and re-shows the form."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
+    result = await _choose(hass, result, "app_approval")
     assert result["type"] == FlowResultType.FORM
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_HOST: "   "}
@@ -120,6 +156,7 @@ async def test_user_flow_already_configured(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
+    result = await _choose(hass, result, "app_approval")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_HOST: "1.2.3.4"}
     )
@@ -127,22 +164,75 @@ async def test_user_flow_already_configured(hass: HomeAssistant) -> None:
     assert result["reason"] == "already_configured"
 
 
-async def test_zeroconf_discovery_starts_confirm(hass: HomeAssistant) -> None:
-    """A discovered gateway pre-fills the host and asks to confirm."""
-    info = ZeroconfServiceInfo(
+def _zeroconf_info(hostname: str = "junghome-abc.local.") -> ZeroconfServiceInfo:
+    return ZeroconfServiceInfo(
         ip_address="1.2.3.4",
         ip_addresses=["1.2.3.4"],
         port=443,
-        hostname="junghome.local.",
+        hostname=hostname,
         type="_junghome._tcp.local.",
         name="junghome._junghome._tcp.local.",
         properties={},
     )
+
+
+async def test_zeroconf_discovery_starts_confirm(hass: HomeAssistant) -> None:
+    """A discovered gateway offers a menu of connection methods."""
     result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "zeroconf"}, data=info
+        DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info()
     )
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "zeroconf_confirm"
+    assert set(result["menu_options"]) == {"app_approval", "password"}
+
+
+async def test_zeroconf_confirm_app_approval_prefills_host(
+    hass: HomeAssistant,
+) -> None:
+    """Discovered + approve-in-app: the host is pre-filled (not hidden) and the
+    entry keeps the stable mDNS-hostname unique_id.
+    """
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, AsyncMock(return_value="tok-z")), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info()
+        )
+        result = await _choose(hass, result, "app_approval")
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "app_approval"
+        assert _host_suggested(result) == "1.2.3.4"  # discovered address, editable
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-z"}
+        await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == "junghome-abc.local"
+
+
+async def test_zeroconf_confirm_password_prefills_host(hass: HomeAssistant) -> None:
+    """Discovered + network-key password: the host is pre-filled and setup is
+    instant.
+    """
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER_PW, AsyncMock(return_value="pw-z")), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info()
+        )
+        result = await _choose(hass, result, "password")
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "password"
+        assert _host_suggested(result) == "1.2.3.4"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "pw-z"}
+        await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == "junghome-abc.local"
 
 
 async def test_zeroconf_aborts_when_already_configured(hass: HomeAssistant) -> None:
@@ -169,12 +259,13 @@ async def test_zeroconf_aborts_when_already_configured(hass: HomeAssistant) -> N
 
 
 async def test_user_flow_success(hass: HomeAssistant) -> None:
-    """Host + approved registration creates and sets up the entry."""
+    """Menu -> app approval -> host -> approved registration creates the entry."""
     fetch, run_ws = _no_network()
     with patch(_REGISTER, AsyncMock(return_value="tok-123")), fetch, run_ws:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": SOURCE_USER}
         )
+        result = await _choose(hass, result, "app_approval")
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_HOST: "1.2.3.4"}
         )
@@ -296,12 +387,13 @@ _REGISTER_PW = (
 
 
 async def test_user_flow_password_success(hass: HomeAssistant) -> None:
-    """Supplying a password registers instantly (no waiting-for-approval step)."""
+    """Menu -> password -> host + password registers instantly."""
     fetch, run_ws = _no_network()
     with patch(_REGISTER_PW, AsyncMock(return_value="pw-tok")), fetch, run_ws:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": SOURCE_USER}
         )
+        result = await _choose(hass, result, "password")
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
         )
@@ -321,6 +413,7 @@ async def test_user_flow_password_rejected(hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": SOURCE_USER}
         )
+        result = await _choose(hass, result, "password")
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "bad"}
         )
@@ -328,8 +421,7 @@ async def test_user_flow_password_rejected(hass: HomeAssistant) -> None:
     assert result["errors"] == {"base": "invalid_auth"}
     # The host the user already typed is kept so they don't retype it on retry;
     # the password is not suggested back (it's a credential, and it was wrong).
-    host_key = next(k for k in result["data_schema"].schema if k == CONF_HOST)
-    assert host_key.description == {"suggested_value": "1.2.3.4"}
+    assert _host_suggested(result) == "1.2.3.4"
 
 
 async def test_async_register_by_password_returns_token(

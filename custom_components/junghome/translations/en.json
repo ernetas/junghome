@@ -4,18 +4,40 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home gateway discovered",
-        "description": "Set up the Jung Home gateway at {host}? After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests."
+        "description": "A Jung Home gateway was found at {host}. Choose how to connect.",
+        "menu_options": {
+          "app_approval": "Approve the connection in the Jung Home app",
+          "password": "Enter the gateway network-key password (connects instantly)"
+        }
       },
       "user": {
         "title": "Connect to Jung Home",
-        "description": "Enter the address of your Jung Home gateway. Leave the password empty to approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests. Alternatively, enter the gateway network-key password to connect immediately.",
+        "description": "Your gateway is usually found automatically and shown on the Integrations page. If it was not, choose how to connect below.",
+        "menu_options": {
+          "app_approval": "Approve the connection in the Jung Home app",
+          "password": "Enter the gateway network-key password (connects instantly)"
+        }
+      },
+      "app_approval": {
+        "title": "Connect to Jung Home",
+        "description": "Confirm or enter the address of your Jung Home gateway. After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests.",
         "data": {
-          "host": "Host",
-          "password": "Network-key password (optional)"
+          "host": "Host"
         },
         "data_description": {
-          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local).",
-          "password": "The Jung Home gateway network-key password. Leave empty to approve the request in the app instead."
+          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise the default junghome.local works on many networks, or use the IP address (for example 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Connect to Jung Home",
+        "description": "Confirm the gateway address and enter its network-key password to connect immediately, without approving a request in the app. You can find the password in the Jung Home app.",
+        "data": {
+          "host": "Host",
+          "password": "Network-key password"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise the default junghome.local works on many networks, or use the IP address (for example 192.168.1.50).",
+          "password": "The Jung Home gateway network-key password."
         }
       },
       "register_failed": {

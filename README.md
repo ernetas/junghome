@@ -57,21 +57,32 @@ Copy `custom_components/junghome/` into your Home Assistant `config/custom_compo
 
 # Setup
 
-Adding the integration is now a two-step, app-driven flow — you no longer need to
-fetch a token by hand:
+You no longer need to fetch a token by hand. In most cases the gateway is
+**discovered automatically** over mDNS and appears under
+**Settings → Devices & Services** as a discovered device — just click
+**Configure**. If it isn't discovered, go to **Add Integration → Jung Home** to
+start setup manually.
 
-1. In Home Assistant, go to **Settings → Devices & Services → Add Integration**
-   and pick **Jung Home**.
-2. Enter your gateway address — the IP (e.g. `192.168.1.50`) or `junghome.local`.
-3. Home Assistant requests access from the gateway and waits. Open the **Jung
-   Home mobile app** and approve the request under
-   **Settings → Gateway → Access Permissions → Open Requests**.
-4. Once you approve (within ~3 minutes), setup completes automatically and your
-   devices appear. If it times out, just submit again and re-approve.
+Either way you then pick **how to connect**:
 
-Behind the scenes this calls the gateway's `POST /api/junghome/register`
-endpoint; the issued token is stored in the config entry. Devices added or
-removed in the Jung Home app afterwards are picked up automatically.
+- **Approve the connection in the Jung Home app.** Home Assistant asks the
+  gateway for access and waits; open the **Jung Home app** and approve the
+  request under **Settings → Gateway → Access Permissions → Open Requests**.
+  Setup finishes automatically once you approve (within ~3 minutes) — if it times
+  out, submit again and re-approve. (Uses `POST /api/junghome/register`.)
+- **Enter the gateway network-key password.** Connects immediately, with no app
+  approval, by exchanging the gateway's network-key password for a token (uses
+  `POST /api/junghome/register/by-password`). You can find the password in the
+  Jung Home app.
+
+The gateway address is filled in for you when it was discovered; otherwise it
+defaults to `junghome.local` (which works on many networks) and you can change it
+to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
+
+The issued token is stored in the config entry. Devices added or removed in the
+Jung Home app afterwards are picked up automatically. If the gateway's IP later
+changes, discovery updates it automatically, or you can **Reconfigure** the entry
+to point at the new address.
 
 # Button automations (rocker switches)
 
