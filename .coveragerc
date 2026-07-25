@@ -4,7 +4,13 @@
 # by tests/. Only never-executed TYPE_CHECKING import blocks are excluded here;
 # for a genuinely unreachable line, add a scoped `# pragma: no cover` on that
 # line rather than a package-wide regex.
+#
+# branch = true measures BOTH sides of each of those defensive guards, not just
+# that the line ran — so an untested early-return (`if x: ...` never falling
+# through) shows up as a partial branch. This is read by coverage.py directly,
+# so `pytest --cov` picks it up with no `--cov-branch` flag needed in CI.
 [run]
+branch = true
 source = custom_components/junghome
 
 [report]
