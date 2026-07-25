@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.components.climate.const import HVACMode
-from homeassistant.components.cover import CoverEntityFeature
+from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -1220,10 +1220,21 @@ async def test_cover_inverted_awning_position(hass: HomeAssistant) -> None:
     retracted = _awning("0")
     assert retracted.current_cover_position == 0
     assert retracted.is_closed is True
+    # An inverted cover is treated as an awning, not a blind (see cover.py).
+    assert retracted.device_class == CoverDeviceClass.AWNING
 
     extended = _awning("100")
     assert extended.current_cover_position == 100
     assert extended.is_closed is False
+
+
+async def test_cover_normal_device_class_is_blind(hass: HomeAssistant) -> None:
+    """A non-inverted cover keeps the blind device class."""
+    coordinator = _bare_coordinator(hass)
+    dps = [{"id": "b-1", "type": "level", "values": [{"key": "level", "value": "0"}]}]
+    device = {"id": "b", "type": "Position", "label": "Shutter", "datapoints": dps}
+    cover = JungHomeCover(coordinator, device, dps[0])
+    assert cover.device_class == CoverDeviceClass.BLIND
 
 
 async def test_cover_inverted_commands_pass_through(hass: HomeAssistant) -> None:
