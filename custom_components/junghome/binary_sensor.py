@@ -22,9 +22,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DOMAIN,
     datapoint_value,
     gateway_device_id,
+    gateway_device_info,
     is_presence_quantity,
     stable_unique_id,
 )
@@ -160,8 +160,8 @@ class JungHomeGatewayConnectivity(
     ) -> None:
         """Initialize the gateway connectivity sensor."""
         super().__init__(coordinator)
-        self._gateway_id = gateway_device_id(entry)
-        self._attr_unique_id = f"{self._gateway_id}_connectivity"
+        self._entry = entry
+        self._attr_unique_id = f"{gateway_device_id(entry)}_connectivity"
 
     @property
     def available(self) -> bool:
@@ -180,10 +180,4 @@ class JungHomeGatewayConnectivity(
     @property
     def device_info(self) -> DeviceInfo:
         """Attach to the synthetic gateway (hub) device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._gateway_id)},
-            name="JUNG HOME Gateway",
-            manufacturer="Jung",
-            model="Gateway",
-            sw_version=self.coordinator.gateway_version,
-        )
+        return gateway_device_info(self._entry, self.coordinator.gateway_version)

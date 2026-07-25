@@ -349,10 +349,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             finally:
                 self.websocket = None
                 self.ws_connected = False
-                # Notify listeners so the gateway connectivity sensor flips to
-                # "off" immediately on a drop, rather than lagging until the next
-                # REST poll (the reconnect path already refreshes on connect).
-                self.async_update_listeners()
+                self._notify_websocket_closed()
+
+    def _notify_websocket_closed(self) -> None:
+        """Push the WebSocket-down state to listeners after a live drop.
+
+        Flips the gateway connectivity sensor to "off" immediately rather than
+        lagging until the next REST poll (the reconnect path already refreshes on
+        connect). Skipped while ``stop()`` is tearing the entry down: there the
+        platforms are already being removed, so notifying would only run the
+        prune/area listeners for no benefit.
+        """
+        if not self._closing:
+            self.async_update_listeners()
 
     def _log_ws_frame(self, raw: str) -> None:
         """Record a raw WebSocket frame for diagnostics.
