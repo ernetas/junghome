@@ -26,19 +26,21 @@ _LOGGER = logging.getLogger(__name__)
 REGISTER_TIMEOUT = 190
 REGISTER_USER_NAME = "Home Assistant"
 
-# Host-only schema, reused by the reconfigure step.
-STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required(CONF_HOST): str})
+# The gateway's generic mDNS hostname (also its TLS certificate CN). Offered as
+# the default host so most users need not look up the gateway's IP. It only
+# resolves if the network maps it; the reliable name is the per-device mDNS
+# hostname (junghome-<mac>.local) that discovery supplies, and an IP always works.
+MDNS_DEFAULT_HOST = "junghome.local"
 
-# The user step also offers an optional password: supplying the gateway's
-# network-key password registers instantly via /register/by-password instead of
-# waiting for in-app approval.
-STEP_USER_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_HOST): str,
-        vol.Optional(CONF_PASSWORD): selector.TextSelector(
-            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-        ),
-    }
+_PASSWORD_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
+
+# Host-only schema, reused by the app-approval and reconfigure steps.
+STEP_HOST_SCHEMA = vol.Schema({vol.Required(CONF_HOST): str})
+# Host + network-key password, for instant setup.
+STEP_HOST_PASSWORD_SCHEMA = vol.Schema(
+    {vol.Required(CONF_HOST): str, vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR}
 )
 
 
@@ -143,44 +145,121 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._token: str | None = None
         self._error: str = "register_failed"
         self._register_task: asyncio.Task[str] | None = None
+        # True once the host is known from discovery, so the method steps skip
+        # asking for it again.
+        self._discovered: bool = False
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Collect the gateway host, then start registration."""
+        """Let the user pick how to connect to the gateway.
+
+        Gateways are normally found automatically (mDNS) and shown on the
+        Integrations page. This menu is the manual fallback and offers the two
+        ways to obtain a token: approving the request in the app, or entering the
+        gateway's network-key password for an instant connection.
+        """
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["app_approval", "password"],
+        )
+
+    async def async_step_app_approval(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Connect by approving the access request in the Jung Home app.
+
+        Shows the host field (pre-filled with the discovered address when the
+        gateway was found automatically) so the user can confirm or edit it.
+        """
         errors: dict[str, str] = {}
         if user_input is not None:
-            self._host = _normalize_host(user_input[CONF_HOST])
-            if not self._host:
-                errors["base"] = "invalid_host"
-            else:
-                # Populate the {host} flow_title placeholder for later steps.
-                self.context["title_placeholders"] = {"host": self._host}
-                await self.async_set_unique_id(self._host)
-                self._abort_if_unique_id_configured()
-                password = user_input.get(CONF_PASSWORD)
-                if password:
-                    # Instant path: exchange the network-key password for a token
-                    # right away instead of waiting for in-app approval.
-                    try:
-                        self._token = await self._async_register_by_password(password)
-                    except CannotRegister:
-                        errors["base"] = self._error
-                    else:
-                        return await self.async_step_finish()
-                else:
-                    return await self.async_step_register()
+            error = await self._async_apply_host(user_input[CONF_HOST])
+            if error is None:
+                return await self.async_step_register()
+            errors["base"] = error
 
-        # Re-shown after an error (e.g. a rejected password): keep the host the
-        # user already typed rather than making them enter it again. The password
-        # is deliberately not suggested back — it is a credential, and the retry
-        # is usually *because* it was wrong.
-        schema = STEP_USER_SCHEMA
+        return self.async_show_form(
+            step_id="app_approval",
+            data_schema=self._host_schema(user_input),
+            errors=errors,
+        )
+
+    async def async_step_password(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Connect instantly using the gateway's network-key password.
+
+        Shows the host field (pre-filled with the discovered address when the
+        gateway was found automatically) alongside the password.
+        """
+        errors: dict[str, str] = {}
         if user_input is not None:
-            schema = self.add_suggested_values_to_schema(
-                STEP_USER_SCHEMA, {CONF_HOST: user_input.get(CONF_HOST)}
-            )
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+            error = await self._async_apply_host(user_input[CONF_HOST])
+            if error is not None:
+                errors["base"] = error
+            else:
+                try:
+                    self._token = await self._async_register_by_password(
+                        user_input[CONF_PASSWORD]
+                    )
+                except CannotRegister:
+                    errors["base"] = self._error
+                else:
+                    return await self.async_step_finish()
+
+        return self.async_show_form(
+            step_id="password",
+            data_schema=self._password_schema(user_input),
+            errors=errors,
+        )
+
+    async def _async_apply_host(self, raw_host: str) -> str | None:
+        """Normalise the host from a form and claim identity where needed.
+
+        Returns an error key to show, or None on success. A discovered gateway
+        already set its unique_id to the stable mDNS hostname during discovery, so
+        we keep that and only record the confirmed (or edited) host; a manually
+        entered host becomes the unique_id and aborts if already configured.
+        """
+        host = _normalize_host(raw_host)
+        if not host:
+            return "invalid_host"
+        self._host = host
+        # Populate the {host} flow_title placeholder for later steps.
+        self.context["title_placeholders"] = {"host": host}
+        if not self._discovered:
+            await self.async_set_unique_id(host)
+            self._abort_if_unique_id_configured()
+        return None
+
+    def _host_default(self, user_input: dict[str, Any] | None) -> str:
+        """Return the host to pre-fill: retyped value, else discovered, else mDNS.
+
+        Order: a value the user just typed (kept across a retry), then the
+        discovered address, then the generic mDNS default.
+        """
+        if user_input and user_input.get(CONF_HOST):
+            return str(user_input[CONF_HOST])
+        if self._discovered and self._host:
+            return self._host
+        return MDNS_DEFAULT_HOST
+
+    def _host_schema(self, user_input: dict[str, Any] | None) -> vol.Schema:
+        """Host-only form with the host pre-filled."""
+        return self.add_suggested_values_to_schema(
+            STEP_HOST_SCHEMA, {CONF_HOST: self._host_default(user_input)}
+        )
+
+    def _password_schema(self, user_input: dict[str, Any] | None) -> vol.Schema:
+        """Host + password form with the host pre-filled.
+
+        The password is never suggested back — it is a credential, and a retry is
+        usually *because* it was wrong.
+        """
+        return self.add_suggested_values_to_schema(
+            STEP_HOST_PASSWORD_SCHEMA, {CONF_HOST: self._host_default(user_input)}
+        )
 
     async def async_step_register(
         self, user_input: dict[str, Any] | None = None
@@ -313,7 +392,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                STEP_USER_DATA_SCHEMA, {CONF_HOST: entry.data.get(CONF_HOST)}
+                STEP_HOST_SCHEMA, {CONF_HOST: entry.data.get(CONF_HOST)}
             ),
             errors=errors,
         )
@@ -323,6 +402,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle a gateway discovered via mDNS (_junghome._tcp)."""
         self._host = discovery_info.host
+        self._discovered = True
         hostname = (discovery_info.hostname or "").rstrip(".") or self._host
         # Stable per-gateway id; update the stored host if its IP changed.
         await self.async_set_unique_id(hostname)
@@ -339,13 +419,12 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm setup of a discovered gateway, then register."""
-        if user_input is None:
-            return self.async_show_form(
-                step_id="zeroconf_confirm",
-                description_placeholders={"host": self._host or ""},
-            )
-        return await self.async_step_register()
+        """Let the user choose how to connect to the discovered gateway."""
+        return self.async_show_menu(
+            step_id="zeroconf_confirm",
+            menu_options=["app_approval", "password"],
+            description_placeholders={"host": self._host or ""},
+        )
 
     async def _async_register(self) -> str:
         """POST the registration request and return the issued token.
