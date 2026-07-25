@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import slugify
 
 from .models import Datapoint, Device
@@ -10,6 +11,13 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
 DOMAIN = "junghome"
+
+# Presentation of the synthetic gateway (hub) device. Kept as constants so the
+# up-front registration in ``__init__`` and the connectivity sensor that lives on
+# the device describe it identically (see ``gateway_device_info``).
+GATEWAY_NAME = "JUNG HOME Gateway"
+GATEWAY_MANUFACTURER = "Jung"
+GATEWAY_MODEL = "Gateway"
 
 # Options-flow key: the stable unique_ids of covers whose position the gateway
 # reports inverted relative to Home Assistant's convention. The gateway's native
@@ -67,6 +75,23 @@ def gateway_device_id(entry: "ConfigEntry") -> str:
     avoid pruning this device (it never appears in the gateway's device list).
     """
     return f"gateway_{entry.unique_id or entry.entry_id}"
+
+
+def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceInfo:
+    """Return the ``DeviceInfo`` for the synthetic gateway (hub) device.
+
+    Shared by the up-front registration in ``__init__`` (which creates the hub
+    before the platforms create the per-function devices that reference it via
+    ``via_device``) and by the connectivity sensor that lives on it, so both
+    describe the device identically.
+    """
+    return DeviceInfo(
+        identifiers={(DOMAIN, gateway_device_id(entry))},
+        name=GATEWAY_NAME,
+        manufacturer=GATEWAY_MANUFACTURER,
+        model=GATEWAY_MODEL,
+        sw_version=sw_version,
+    )
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:

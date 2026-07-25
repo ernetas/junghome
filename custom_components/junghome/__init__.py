@@ -15,6 +15,7 @@ from .const import (
     datapoint_suffix,
     device_slug,
     gateway_device_id,
+    gateway_device_info,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
@@ -66,6 +67,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
             hass.config_entries.async_update_entry(
                 entry, data={**entry.data, "stable_ids_migrated": True}
             )
+
+    # Register the synthetic gateway (hub) device up front, before the platforms
+    # create the per-function devices that link to it via ``via_device``. Creating
+    # it here rather than lazily (via the connectivity sensor) guarantees it
+    # already exists when those devices reference it, so Home Assistant never
+    # takes its deprecated "non existing via_device" path.
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        **gateway_device_info(entry, coordinator.gateway_version),
+    )
 
     # Forward the setup to the appropriate platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

@@ -566,6 +566,8 @@ async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     diag = await async_get_config_entry_diagnostics(hass, init_integration)
     assert diag["device_count"] == len(DEVICES)
     assert diag["gateway_version"] == "1.5.0"
+    # The live-link flag is surfaced so a dump explains stale-looking state.
+    assert diag["ws_connected"] is True
     assert diag["entry"]["data"][CONF_TOKEN] == "**REDACTED**"
     assert diag["entry"]["data"][CONF_HOST] == "**REDACTED**"
     # Scenes are a separate coordinator data category, surfaced for debugging.
@@ -2275,6 +2277,34 @@ async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) 
     device = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
     assert device is not None
     assert device.name == "JUNG HOME Gateway"
+
+
+async def test_devices_linked_to_gateway_hub(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Every function device hangs off the synthetic gateway (hub) via via_device."""
+    dev_reg = dr.async_get(hass)
+    hub = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    assert hub is not None
+    light = dev_reg.async_get_device(identifiers={(DOMAIN, "hall_light")})
+    assert light is not None
+    assert light.via_device_id == hub.id
+
+
+async def test_notify_websocket_closed_skips_during_teardown(
+    hass: HomeAssistant,
+) -> None:
+    """The disconnect notify fires on a live drop but is muted while stopping."""
+    coordinator = _bare_coordinator(hass)
+    with patch.object(coordinator, "async_update_listeners") as notify:
+        # A genuine drop notifies listeners so the connectivity sensor flips off.
+        coordinator._notify_websocket_closed()
+        assert notify.call_count == 1
+        # During stop()/unload the platforms are already going away, so the
+        # guard suppresses the redundant notification.
+        coordinator._closing = True
+        coordinator._notify_websocket_closed()
+        assert notify.call_count == 1
 
 
 def _presence_device(value: str) -> dict:

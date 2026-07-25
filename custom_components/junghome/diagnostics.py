@@ -82,6 +82,10 @@ async def async_get_config_entry_diagnostics(
             "title": entry.title,
         },
         "gateway_version": coordinator.gateway_version,
+        # Whether the live push link is currently up (mirrors the gateway
+        # connectivity binary_sensor); a dump taken while it is False explains
+        # why state looks stale (it has fallen back to 1-minute REST polling).
+        "ws_connected": coordinator.ws_connected,
         # Quick map of what the gateway exposes vs what we implement — the first
         # thing to check when matching real hardware against our support.
         "support_summary": _support_summary(devices),

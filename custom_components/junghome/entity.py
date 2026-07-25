@@ -5,18 +5,18 @@ repeated the same ``device_info``, ``available`` and coordinator-data lookups.
 This base centralises them. The scene platform is intentionally *not* based on
 it — scenes have no backing device.
 
-Behaviour preserved exactly: ``device_info`` produces the same dict as before,
-``available`` keys off the same ``ws_connected or last_update_success`` signal,
-and the lookup helpers return the same objects the inline ``next(...)`` calls
-did. Subclasses keep their own ``unique_id``/naming and their own
-``_handle_coordinator_update`` write logic (which intentionally differs between
-platforms).
+``available`` keys off the ``ws_connected or last_update_success`` signal, and
+the lookup helpers return the same objects the inline ``next(...)`` calls did.
+``device_info`` additionally links each device to the synthetic gateway (hub)
+device via ``via_device``. Subclasses keep their own ``unique_id``/naming and
+their own ``_handle_coordinator_update`` write logic (which intentionally
+differs between platforms).
 """
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug
+from .const import DOMAIN, device_slug, gateway_device_id
 from .coordinator import JungHomeDataUpdateCoordinator
 from .models import Datapoint, Device
 
@@ -49,8 +49,14 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device information, linking the entity to its Jung Home device."""
-        return {
+        """Return device information, linking the entity to its Jung Home device.
+
+        Every device is hung off the synthetic gateway (hub) device via
+        ``via_device`` so the registry reflects the real "devices reached
+        through the gateway" topology (the hub is registered up front in
+        ``async_setup_entry``, so this reference always resolves).
+        """
+        info: DeviceInfo = {
             "identifiers": {(DOMAIN, device_slug(self._device))},
             "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
@@ -59,6 +65,10 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             or self.coordinator.gateway_version
             or "Unknown Version",
         }
+        entry = self.coordinator.config_entry
+        if entry is not None:
+            info["via_device"] = (DOMAIN, gateway_device_id(entry))
+        return info
 
     def _current_device(self) -> Device | None:
         """Return this entity's device from the latest coordinator data."""

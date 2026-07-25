@@ -94,7 +94,7 @@
   },
   "entity": {
     "binary_sensor": {
-      "gateway_connectivity": { "name": "Gateway connection" }
+      "gateway_connectivity": { "name": "Connection" }
     },
     "climate": {
       "thermostat": {
