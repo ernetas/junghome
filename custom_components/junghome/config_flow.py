@@ -9,7 +9,7 @@ import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_TOKEN
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -26,7 +26,20 @@ _LOGGER = logging.getLogger(__name__)
 REGISTER_TIMEOUT = 190
 REGISTER_USER_NAME = "Home Assistant"
 
+# Host-only schema, reused by the reconfigure step.
 STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required(CONF_HOST): str})
+
+# The user step also offers an optional password: supplying the gateway's
+# network-key password registers instantly via /register/by-password instead of
+# waiting for in-app approval.
+STEP_USER_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HOST): str,
+        vol.Optional(CONF_PASSWORD): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        ),
+    }
+)
 
 
 class CannotRegister(Exception):
@@ -145,11 +158,29 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.context["title_placeholders"] = {"host": self._host}
                 await self.async_set_unique_id(self._host)
                 self._abort_if_unique_id_configured()
-                return await self.async_step_register()
+                password = user_input.get(CONF_PASSWORD)
+                if password:
+                    # Instant path: exchange the network-key password for a token
+                    # right away instead of waiting for in-app approval.
+                    try:
+                        self._token = await self._async_register_by_password(password)
+                    except CannotRegister:
+                        errors["base"] = self._error
+                    else:
+                        return await self.async_step_finish()
+                else:
+                    return await self.async_step_register()
 
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
-        )
+        # Re-shown after an error (e.g. a rejected password): keep the host the
+        # user already typed rather than making them enter it again. The password
+        # is deliberately not suggested back — it is a credential, and the retry
+        # is usually *because* it was wrong.
+        schema = STEP_USER_SCHEMA
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(
+                STEP_USER_SCHEMA, {CONF_HOST: user_input.get(CONF_HOST)}
+            )
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_register(
         self, user_input: dict[str, Any] | None = None
@@ -331,6 +362,39 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async with session.post(
                 url, json={"user_name": REGISTER_USER_NAME}, timeout=timeout
             ) as response:
+                if response.status != 200:
+                    self._error = "register_failed"
+                    raise CannotRegister(f"HTTP {response.status}")
+                data = await response.json()
+        except (TimeoutError, aiohttp.ClientError) as err:
+            self._error = "cannot_connect"
+            raise CannotRegister(str(err)) from err
+
+        token = data.get("token") if isinstance(data, dict) else None
+        if not token:
+            self._error = "register_failed"
+            raise CannotRegister("No token in response")
+        return str(token)
+
+    async def _async_register_by_password(self, password: str) -> str:
+        """Exchange the gateway's network-key password for a token immediately.
+
+        Unlike ``_async_register`` this does not block on in-app approval: the
+        gateway's ``register/by-password`` endpoint returns a token right away,
+        or ``401`` if the password is wrong.
+        """
+        # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
+        # cert without building an SSL context on the event loop.
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{self._host}/api/junghome/register/by-password"
+        try:
+            async with (
+                asyncio.timeout(30),
+                session.post(url, json={"password": password}) as response,
+            ):
+                if response.status == 401:
+                    self._error = "invalid_auth"
+                    raise CannotRegister("Wrong password")
                 if response.status != 200:
                     self._error = "register_failed"
                     raise CannotRegister(f"HTTP {response.status}")

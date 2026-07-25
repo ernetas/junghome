@@ -289,6 +289,68 @@ async def test_async_register_connection_error(
     assert flow._error == "cannot_connect"
 
 
+_REGISTER_PW = (
+    "custom_components.junghome.config_flow."
+    "JungHomeConfigFlow._async_register_by_password"
+)
+
+
+async def test_user_flow_password_success(hass: HomeAssistant) -> None:
+    """Supplying a password registers instantly (no waiting-for-approval step)."""
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER_PW, AsyncMock(return_value="pw-tok")), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "pw-tok"}
+        await hass.async_block_till_done()
+
+
+async def test_user_flow_password_rejected(hass: HomeAssistant) -> None:
+    """A wrong password re-shows the form with the invalid_auth error."""
+
+    async def _reject(self, password):
+        self._error = "invalid_auth"
+        raise CannotRegister("Wrong password")
+
+    with patch(_REGISTER_PW, _reject):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "bad"}
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+    # The host the user already typed is kept so they don't retype it on retry;
+    # the password is not suggested back (it's a credential, and it was wrong).
+    host_key = next(k for k in result["data_schema"].schema if k == CONF_HOST)
+    assert host_key.description == {"suggested_value": "1.2.3.4"}
+
+
+async def test_async_register_by_password_returns_token(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    aioclient_mock.post(
+        "https://gw/api/junghome/register/by-password", json={"token": "abc"}
+    )
+    assert await _flow(hass)._async_register_by_password("pw") == "abc"
+
+
+async def test_async_register_by_password_wrong_password(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    aioclient_mock.post("https://gw/api/junghome/register/by-password", status=401)
+    flow = _flow(hass)
+    with pytest.raises(CannotRegister):
+        await flow._async_register_by_password("pw")
+    assert flow._error == "invalid_auth"
+
+
 async def test_reconfigure_invalid_host(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}

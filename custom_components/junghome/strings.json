@@ -8,12 +8,14 @@
       },
       "user": {
         "title": "Connect to Jung Home",
-        "description": "Enter the address of your Jung Home gateway. After you continue, approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests.",
+        "description": "Enter the address of your Jung Home gateway. Leave the password empty to approve the access request in the Jung Home app under Settings, Gateway, Access Permissions, Open Requests. Alternatively, enter the gateway network-key password to connect immediately.",
         "data": {
-          "host": "Host"
+          "host": "Host",
+          "password": "Network-key password (optional)"
         },
         "data_description": {
-          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local)."
+          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local).",
+          "password": "The Jung Home gateway network-key password. Leave empty to approve the request in the app instead."
         }
       },
       "register_failed": {
@@ -45,6 +47,7 @@
     "error": {
       "invalid_host": "The host is not valid.",
       "cannot_connect": "Failed to connect to the gateway.",
+      "invalid_auth": "The gateway rejected the network-key password.",
       "register_failed": "Registration was not completed. Make sure you approve the request in the app."
     },
     "abort": {
