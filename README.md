@@ -121,8 +121,13 @@ reconnects automatically with backoff. No cloud and no account are involved.
 
 # Known limitations
 
-- **Groups** defined in the JUNG app aren't exposed; use Home Assistant areas
-  instead. (Scenes *are* exposed — see [Scenes](#scenes).)
+- **Room → area placement is one-time per device.** Each device is placed in the
+  Home Assistant area matching its JUNG app group only the first time it's seen,
+  and never moved again. This is deliberate: it can't tell "the user moved this
+  in Home Assistant" from "the room changed in the app", so it never overrides
+  your choice — but it also means **re-grouping a device in the JUNG app later
+  won't move it** in Home Assistant. Move it yourself in HA if you need to.
+  (Scenes are exposed too — see [Scenes](#scenes).)
 - **Thermostats, scenes and measurement sensors are not yet fully verified
   against real hardware** — they're implemented from the gateway protocol but I
   don't own those devices. Feedback welcome. Cover position direction is

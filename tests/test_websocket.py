@@ -217,6 +217,28 @@ async def test_fetch_devices_from_api(hass: HomeAssistant, aioclient_mock) -> No
     assert data == [{"id": "x", "datapoints": []}]
 
 
+@pytest.mark.real_groups_fetch
+async def test_fetch_groups_from_api(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.get(
+        "https://gw/api/junghome/groups",
+        json=[{"id": "g1", "name": "Kitchen"}, "not-a-dict"],
+    )
+    coordinator = _coordinator(hass)
+    # Dict groups are kept; non-dict entries in the array are dropped.
+    data = await coordinator._fetch_groups_from_api("gw", "tok")
+    assert data == [{"id": "g1", "name": "Kitchen"}]
+
+
+@pytest.mark.real_groups_fetch
+async def test_fetch_groups_from_api_ignores_non_list(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    # A non-list response (e.g. an error object) yields no groups, never raises.
+    aioclient_mock.get("https://gw/api/junghome/groups", json={"error": "boom"})
+    coordinator = _coordinator(hass)
+    assert await coordinator._fetch_groups_from_api("gw", "tok") == []
+
+
 async def test_update_data_returns_empty_on_none(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     with patch.object(
