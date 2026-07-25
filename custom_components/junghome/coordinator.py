@@ -349,6 +349,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             finally:
                 self.websocket = None
                 self.ws_connected = False
+                # Notify listeners so the gateway connectivity sensor flips to
+                # "off" immediately on a drop, rather than lagging until the next
+                # REST poll (the reconnect path already refreshes on connect).
+                self.async_update_listeners()
 
     def _log_ws_frame(self, raw: str) -> None:
         """Record a raw WebSocket frame for diagnostics.
