@@ -34,6 +34,9 @@ class Device(TypedDict):
     label: str
     datapoints: list[Datapoint]
     sw_version: NotRequired[str]
+    # Ids of the gateway groups (rooms) this device belongs to. Used to suggest a
+    # Home Assistant area for the device; resolved against the groups list.
+    parent_groups: NotRequired[list[str]]
 
 
 class Scene(TypedDict):

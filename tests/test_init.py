@@ -11,13 +11,19 @@ from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome import async_unload_entry
 from custom_components.junghome.climate import JungHomeClimate
-from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN, device_slug
+from custom_components.junghome.const import (
+    CONF_INVERTED_COVERS,
+    DATA_AREA_ASSIGNED,
+    DOMAIN,
+    device_slug,
+)
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
 from custom_components.junghome.diagnostics import (
@@ -1902,3 +1908,204 @@ async def test_cover_set_position_is_optimistic(
             blocking=True,
         )
     assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 25
+
+
+async def test_area_for_device_resolves_group_name(hass: HomeAssistant) -> None:
+    """area_for_device maps parent_groups ids to the group's name (or label)."""
+    coordinator = _bare_coordinator(hass)
+    coordinator.groups = [{"id": "g1", "name": "Kitchen"}]
+    assert (
+        coordinator.area_for_device({"id": "d", "parent_groups": ["g1"]}) == "Kitchen"
+    )
+    # No parent groups, or an id that doesn't resolve -> no area.
+    assert coordinator.area_for_device({"id": "d"}) is None
+    assert coordinator.area_for_device({"id": "d", "parent_groups": ["gX"]}) is None
+    # Falls back to `label` when the group has no `name`.
+    coordinator.groups = [{"id": "g2", "label": "Bathroom"}]
+    assert (
+        coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) == "Bathroom"
+    )
+
+
+async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
+    """A groups fetch failure leaves groups empty and never raises."""
+    coordinator = _bare_coordinator(hass)
+    with patch.object(
+        coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=RuntimeError)
+    ):
+        await coordinator.async_fetch_groups()
+    assert coordinator.groups == []
+    with patch.object(
+        coordinator,
+        "_fetch_groups_from_api",
+        AsyncMock(return_value=[{"id": "g", "name": "X"}]),
+    ):
+        await coordinator.async_fetch_groups()
+    assert coordinator.groups == [{"id": "g", "name": "X"}]
+
+
+def _grouped_lamp() -> dict:
+    return {
+        "id": "idlamp",
+        "type": "OnOff",
+        "label": "Sofa Lamp",
+        "parent_groups": ["grp-living"],
+        "datapoints": [
+            {
+                "id": "idlamp-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            }
+        ],
+    }
+
+
+async def test_device_area_assigned_from_group(hass: HomeAssistant) -> None:
+    """A device in a gateway group is placed in the matching HA area."""
+    groups = [{"id": "grp-living", "name": "Living Room"}]
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp()]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=groups),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="1.2.3.4",
+            data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        )
+        entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry is not None
+        assert device_entry.area_id is not None
+        assert area_reg.async_get_area(device_entry.area_id).name == "Living Room"
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_device_area_does_not_override_user_choice(hass: HomeAssistant) -> None:
+    """A device the user already placed in an area keeps it."""
+    dev_reg = dr.async_get(hass)
+    area_reg = ar.async_get(hass)
+    office = area_reg.async_get_or_create("Office")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    # Pre-create the device already assigned to "Office", as if the user moved it.
+    existing = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "sofa_lamp")}
+    )
+    dev_reg.async_update_device(existing.id, area_id=office.id)
+
+    groups = [{"id": "grp-living", "name": "Living Room"}]
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp()]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=groups),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    # Still in Office — the group suggestion must not move a user-placed device.
+    assert area_reg.async_get_area(device_entry.area_id).name == "Office"
+
+
+async def _setup_grouped_lamp(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Set the entry up with one grouped lamp in the "Living Room" group."""
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp()]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=[{"id": "grp-living", "name": "Living Room"}]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_device_area_not_reassigned_after_user_clears_it(
+    hass: HomeAssistant,
+) -> None:
+    """Clearing a device's area on purpose sticks; it is not re-placed."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    await _setup_grouped_lamp(hass, entry)
+
+    dev_reg = dr.async_get(hass)
+    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    assert device_entry.area_id is not None  # placed on first setup
+    # The device is recorded as already considered, so it is never re-placed.
+    assert "sofa_lamp" in entry.data[DATA_AREA_ASSIGNED]
+
+    # The user deliberately removes the device from every area...
+    dev_reg.async_update_device(device_entry.id, area_id=None)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # ...and it stays cleared across a full reload.
+    await _setup_grouped_lamp(hass, entry)
+    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    assert device_entry.area_id is None
+
+
+async def test_device_area_reuses_existing_area_by_name(hass: HomeAssistant) -> None:
+    """A group matching an existing area links to it instead of duplicating it."""
+    area_reg = ar.async_get(hass)
+    existing = area_reg.async_get_or_create("Living Room")
+    before = len(area_reg.areas)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    await _setup_grouped_lamp(hass, entry)
+
+    device_entry = dr.async_get(hass).async_get_device(
+        identifiers={(DOMAIN, "sofa_lamp")}
+    )
+    assert device_entry.area_id == existing.id
+    assert len(area_reg.areas) == before  # no duplicate area was created

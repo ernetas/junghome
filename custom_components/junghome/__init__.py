@@ -4,11 +4,12 @@ import logging
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, datapoint_suffix, device_slug
+from .const import DATA_AREA_ASSIGNED, DOMAIN, datapoint_suffix, device_slug
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +47,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
     # Expose the coordinator as runtime data for the platforms.
     entry.runtime_data = coordinator
+
+    # Fetch room groups before the platforms create entities, so each device can
+    # suggest its area at creation time. Best-effort: never blocks setup.
+    await coordinator.async_fetch_groups()
 
     # One-time migration of registry entries from the gateway's volatile device
     # ids to firmware-stable, label-based ids. Must run while the gateway's ids
@@ -85,6 +90,66 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
     _prune_stale_devices()
     entry.async_on_unload(coordinator.async_add_listener(_prune_stale_devices))
+
+    # Place devices in the Home Assistant area matching their gateway group.
+    @callback
+    def _assign_areas() -> None:
+        """Auto-place devices that have no area yet, once each.
+
+        Runs after the platforms have created their devices (and again on each
+        refresh, so devices added at runtime are placed too). Two rules keep
+        this from ever disturbing an existing setup:
+
+        1. a device is placed only if it currently has **no** area, so an area
+           the user chose is never overwritten; and
+        2. every device is considered exactly **once** — the decision is
+           recorded in the entry so that a device whose area the user later
+           cleared on purpose is not silently re-placed on the next refresh.
+
+        Area lookup is by name, so a group matching an existing area links to
+        it rather than creating a duplicate.
+        """
+        if not coordinator.data:
+            return  # nothing to place on an empty/failed poll
+        area_by_slug = {
+            device_slug(device): room
+            for device in coordinator.data
+            if (room := coordinator.area_for_device(device))
+        }
+        if not area_by_slug:
+            return  # gateway reports no rooms (or none could be resolved)
+
+        considered = set(entry.data.get(DATA_AREA_ASSIGNED, []))
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+        newly_considered: set[str] = set()
+        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            for domain, slug in device_entry.identifiers:
+                if domain != DOMAIN or slug in considered:
+                    continue
+                area_name = area_by_slug.get(slug)
+                if area_name is None:
+                    continue  # no room for this device; reconsider it later
+                if device_entry.area_id is None:
+                    area = area_reg.async_get_or_create(area_name)
+                    dev_reg.async_update_device(device_entry.id, area_id=area.id)
+                # Recorded either way: a device the user had already placed is
+                # settled too, and must not be auto-placed if later cleared.
+                newly_considered.add(slug)
+
+        if newly_considered:
+            # A data-only update; the reload listener below ignores it (it acts
+            # on host/options changes), so this does not cause a reload loop.
+            hass.config_entries.async_update_entry(
+                entry,
+                data={
+                    **entry.data,
+                    DATA_AREA_ASSIGNED: sorted(considered | newly_considered),
+                },
+            )
+
+    _assign_areas()
+    entry.async_on_unload(coordinator.async_add_listener(_assign_areas))
 
     # Register the host-change reload listener only AFTER the migration's
     # async_update_entry flag-write above, so that write doesn't trigger a
