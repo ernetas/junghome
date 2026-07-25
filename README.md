@@ -23,14 +23,10 @@ Currently functional things:
   yourself and never re-adds one whose area you deliberately cleared. A group
   matching an existing area links to it instead of creating a duplicate.
 
-> Note: thermostats, scenes and measurement sensors are implemented from the
-> gateway protocol but have **not yet been fully verified against real hardware**,
-> so feedback is very welcome if you own one. Cover position direction is now
-> confirmed against the gateway firmware (percent-closed) and reads correctly for
-> roller shutters/blinds; **awnings** report it inverted, so flag them under
+> Note: **awnings** report cover position inverted, so flag them inverted under
 > Settings → Devices & Services → Jung Home → **Configure**.
 
-All communication is via WebSockets. I've managed to reliably automate:
+All communication is via WebSockets. I've managed to reliably automate (using the provided blueprint):
 - Single click
 - Double click
 - Triple click
@@ -132,18 +128,6 @@ reconnects automatically with backoff. No cloud and no account are involved.
 
 # Known limitations
 
-- **Room → area placement is one-time per device.** Each device is placed in the
-  Home Assistant area matching its JUNG app group only the first time it's seen,
-  and never moved again. This is deliberate: it can't tell "the user moved this
-  in Home Assistant" from "the room changed in the app", so it never overrides
-  your choice — but it also means **re-grouping a device in the JUNG app later
-  won't move it** in Home Assistant. Move it yourself in HA if you need to.
-  (Scenes are exposed too — see [Scenes](#scenes).)
-- **Thermostats, scenes and measurement sensors are not yet fully verified
-  against real hardware** — they're implemented from the gateway protocol but I
-  don't own those devices. Feedback welcome. Cover position direction is
-  confirmed (percent-closed); **awnings** read inverted and can be flagged in the
-  integration's options to flip them.
 - **Metering sockets report instantaneous power (W) and current (A), not
   cumulative energy (kWh)**, so they can't go straight onto the Energy Dashboard.
   To track energy/cost, add a Riemann-sum
@@ -154,19 +138,7 @@ reconnects automatically with backoff. No cloud and no account are involved.
   [blueprint](#button-automations-rocker-switches).
 - The rocker **status-LED colour** can't be set from here (on/off only); colour
   is configured in the JUNG app or over BT-Mesh.
-- The **puck** isn't supported yet.
-- Standalone **presence/motion sensors** (e.g. a JUNG "daviklis") aren't exposed
-  yet — they live in the gateway's lower-level `/devices` view, which this
-  integration doesn't read.
-- The gateway uses a **self-signed certificate**, so TLS verification is disabled
-  for the local connection (expected for a LAN device).
-
-# Removing the integration
-
-Settings → Devices & Services → **Jung Home** → ⋮ → **Delete**. This removes all
-of its devices and entities. The access token is dropped with the config entry;
-to also revoke it on the gateway, remove "Home Assistant" under **Settings →
-Gateway → Access Permissions** in the JUNG app.
+- The **puck** isn't supported/validated yet.
 
 # Gateway internals (for contributors)
 
@@ -175,12 +147,7 @@ device-mesh architecture are documented in **[docs/](docs/README.md)**. Release
 and HACS-publishing steps are in **[docs/publishing.md](docs/publishing.md)**.
 
 # TODO
-- Presence/motion binary sensors, sourced from the gateway's `/devices` view
-  (standalone sensors don't appear in the `/functions` data this integration
-  currently uses).
 - Puck support.
-- Hardware verification of covers, thermostats and measurement sensors (these are
-  implemented but I don't own the devices — testers welcome).
 
 # Development / Testing
 

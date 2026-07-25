@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.climate.const import HVACMode
 from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
@@ -17,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome import async_unload_entry
+from custom_components.junghome.binary_sensor import JungHomePresence
 from custom_components.junghome.climate import JungHomeClimate
 from custom_components.junghome.const import (
     CONF_INVERTED_COVERS,
@@ -2273,3 +2275,90 @@ async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) 
     device = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
     assert device is not None
     assert device.name == "JUNG HOME Gateway"
+
+
+def _presence_device(value: str) -> dict:
+    """A JUNG BWM-style detector: presence as a unit-less 0/1 quantity."""
+    return {
+        "id": "idbwm1",
+        "type": "Measurement",
+        "label": "Hallway Motion",
+        "datapoints": [
+            {
+                "id": "idbwm1-001",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": value},
+                    {"key": "quantity_label", "value": "Presence Detected"},
+                    {"key": "quantity_unit", "value": ""},
+                ],
+            }
+        ],
+    }
+
+
+async def test_presence_binary_sensor_states(hass: HomeAssistant) -> None:
+    """Presence maps 1->on, 0->off, and NaN/missing to unknown (None)."""
+    coordinator = _bare_coordinator(hass)
+    device = _presence_device("1")
+    dp = device["datapoints"][0]
+    sensor = JungHomePresence(coordinator, device, dp, "Presence Detected")
+    assert sensor.is_on is True
+    assert sensor.device_class == BinarySensorDeviceClass.OCCUPANCY
+
+    extract = sensor._get_state_from_datapoint
+    assert extract({"id": "x", "values": [{"key": "quantity", "value": "0"}]}) is False
+    # "NaN" parses through float() but must read as unknown, not truthy.
+    assert extract({"id": "x", "values": [{"key": "quantity", "value": "NaN"}]}) is None
+    # A non-numeric value (unparseable) is unknown, not an error.
+    assert extract({"id": "x", "values": [{"key": "quantity", "value": "?"}]}) is None
+    assert extract({"id": "x", "values": []}) is None
+    assert extract(None) is None
+
+
+async def test_presence_binary_sensor_updates_on_push(hass: HomeAssistant) -> None:
+    """A coordinator update re-reads the presence state from stored data."""
+    coordinator = _bare_coordinator(hass)
+    device = _presence_device("0")
+    dp = device["datapoints"][0]
+    coordinator.data = [device]
+    sensor = JungHomePresence(coordinator, device, dp, "Presence Detected")
+    assert sensor.is_on is False
+    dp["values"][0]["value"] = "1"  # motion detected
+    with patch.object(sensor, "async_write_ha_state"):
+        sensor._handle_coordinator_update()
+    assert sensor.is_on is True
+
+
+async def test_presence_discovered_and_split_from_numeric_sensor(
+    hass: HomeAssistant,
+) -> None:
+    """A presence quantity becomes an occupancy binary_sensor, not a sensor."""
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_presence_device("1")]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="1.2.3.4",
+            data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        )
+        entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        bs = hass.states.get("binary_sensor.hallway_motion_presence_detected")
+        assert bs is not None
+        assert bs.state == "on"
+        assert bs.attributes["device_class"] == "occupancy"
+        # The same datapoint must NOT also surface as a numeric sensor.
+        assert hass.states.get("sensor.hallway_motion_presence_detected") is None
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
