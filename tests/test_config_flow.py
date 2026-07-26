@@ -10,6 +10,7 @@ from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -657,7 +658,7 @@ async def test_options_flow_aborts_without_covers(hass: HomeAssistant) -> None:
 
 
 async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> None:
-    """A flagged cover the gateway isn't currently reporting is preserved."""
+    """A flagged cover the gateway isn't reporting is kept if its entity exists."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="gw",
@@ -665,6 +666,11 @@ async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> 
         options={CONF_INVERTED_COVERS: ["ghost_001"]},
     )
     entry.add_to_hass(hass)
+    # The cover's entity still exists in the registry (it's merely offline, so the
+    # gateway isn't listing it right now), so the flag must be preserved.
+    er.async_get(hass).async_get_or_create(
+        "cover", DOMAIN, "ghost_001", config_entry=entry
+    )
     fetch, ws = _no_network()  # no covers reported right now
     with fetch, ws:
         await hass.config_entries.async_setup(entry.entry_id)
@@ -678,3 +684,27 @@ async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
     assert entry.options[CONF_INVERTED_COVERS] == ["ghost_001"]
+
+
+async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) -> None:
+    """A flag whose cover was removed/relabelled (no entity left) is dropped.
+
+    The device's label-derived unique_id changed, so the old entity was pruned
+    and no cover with this uid is registered any more. It must not resurface as
+    a permanent raw-slug row in the options list.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="gw",
+        data={CONF_HOST: "gw", CONF_TOKEN: "t"},
+        options={CONF_INVERTED_COVERS: ["orphan_001"]},
+    )
+    entry.add_to_hass(hass)
+    fetch, ws = _no_network()  # no covers reported, and none registered
+    with fetch, ws:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        # Orphan dropped -> nothing left to configure -> abort (not a ghost row).
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_covers"

@@ -120,6 +120,9 @@ async def async_setup_entry(
 class JungHomeCover(JungHomeEntity, CoverEntity):
     """Representation of a Jung Home cover (blind / shutter / awning)."""
 
+    # Commanded over the WebSocket, so it is unavailable when the socket is down.
+    _controllable_over_websocket = True
+
     # The cover is the device's main feature, so it adopts the device name
     # (entity_id `cover.<device>`).
     _attr_name = None

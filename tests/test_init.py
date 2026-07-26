@@ -18,7 +18,10 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.junghome import async_unload_entry
+from custom_components.junghome import (
+    STALE_DEVICE_PRUNE_MISSES,
+    async_unload_entry,
+)
 from custom_components.junghome.binary_sensor import JungHomePresence
 from custom_components.junghome.climate import JungHomeClimate
 from custom_components.junghome.const import (
@@ -228,6 +231,10 @@ async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
     self.websocket = ws
     self.ws_connected = True
     self.gateway_version = "1.5.0"
+    # Mirror the real connect-time resync so listeners re-evaluate availability
+    # now that the socket is up — controllable entities were added while
+    # ws_connected was still False and would otherwise stay unavailable.
+    self.async_update_listeners()
     await asyncio.Event().wait()
 
 
@@ -609,7 +616,12 @@ def test_support_summary_flags_unhandled_types() -> None:
 
 
 async def test_stale_device_pruned(hass: HomeAssistant) -> None:
-    """A registry device the gateway no longer reports is removed on setup."""
+    """A device absent for enough consecutive polls is removed, not on the first.
+
+    Pruning is debounced so a single partial poll (e.g. right after a reload)
+    doesn't destroy a live device's entities; the device must be missing for
+    STALE_DEVICE_PRUNE_MISSES polls before it goes.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="1.2.3.4",
@@ -633,7 +645,71 @@ async def test_stale_device_pruned(hass: HomeAssistant) -> None:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert dev_reg.async_get(stale.id) is None
+        coordinator = entry.runtime_data
+        # Not pruned on the first pass — the debounce rides out a partial poll.
+        assert dev_reg.async_get(stale.id) is not None
+        # Absent across the threshold of further polls -> pruned.
+        for _ in range(STALE_DEVICE_PRUNE_MISSES):
+            coordinator.async_set_updated_data(coordinator.data)
+            await hass.async_block_till_done()
+        assert dev_reg.async_get(stale.id) is None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_transiently_missing_device_survives_and_resets(
+    hass: HomeAssistant,
+) -> None:
+    """A device that reappears before the threshold is not pruned, and resets.
+
+    Reproduces the reload race: a live device drops out of a single poll, then
+    comes back. It must survive, and its miss counter must reset so a later
+    single miss doesn't tip it over a stale count accumulated earlier.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=DEVICES),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = entry.runtime_data
+        dev_reg = dr.async_get(hass)
+        blind_slug = device_slug(
+            next(d for d in DEVICES if d["id"] == "idblind1")
+        )
+        blind = dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+        assert blind is not None
+
+        partial = [d for d in coordinator.data if d["id"] != "idblind1"]
+        full = list(coordinator.data)
+
+        # Miss it for one fewer poll than the threshold — must still be present.
+        for _ in range(STALE_DEVICE_PRUNE_MISSES - 1):
+            coordinator.async_set_updated_data(partial)
+            await hass.async_block_till_done()
+            assert dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+        # It reappears -> counter resets.
+        coordinator.async_set_updated_data(full)
+        await hass.async_block_till_done()
+        # A single later miss must not prune it (the reset worked).
+        coordinator.async_set_updated_data(partial)
+        await hass.async_block_till_done()
+        assert dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
@@ -836,48 +912,59 @@ async def test_value_only_change_does_not_reload_entry(
 async def test_entity_availability_tracks_connection(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """available follows ws_connected OR last_update_success, on ALL platforms.
+    """available splits by control path: WS for controllables, REST otherwise.
 
-    All four platforms (light, socket+LED switch, sensor, event) must agree: a
-    transient REST-poll miss with a live WebSocket must not knock the LED/event
-    entities offline while the light/socket on the same device stay up.
+    Read-only entities (sensor, event) follow ``last_update_success`` — the REST
+    poll / WebSocket-push signal — and never key off ``ws_connected``, so a
+    stale-True socket flag can't keep them "available" with frozen values after
+    the gateway has gone unreachable (issue #120). Controllable entities (light,
+    socket, LED switch) additionally require a live WebSocket, because commands
+    only travel over it: with the socket down they read unavailable rather than
+    accept commands that would silently fail.
     """
     coordinator = init_integration.runtime_data
-    # One entity per platform, including the secondary LED switch and an event.
-    entities = (
-        "light.strip",
-        "switch.boiler",
-        "switch.button_a_status_led",
-        "sensor.boiler_power",
-        "event.button_a_up",
-    )
+    controllable = ("light.strip", "switch.boiler", "switch.button_a_status_led")
+    read_only = ("sensor.boiler_power", "event.button_a_up")
 
-    def states() -> set[str]:
+    def states(entities: tuple[str, ...]) -> set[str]:
         return {
             "unavailable" if hass.states.get(e).state == "unavailable" else "available"
             for e in entities
         }
 
-    # WS up, REST failing -> everything available (WS is the liveness signal).
+    # Both signals healthy -> everything available.
     coordinator.ws_connected = True
-    coordinator.last_update_success = False
+    coordinator.last_update_success = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states() == {"available"}
+    assert states(controllable) == {"available"}
+    assert states(read_only) == {"available"}
 
-    # WS down, last REST poll ok -> still available (fallback).
+    # WS down but REST still polling: controllables can't be commanded, so they
+    # go unavailable; read-only entities keep reporting their polled state.
     coordinator.ws_connected = False
     coordinator.last_update_success = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states() == {"available"}
+    assert states(controllable) == {"unavailable"}
+    assert states(read_only) == {"available"}
 
-    # Both down -> everything unavailable, together.
-    coordinator.ws_connected = False
+    # Gateway gone: REST poll failing -> everything unavailable, even if the
+    # socket flag is still stale-True (a half-open WS must not mask it).
+    coordinator.ws_connected = True
     coordinator.last_update_success = False
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states() == {"unavailable"}
+    assert states(controllable) == {"unavailable"}
+    assert states(read_only) == {"unavailable"}
+
+    # Fully recovered -> everything available again.
+    coordinator.ws_connected = True
+    coordinator.last_update_success = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert states(controllable) == {"available"}
+    assert states(read_only) == {"available"}
 
 
 async def test_websocket_message_guard_without_data(hass: HomeAssistant) -> None:

@@ -120,8 +120,14 @@ class JungHomeScene(CoordinatorEntity[JungHomeDataUpdateCoordinator], SceneEntit
 
     @property
     def available(self) -> bool:
-        """Return if the gateway is reachable."""
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
+        """Return if the gateway is reachable.
+
+        Keyed off ``last_update_success`` only (the REST poll / push signal), not
+        ``ws_connected`` — a stale-True socket flag must not keep a scene
+        "available" after the gateway has gone unreachable (see issue #120 and
+        the note on ``JungHomeEntity.available``).
+        """
+        return self.coordinator.last_update_success
 
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the scene.

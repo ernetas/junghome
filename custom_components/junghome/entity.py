@@ -5,7 +5,7 @@ repeated the same ``device_info``, ``available`` and coordinator-data lookups.
 This base centralises them. The scene platform is intentionally *not* based on
 it — scenes have no backing device.
 
-``available`` keys off the ``ws_connected or last_update_success`` signal, and
+``available`` keys off the coordinator's ``last_update_success`` signal, and
 the lookup helpers return the same objects the inline ``next(...)`` calls did.
 ``device_info`` additionally links each device to the synthetic gateway (hub)
 device via ``via_device``. Subclasses keep their own ``unique_id``/naming and
@@ -26,6 +26,16 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
 
     _attr_has_entity_name = True
 
+    # Whether this entity's control path needs the live WebSocket. Commands
+    # (turn on/off, brightness, position, target temperature, status LED) only
+    # ever go out over the WebSocket — REST is poll-only — so a controllable
+    # entity with the socket down cannot be actuated and must read unavailable.
+    # Read-only entities (sensor/binary_sensor/event) leave this False and stay
+    # available on the REST signal alone. Controllable platforms set it True.
+    # Scenes are the one control path over REST, so the scene platform (which is
+    # not a JungHomeEntity) keeps its own REST-only availability.
+    _controllable_over_websocket = False
+
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,
@@ -39,13 +49,28 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
     def available(self) -> bool:
         """Return if the device is available.
 
-        A live WebSocket link means the gateway is reachable, so it is the
-        primary availability signal; fall back to the last REST poll result
-        until the socket first connects (or while it is reconnecting). Keeping
-        this on the base means every entity on a device goes (un)available
-        together rather than diverging on a transient poll miss.
+        The REST poll (every 60 s, 30 s timeout) is an independent, bounded
+        reachability probe, and every WebSocket push also sets
+        ``last_update_success`` True via ``async_set_updated_data``. So it reads
+        True while either the poll succeeds or pushes arrive, and flips False
+        within ~90 s once the gateway is truly gone.
+
+        Availability deliberately does *not* OR in ``ws_connected``: that flag
+        can stay stale-True on a half-open socket the heartbeat hasn't torn down
+        yet, and OR-ing it would mask a failing REST poll — leaving entities
+        "available" with frozen values long after the gateway vanished (which
+        silently fabricated energy readings; see issue #120).
+
+        Controllable entities additionally require a live WebSocket, because
+        commands only travel over it: with the socket down they can report
+        their last polled state but cannot be actuated, so they read
+        unavailable rather than accept commands that would silently fail.
+        ``ws_connected`` drives this and the connectivity diagnostic sensor;
+        it never *grants* availability on its own.
         """
-        return self.coordinator.ws_connected or self.coordinator.last_update_success
+        if self._controllable_over_websocket and not self.coordinator.ws_connected:
+            return False
+        return self.coordinator.last_update_success
 
     @property
     def device_info(self) -> DeviceInfo:

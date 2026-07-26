@@ -1,6 +1,7 @@
 """The Jung Home integration."""
 
 import logging
+from collections.abc import Callable
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -32,6 +33,14 @@ PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.SCENE,
 ]
+
+# Consecutive polls a device must be absent from before it is pruned. The
+# gateway occasionally returns a partial device list on a single poll (notably
+# right after a reload); pruning on the first miss would delete a live device's
+# entities — and because identity is label-derived, the platform would then
+# re-create them under whatever label the next poll reports, losing the user's
+# entity_id/customisations. Requiring persistence rides out a transient blip.
+STALE_DEVICE_PRUNE_MISSES = 3
 
 
 def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
@@ -108,6 +117,60 @@ def _register_capability_reload(
     entry.async_on_unload(coordinator.async_add_listener(_reload_on_capability_change))
 
 
+def _make_stale_device_pruner(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> Callable[[], None]:
+    """Build the callback that prunes devices the gateway no longer reports.
+
+    Returned as a closure over a per-device count of consecutive polls each
+    device has been missing, so pruning is debounced: a device must be absent
+    for ``STALE_DEVICE_PRUNE_MISSES`` polls before it is removed. A single
+    partial poll (which the gateway occasionally returns, notably right after a
+    reload) therefore no longer destroys a live device's entities.
+    """
+    missing_polls: dict[str, int] = {}
+
+    @callback
+    def _prune_stale_devices() -> None:
+        # Device membership only changes on a REST poll; a WebSocket push merges
+        # datapoint values into existing devices and never adds or removes one.
+        # Skip push dispatches so the miss counter below tracks poll cycles, not
+        # the (frequent) pushes — otherwise a device transiently absent from one
+        # poll would reach the miss threshold within seconds of pushes.
+        if coordinator.pushed_datapoint_id is not None:
+            return
+        if not coordinator.data:
+            return  # don't prune on an empty/failed poll
+        current = {device_slug(d) for d in coordinator.data}
+        # The synthetic gateway (hub) device never appears in the device list, so
+        # keep it in the live set or it would be pruned on every refresh.
+        current.add(gateway_device_id(entry))
+        dev_reg = dr.async_get(hass)
+        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            slugs = {
+                identifier
+                for domain, identifier in device_entry.identifiers
+                if domain == DOMAIN
+            }
+            if not slugs:
+                continue
+            if slugs & current:
+                missing_polls.pop(device_entry.id, None)  # present again; reset
+                continue
+            misses = missing_polls.get(device_entry.id, 0) + 1
+            if misses < STALE_DEVICE_PRUNE_MISSES:
+                missing_polls[device_entry.id] = misses
+                continue
+            missing_polls.pop(device_entry.id, None)
+            dev_reg.async_update_device(
+                device_entry.id, remove_config_entry_id=entry.entry_id
+            )
+
+    return _prune_stale_devices
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Jung Home integration."""
     return True
@@ -163,26 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     await coordinator.start()
 
     # Prune HA devices the gateway no longer reports (quality-scale stale-devices).
-    @callback
-    def _prune_stale_devices() -> None:
-        if not coordinator.data:
-            return  # don't prune on an empty/failed poll
-        current = {device_slug(d) for d in coordinator.data}
-        # The synthetic gateway (hub) device never appears in the device list, so
-        # keep it in the live set or it would be pruned on every refresh.
-        current.add(gateway_device_id(entry))
-        dev_reg = dr.async_get(hass)
-        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-            slugs = {
-                identifier
-                for domain, identifier in device_entry.identifiers
-                if domain == DOMAIN
-            }
-            if slugs and not (slugs & current):
-                dev_reg.async_update_device(
-                    device_entry.id, remove_config_entry_id=entry.entry_id
-                )
-
+    _prune_stale_devices = _make_stale_device_pruner(hass, entry, coordinator)
     _prune_stale_devices()
     entry.async_on_unload(coordinator.async_add_listener(_prune_stale_devices))
 

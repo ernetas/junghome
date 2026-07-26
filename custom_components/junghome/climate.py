@@ -95,6 +95,9 @@ async def async_setup_entry(
 class JungHomeClimate(JungHomeEntity, ClimateEntity):
     """Representation of a Jung Home thermostat."""
 
+    # Commanded over the WebSocket, so it is unavailable when the socket is down.
+    _controllable_over_websocket = True
+
     _attr_name = None
     # Drives attribute translations (the custom `frost` preset has no HA core
     # string). With _attr_name = None the entity still adopts the device name.

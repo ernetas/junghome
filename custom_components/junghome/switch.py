@@ -60,6 +60,9 @@ async def async_setup_entry(
 class JungHomeSocket(JungHomeEntity, SwitchEntity):
     """Representation of a Jung Home socket."""
 
+    # Commanded over the WebSocket, so it is unavailable when the socket is down.
+    _controllable_over_websocket = True
+
     # The socket is the device's main feature, so it adopts the device name
     # (entity_id `switch.<device>`, not the old `switch.<device>_<device>`).
     _attr_name = None
@@ -115,6 +118,9 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
 
 class JungHomeSwitch(JungHomeEntity, SwitchEntity):
     """Representation of a Jung Home status LED as a switch entity."""
+
+    # Commanded over the WebSocket, so it is unavailable when the socket is down.
+    _controllable_over_websocket = True
 
     # Secondary entity on the rocker device; HA prepends the device name, so the
     # entity_id becomes `switch.<device>_status_led`. The name comes from the

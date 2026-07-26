@@ -9,8 +9,9 @@ import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_TOKEN, Platform
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
@@ -98,11 +99,31 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
         entry: JungHomeConfigEntry = self.config_entry
         coordinator = getattr(entry, "runtime_data", None)
         choices = _cover_choices(coordinator) if coordinator is not None else {}
-        current = list(entry.options.get(CONF_INVERTED_COVERS, []))
-        # Keep any already-flagged cover that the gateway isn't currently
-        # reporting (e.g. offline) so saving the form doesn't silently clear it.
-        for uid in current:
-            choices.setdefault(uid, uid)
+        # Reconcile the stored flags against reality. A flagged cover missing from
+        # the current poll may only be offline, so keep it (labelled by its uid)
+        # if its entity still exists — saving must not silently clear it. But a
+        # uid with no live cover *and* no registered entity is orphaned: its
+        # device was removed or relabelled, which changes the label-derived
+        # unique_id, so the platform registered a fresh cover and the stale one
+        # was pruned. The old code resurrected such orphans as a permanent,
+        # un-removable raw-slug row here; drop them so the list matches the
+        # covers that actually exist.
+        registered_covers = {
+            registry_entry.unique_id
+            for registry_entry in er.async_entries_for_config_entry(
+                er.async_get(self.hass), entry.entry_id
+            )
+            if registry_entry.domain == Platform.COVER
+        }
+        current: list[str] = []
+        for uid in entry.options.get(CONF_INVERTED_COVERS, []):
+            if uid in choices:
+                current.append(uid)
+            elif uid in registered_covers:
+                choices.setdefault(uid, uid)
+                current.append(uid)
+            # A uid in neither set is orphaned: intentionally left out of both
+            # lists here, so it is removed from the stored option on save.
         if not choices:
             return self.async_abort(reason="no_covers")
 
