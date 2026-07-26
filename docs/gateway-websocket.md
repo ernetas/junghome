@@ -137,6 +137,20 @@ Common `values` keys by device type:
 > in its options flow, which switches that cover to an identity mapping. The
 > inversion lives in one place (`cover.py` `_to_ha`/`_to_device`).
 
+> **Whether a cover exposes slat tilt is per-device and can change.** In
+> `function_helper_methods.js` a `WindowCover` is reported as **`PositionAndAngle`
+> with an `angle` datapoint** only when its angle state is visible
+> (`device.states.angle?.profile.visible === true`); otherwise it is reported as
+> **`Position`** with just a `level` datapoint and no tilt. `level` and `angle`
+> are the *same* BT-Mesh model (Generic Level `0x1002`) — only the datapoint
+> `type` string (`"level"` vs `"angle"`) distinguishes them. So the presence of
+> the `angle` datapoint is the single source of truth for tilt, and it can appear
+> or disappear across firmware updates (which re-enumerate devices, their
+> datapoints sometimes arriving over several polls) or when the slat channel is
+> toggled in the JUNG HOME app. The integration gates HA's tilt features on that
+> datapoint and reloads the entry when a device's datapoint set changes so the
+> capability is rebuilt (see `_register_capability_reload` in `__init__.py`).
+
 ### Other command types
 
 | `type` | Behaviour |

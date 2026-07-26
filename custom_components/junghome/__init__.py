@@ -18,6 +18,7 @@ from .const import (
     gateway_device_info,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,80 @@ PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.SCENE,
 ]
+
+
+def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
+    """Fingerprint a device's capabilities: its function type + datapoint types.
+
+    The platforms freeze an entity's supported features from the datapoints
+    present when it is first built (a cover's tilt, a light's brightness/colour,
+    a thermostat's off mode), and ``_discover_*`` is add-only — it never revisits
+    a device it has already created. So this fingerprint changing on an existing
+    device means its entities now carry a stale feature set, and the entry must be
+    reloaded to rebuild them. Only the datapoint *types* matter here (not their
+    values), so a normal value push never changes the signature.
+    """
+    return (
+        device.get("type"),
+        frozenset(
+            dp_type
+            for dp in device.get("datapoints", [])
+            if (dp_type := dp.get("type"))
+        ),
+    )
+
+
+def _register_capability_reload(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> None:
+    """Reload the entry when an existing device's capability fingerprint changes.
+
+    The platforms compute supported features once, from the datapoints present at
+    entity construction, and discovery never revisits a device it has already
+    created — so if the gateway later starts or stops exposing a datapoint for an
+    existing device, the live entity keeps its stale features. This happens when a
+    firmware update re-enumerates a device and its datapoints arrive across
+    several polls, or when a channel like a blind's slat tilt is toggled visible
+    in the JUNG HOME app: the gateway then reports the cover as PositionAndAngle
+    with an ``angle`` datapoint (rather than Position), but a cover entity built
+    moments earlier without it stays position-only until reloaded. A reload
+    rebuilds every entity from the current datapoint set. See
+    ``_capability_signature`` for what counts as a change (datapoint types, not
+    their values, so a routine value push never triggers a reload).
+    """
+    capability_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
+    reload_scheduled = False
+
+    @callback
+    def _reload_on_capability_change() -> None:
+        nonlocal reload_scheduled
+        if reload_scheduled or not coordinator.data:
+            return
+        changed = False
+        for device in coordinator.data:
+            slug = device_slug(device)
+            signature = _capability_signature(device)
+            previous = capability_signatures.get(slug)
+            capability_signatures[slug] = signature
+            # A brand-new device is picked up by the platforms' own discovery and
+            # a vanished one by the stale-device prune; only a change to a device
+            # already fingerprinted leaves an entity with stale features.
+            if previous is not None and previous != signature:
+                changed = True
+        if changed:
+            reload_scheduled = True
+            _LOGGER.info(
+                "Jung Home: a device's datapoint set changed; reloading the entry "
+                "to rebuild entity capabilities (e.g. cover tilt, light colour)"
+            )
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    # Seed the baseline from the current devices (the first pass never reloads),
+    # then watch for changes on subsequent refreshes.
+    _reload_on_capability_change()
+    entry.async_on_unload(coordinator.async_add_listener(_reload_on_capability_change))
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -170,6 +245,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
 
     _assign_areas()
     entry.async_on_unload(coordinator.async_add_listener(_assign_areas))
+
+    _register_capability_reload(hass, entry, coordinator)
 
     # Register the host-change reload listener only AFTER the migration's
     # async_update_entry flag-write above, so that write doesn't trigger a

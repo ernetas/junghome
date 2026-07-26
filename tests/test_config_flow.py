@@ -258,6 +258,27 @@ async def test_zeroconf_aborts_when_already_configured(hass: HomeAssistant) -> N
     assert result["reason"] == "already_configured"
 
 
+async def test_zeroconf_aborts_when_host_added_manually(hass: HomeAssistant) -> None:
+    """A gateway already added manually (under a different unique_id) is skipped.
+
+    Discovery assigns the mDNS hostname as the unique_id, which does not match the
+    manual entry keyed on the host, so the unique_id abort does not fire; the
+    host-based fallback check must still abort so the gateway is not offered twice.
+    """
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    ).add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info("junghome-abc.local."),
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
 async def test_user_flow_success(hass: HomeAssistant) -> None:
     """Menu -> app approval -> host -> approved registration creates the entry."""
     fetch, run_ws = _no_network()
@@ -441,6 +462,56 @@ async def test_async_register_by_password_wrong_password(
     with pytest.raises(CannotRegister):
         await flow._async_register_by_password("pw")
     assert flow._error == "invalid_auth"
+
+
+async def test_async_register_by_password_http_error(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A non-200/401 status maps to register_failed."""
+    aioclient_mock.post("https://gw/api/junghome/register/by-password", status=500)
+    flow = _flow(hass)
+    with pytest.raises(CannotRegister):
+        await flow._async_register_by_password("pw")
+    assert flow._error == "register_failed"
+
+
+async def test_async_register_by_password_connection_error(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A transport error maps to cannot_connect."""
+    aioclient_mock.post(
+        "https://gw/api/junghome/register/by-password", exc=aiohttp.ClientError()
+    )
+    flow = _flow(hass)
+    with pytest.raises(CannotRegister):
+        await flow._async_register_by_password("pw")
+    assert flow._error == "cannot_connect"
+
+
+async def test_async_register_by_password_missing_token(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A 200 with no token is treated as a failed registration."""
+    aioclient_mock.post("https://gw/api/junghome/register/by-password", json={})
+    with pytest.raises(CannotRegister):
+        await _flow(hass)._async_register_by_password("pw")
+
+
+async def test_password_flow_invalid_host(hass: HomeAssistant) -> None:
+    """An empty/invalid host in the password step re-shows the form with an error.
+
+    The host is validated before any network call, so no gateway is contacted.
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await _choose(hass, result, "password")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "   ", "password": "secret"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "password"
+    assert result["errors"] == {"base": "invalid_host"}
 
 
 async def test_reconfigure_invalid_host(hass: HomeAssistant) -> None:
