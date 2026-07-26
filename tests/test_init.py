@@ -1,6 +1,7 @@
 """Integration setup / entity / lifecycle tests for Jung Home."""
 
 import asyncio
+import copy
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -731,6 +732,103 @@ async def test_token_only_change_no_reload(
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_TOKEN: "newtok"}
         )
+        await hass.async_block_till_done()
+    reload.assert_not_called()
+
+
+async def test_datapoint_set_change_reloads_entry(hass: HomeAssistant) -> None:
+    """A cover that gains a slat `angle` datapoint after creation reloads the entry.
+
+    Regression guard for the reporter who lost tilt on 1.2.2: a cover's tilt
+    support is frozen at construction and discovery is add-only, so when the
+    gateway re-enumerates the device and its `angle` datapoint appears on a later
+    poll (function type flips Position -> PositionAndAngle), the entry must reload
+    to rebuild the entity with tilt instead of leaving it position-only forever.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    position_only = {
+        "id": "idcov",
+        "type": "Position",
+        "label": "Rolladen",
+        "datapoints": [
+            {
+                "id": "idcov-1",
+                "type": "level",
+                "values": [{"key": "level", "value": "30"}],
+            },
+        ],
+    }
+    with_angle = {
+        "id": "idcov",
+        "type": "PositionAndAngle",
+        "label": "Rolladen",
+        "datapoints": [
+            {
+                "id": "idcov-1",
+                "type": "level",
+                "values": [{"key": "level", "value": "30"}],
+            },
+            {
+                "id": "idcov-2",
+                "type": "angle",
+                "values": [{"key": "angle", "value": "40"}],
+            },
+        ],
+    }
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[position_only]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = entry.runtime_data
+        # Built without a slat datapoint: position-only, no tilt exposed.
+        state = hass.states.get("cover.rolladen")
+        assert state is not None
+        assert not (
+            state.attributes["supported_features"]
+            & CoverEntityFeature.SET_TILT_POSITION
+        )
+
+        # The gateway now re-enumerates the same cover WITH a slat angle datapoint;
+        # the capability fingerprint changes, so a reload is scheduled to rebuild it.
+        with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            coordinator.async_set_updated_data([with_angle])
+            await hass.async_block_till_done()
+        reload.assert_called_once_with(entry.entry_id)
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_value_only_change_does_not_reload_entry(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A normal value push (same datapoint *types*) must never reload the entry.
+
+    The capability fingerprint keys on datapoint types, not values, so routine
+    state updates don't trip the capability-change reload into a reload storm.
+    """
+    coordinator = init_integration.runtime_data
+    devices = copy.deepcopy(coordinator.data)
+    # Change only a value on the blind's level datapoint (types unchanged).
+    for device in devices:
+        if device["id"] == "idblind1":
+            device["datapoints"][0]["values"][0]["value"] = "80"
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_set_updated_data(devices)
         await hass.async_block_till_done()
     reload.assert_not_called()
 
@@ -2506,10 +2604,13 @@ async def test_presence_binary_sensor_rediscovery_is_idempotent(
         registry = er.async_get(hass)
 
         def _presence_entities() -> list:
+            # Filter to occupancy sensors: the entry also has a gateway
+            # connectivity binary_sensor, which is not a presence entity.
             return [
                 e
                 for e in er.async_entries_for_config_entry(registry, entry.entry_id)
                 if e.domain == "binary_sensor"
+                and e.original_device_class == BinarySensorDeviceClass.OCCUPANCY
             ]
 
         assert len(_presence_entities()) == 1

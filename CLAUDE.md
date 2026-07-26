@@ -81,6 +81,18 @@ When working on anything that touches the gateway protocol, consult
   (`{"user_name": ...}`), which blocks up to 180 s until the user approves the
   request in the JUNG HOME app (Settings → Gateway → Access Permissions → Open
   Requests).
+- **Capabilities follow datapoints, and can change at runtime.** Each platform
+  freezes an entity's supported features at construction from the datapoints
+  present (cover tilt ← `angle`, light brightness/colour ← `brightness`/
+  `color_temperature`, climate off ← `switch`), and `_discover_*` is add-only, so
+  a live entity never re-derives them. The gateway *can* add or drop a datapoint
+  for an existing device (a firmware update re-enumerates and datapoints arrive
+  over several polls; the slat channel is toggled in the app — see the tilt note
+  in [docs/gateway-websocket.md](docs/gateway-websocket.md)). `__init__.py`'s
+  `_register_capability_reload` reloads the entry when a device's datapoint-type
+  set changes so features are rebuilt — the reason the tilt-lost-after-update
+  regression can't recur. Keep capabilities gated on datapoint *presence*, not
+  the function-type name.
 
 ## Conventions
 
