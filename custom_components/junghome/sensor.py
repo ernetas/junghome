@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
+    Platform,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -23,7 +24,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_value, is_presence_quantity, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home sensors from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.SENSOR)
 
     @callback
     def _discover_sensors() -> None:
@@ -79,19 +80,21 @@ async def async_setup_entry(
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "quantity":
                         raw_label = datapoint_value(datapoint, "quantity_label")
-                        # Presence/occupancy is a boolean state, owned by the
-                        # binary_sensor platform — skip it here so the two never
-                        # double-expose the same datapoint.
-                        if is_presence_quantity(raw_label):
+                        unit = datapoint_value(datapoint, "quantity_unit")
+                        # Presence/occupancy (an empty-unit 0/1 flag) is a boolean
+                        # state owned by the binary_sensor platform — skip it here
+                        # so the two never double-expose the same datapoint. The
+                        # unit is passed so a *measured* quantity whose label merely
+                        # contains a keyword (e.g. "Motion Light Level" in lux) is
+                        # NOT skipped and still becomes a numeric sensor.
+                        if is_presence_quantity(raw_label, unit):
                             continue
                         label = raw_label.strip() if raw_label else None
-                        unit = datapoint_value(datapoint, "quantity_unit")
                         if label and unit:
                             uid = stable_unique_id(
                                 device, datapoint, label.replace(" ", "_").lower()
                             )
-                            if uid not in known:
-                                known.add(uid)
+                            if claim_new_entity(known, uid):
                                 new_entities.append(
                                     JungHomeQuantity(
                                         coordinator, device, datapoint, label, unit

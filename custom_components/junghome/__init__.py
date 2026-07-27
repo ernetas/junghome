@@ -3,8 +3,8 @@
 import logging
 from collections.abc import Callable
 
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -164,6 +164,11 @@ def _make_stale_device_pruner(
                 missing_polls[device_entry.id] = misses
                 continue
             missing_polls.pop(device_entry.id, None)
+            # Forget this device's unique_ids from the platforms' discovery sets
+            # BEFORE removing it, so if the gateway reports it again the platforms
+            # treat it as new and re-create its entities (otherwise the stale
+            # `known` ids would suppress the re-add until an entry reload).
+            coordinator.forget_device_unique_ids(device_entry.id)
             dev_reg.async_update_device(
                 device_entry.id, remove_config_entry_id=entry.entry_id
             )
@@ -224,6 +229,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # rather than being dispatched into the void during setup. The initial state
     # already came from async_config_entry_first_refresh() above.
     await coordinator.start()
+
+    async def _async_stop_on_ha_shutdown(event: Event) -> None:
+        """Close the WebSocket on a full HA shutdown, not just entry unload."""
+        await coordinator.stop()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop_on_ha_shutdown)
+    )
 
     # Prune HA devices the gateway no longer reports (quality-scale stale-devices).
     _prune_stale_devices = _make_stale_device_pruner(hass, entry, coordinator)

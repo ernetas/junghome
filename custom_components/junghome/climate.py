@@ -23,13 +23,13 @@ from homeassistant.components.climate.const import (
     ClimateEntityFeature,
     HVACMode,
 )
-from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.const import ATTR_TEMPERATURE, Platform, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home thermostats from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.CLIMATE)
 
     @callback
     def _discover_climates() -> None:
@@ -81,9 +81,8 @@ async def async_setup_entry(
             if ctrl_dp is None:
                 continue
             uid = stable_unique_id(device, ctrl_dp)
-            if uid in known:
+            if not claim_new_entity(known, uid):
                 continue
-            known.add(uid)
             new_entities.append(JungHomeClimate(coordinator, device, ctrl_dp))
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)

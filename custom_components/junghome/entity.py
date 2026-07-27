@@ -21,6 +21,27 @@ from .coordinator import JungHomeDataUpdateCoordinator
 from .models import Datapoint, Device
 
 
+def claim_new_entity(known: set[str], unique_id: str) -> bool:
+    """Whether a platform should create an entity for ``unique_id`` now.
+
+    ``known`` is the coordinator's shared per-platform set of unique_ids discovery
+    has already added (``coordinator.known_unique_ids(domain)``); it guards against
+    a duplicate add in the async window between scheduling an add and the entity
+    landing in the registry. Returns ``True`` — and records the id — the first
+    time an id is seen, ``False`` thereafter.
+
+    Re-adding after a device is pruned is handled at the source, not here: the
+    stale-device pruner calls ``coordinator.forget_device_unique_ids`` to drop a
+    removed device's ids from these sets, so a device that reappears is a fresh
+    id again and gets re-added. (Reconciling against the entity registry here
+    instead would race the in-flight add and cause duplicate-add errors.)
+    """
+    if unique_id in known:
+        return False
+    known.add(unique_id)
+    return True
+
+
 class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
     """Base for entities backed by a Jung Home device."""
 

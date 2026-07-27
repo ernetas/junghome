@@ -106,3 +106,18 @@ def test_is_presence_quantity_rejects_measurement_labels():
     assert is_presence_quantity("Present Device Input Power ") is False
     assert is_presence_quantity("") is False
     assert is_presence_quantity(None) is False
+
+
+def test_is_presence_quantity_non_empty_unit_vetoes_keyword():
+    """A keyword in the label is not enough: a measured quantity carrying a real
+    unit (e.g. a "Motion Light Level" reading in lux) stays a numeric sensor."""
+    assert is_presence_quantity("Motion Light Level", "lux") is False
+    assert is_presence_quantity("Occupancy Illuminance", "lx") is False
+
+
+def test_is_presence_quantity_empty_or_missing_unit_keeps_match():
+    """The real presence flag has an empty (or absent) unit, so an empty-string
+    unit — or an omitted one — still matches on the keyword."""
+    assert is_presence_quantity("Presence Detected ", "") is True
+    assert is_presence_quantity("Presence Detected ", "  ") is True
+    assert is_presence_quantity("Occupancy") is True  # unit omitted

@@ -86,6 +86,12 @@ async def async_get_config_entry_diagnostics(
         # connectivity binary_sensor); a dump taken while it is False explains
         # why state looks stale (it has fallen back to 1-minute REST polling).
         "ws_connected": coordinator.ws_connected,
+        # When the WebSocket last completed a connect, and the most recent
+        # REST/WebSocket failure (if any) — together they show how long a dump
+        # taken mid-outage has been degraded and what's causing it.
+        "ws_last_connected": coordinator.ws_last_connected,
+        "last_error": coordinator.last_error,
+        "last_error_at": coordinator.last_error_at,
         # Quick map of what the gateway exposes vs what we implement — the first
         # thing to check when matching real hardware against our support.
         "support_summary": _support_summary(devices),

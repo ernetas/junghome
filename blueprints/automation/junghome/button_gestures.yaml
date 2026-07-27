@@ -12,8 +12,12 @@ blueprint:
     Pick the `event.*` entity (or entities) for one physical button and fill in
     the actions you want for each gesture — leave a gesture empty to ignore it.
     JUNG sometimes exposes a button as separate `up_request` and `down_request`
-    events, and may alternate between them on consecutive presses; select **all**
-    the events that belong to the same button so any of them drives the gesture.
+    events. On some firmware, pressing the button echoes a spurious edge onto
+    the sibling channel, which this blueprint would misread as a second click —
+    if that's your gateway, select **only** the one channel that reliably
+    reports every gesture (check with a debug logger first; see
+    docs/example-button-automation.md in the repo). Only select both if your
+    button genuinely alternates channels per press with no echoes.
   domain: automation
   author: junghome
   source_url: https://github.com/ernetas/junghome/blob/main/blueprints/automation/junghome/button_gestures.yaml
@@ -23,10 +27,13 @@ blueprint:
       description: >
         The JUNG HOME event entity (or entities) for one physical button. JUNG
         sometimes splits a single button into `up_request` and `down_request`
-        events and alternates between them — select all of them so any one
-        driving a press/release feeds the same gesture logic. Find them under
-        Developer Tools → States, filtered by `event.`; the `event_type`
-        attribute flips between `pressed` and `depressed` when you press.
+        events. Some firmware echoes a spurious edge onto the sibling channel on
+        every press, which reads as a false second click here — if that's your
+        gateway, select only the one channel that reports every gesture
+        completely. Select both only if your button alternates channels per
+        press with no echoes. Find them under Developer Tools → States, filtered
+        by `event.`; the `event_type` attribute flips between `pressed` and
+        `depressed` when you press.
       selector:
         entity:
           multiple: true

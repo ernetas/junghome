@@ -37,12 +37,13 @@ from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
 )
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_INVERTED_COVERS, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home covers from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.COVER)
     # Covers the user has flagged as inverted (e.g. awnings); their position maps
     # through unchanged instead of being inverted. Read once here — an options
     # change reloads the entry (see __init__.async_reload_entry), re-running setup.
@@ -104,9 +105,8 @@ async def async_setup_entry(
             if level_dp is None:
                 continue
             uid = stable_unique_id(device, level_dp)
-            if uid in known:
+            if not claim_new_entity(known, uid):
                 continue
-            known.add(uid)
             new_entities.append(
                 JungHomeCover(coordinator, device, level_dp, inverted=uid in inverted)
             )

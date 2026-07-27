@@ -33,6 +33,26 @@ Each entity reports exactly two **event types**:
 That's all the hardware reports. Everything else (single, double, hold) is
 derived from the timing between these two edges.
 
+### A firmware quirk: one channel can echo the other
+
+On some gateway firmware versions, a single physical press can emit
+`pressed`/`depressed` edges on **both** `up_request` and `down_request` — not
+just the one you'd expect — while a genuine *second* click, or a repeated
+hold, often only echoes on one of them. If you treat every `pressed` edge on
+either channel as a fresh click (as Recipe 3 and the blueprint below do), a
+single press or a hold can get reported as a double-click, because the echo
+looks exactly like "a second press."
+
+Before wiring Recipe 3 or the blueprint, use the
+[debug logger](#debug-logger--capture-the-raw-event-stream) below to do a
+single press, a double press and a hold-and-release, a few times each, and
+check whether one channel (e.g. `down_request`) fires a complete
+`pressed`→`depressed` pair for *every* gesture while the other is
+inconsistent. If so, list **only that one channel** — not both. This
+sidesteps the echo entirely, at the cost of no longer covering JUNG's older
+alternating-channel behavior (see the troubleshooting section below if a
+press ever goes silent on your chosen channel).
+
 ### Find your exact entity IDs
 
 Entity names are derived from the device **label**, so they depend on what you
@@ -129,12 +149,15 @@ automation, with no helper entities**, using `wait_for_trigger`:
   release).
 - **Single** — pressed and released, with no second press.
 
-List **all** of the button's events under `entity_id:` (e.g. both the
-`up_request` and `down_request` events) — JUNG alternates between them on
-consecutive presses, and this automation treats any of them as the same button.
+List the button's event entity under `entity_id:`. If the debug logger (above)
+shows one channel reporting every gesture completely, list **only that one** —
+don't add its sibling, since on some firmware an echoed `pressed` edge on the
+sibling channel gets misread as a second click. Only list both if your debug
+log shows no echoes and presses genuinely alternate channels the older way.
+
 We trigger on *any* state change and filter with a condition rather than
 `attribute: event_type` / `to: pressed`, because the `to:` form silently misses
-repeated/alternating `pressed` events.
+repeated `pressed` events (e.g. from alternating channels on older firmware).
 
 The key detail (confirmed from real device logs): on a double-click JUNG can
 report the **second press before the first release**, e.g.
@@ -244,10 +267,13 @@ button by **filling in a form** instead of editing YAML:
 
 It exposes:
 
-- **Button (event entities)** — the `event.*` entity (or entities) for one
-  physical button. JUNG sometimes splits a button into separate `up_request` and
-  `down_request` events; select **all** of them so whichever one fires drives the
-  same gesture.
+- **Button (event entities)** — the `event.*` entity for one physical button.
+  JUNG sometimes splits a button into separate `up_request` and `down_request`
+  events. Check with the debug logger below first: if one channel reports every
+  gesture completely, select **only that one** — selecting both can make an
+  echoed edge on the sibling channel misread a single press or hold as a
+  double-click on some firmware. Only select both if your debug log shows no
+  echoes and presses genuinely alternate channels.
 - **Hold time** and **Double-click window** — the two timing thresholds.
 - **Single / Double / Hold action** — what to run for each gesture; leave any of
   them empty to ignore that gesture.
@@ -286,12 +312,17 @@ Either:
   sure your device actually sends a separate `depressed` (release) event — hold
   detection depends on press and release being reported separately, which JUNG
   rockers do.
-- **Double-clicks register as single (or vice-versa).** Make sure you selected
-  **all** of the button's events (both `up_request` and `down_request`) — JUNG
-  alternates between them, so with only one selected, every other click is
-  invisible. If genuine double-clicks are still missed, widen the **double-click
-  window**; if singles are seen as doubles, shorten it. Use the debug logger
-  below to see your actual timing.
+- **Single presses or holds register as double-clicks.** This is the firmware
+  echo described [above](#a-firmware-quirk-one-channel-can-echo-the-other) — one
+  channel emits a spurious `pressed` edge that gets read as a second click. Use
+  the debug logger below to find the one channel that reports every gesture
+  completely, and select **only that one** channel in the automation/blueprint.
+- **Double-clicks register as single (or vice-versa), and your debug log shows
+  no echoes.** Make sure you selected **all** of the button's events (both
+  `up_request` and `down_request`) — on that firmware JUNG alternates between
+  them, so with only one selected, every other click is invisible. If genuine
+  double-clicks are still missed, widen the **double-click window**; if singles
+  are seen as doubles, shorten it.
 
 ### Debug logger — capture the raw event stream
 

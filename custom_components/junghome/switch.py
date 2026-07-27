@@ -4,12 +4,13 @@ import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home switches from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.SWITCH)
 
     @callback
     def _discover_switches() -> None:
@@ -36,8 +37,7 @@ async def async_setup_entry(
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "switch":
                         uid = stable_unique_id(device, datapoint)
-                        if uid not in known:
-                            known.add(uid)
+                        if claim_new_entity(known, uid):
                             new_entities.append(
                                 JungHomeSocket(coordinator, device, datapoint)
                             )
@@ -45,8 +45,7 @@ async def async_setup_entry(
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "status_led":
                         uid = stable_unique_id(device, datapoint, "switch")
-                        if uid not in known:
-                            known.add(uid)
+                        if claim_new_entity(known, uid):
                             new_entities.append(
                                 JungHomeSwitch(coordinator, device, datapoint)
                             )
@@ -126,6 +125,8 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
     # entity_id becomes `switch.<device>_status_led`. The name comes from the
     # entity.switch.status_led translation.
     _attr_translation_key = "status_led"
+    # A device-configuration toggle, not a primary control.
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

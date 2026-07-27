@@ -15,7 +15,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -29,7 +29,7 @@ from .const import (
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home binary sensors from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.BINARY_SENSOR)
 
     # One gateway-level connectivity sensor per entry. Added once at setup (not a
     # per-device discovery) so the hub always exposes a reachability entity even
@@ -64,14 +64,14 @@ async def async_setup_entry(
                 if datapoint.get("type") != "quantity":
                     continue
                 raw_label = datapoint_value(datapoint, "quantity_label")
-                if raw_label is None or not is_presence_quantity(raw_label):
+                unit = datapoint_value(datapoint, "quantity_unit")
+                if raw_label is None or not is_presence_quantity(raw_label, unit):
                     continue
                 label = raw_label.strip()
                 uid = stable_unique_id(
                     device, datapoint, label.replace(" ", "_").lower()
                 )
-                if uid not in known:
-                    known.add(uid)
+                if claim_new_entity(known, uid):
                     new_entities.append(
                         JungHomePresence(coordinator, device, datapoint, label)
                     )

@@ -3,8 +3,9 @@
 import asyncio
 import json
 import logging
+import random
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -13,10 +14,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, device_slug
+from .const import DOMAIN, EVENT_SCENE_RECALLED, device_slug
 from .models import Device, Scene
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,6 +27,9 @@ _LOGGER = logging.getLogger(__name__)
 # WebSocket reconnect backoff bounds (seconds).
 INITIAL_RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
+# Small random addition to each reconnect wait, so multiple gateways/entries on
+# the same network don't all retry in lockstep after a shared network blip.
+RECONNECT_JITTER = 0.5
 
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
@@ -52,6 +58,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.options_snapshot: dict[str, Any] = dict(config_entry.options)
         self.websocket: aiohttp.ClientWebSocketResponse | None = None
         self.ws_connected: bool = False
+        # When the WebSocket last completed a connect (diagnostics only) — helps
+        # tell "just dropped" from "has been down a while" in a downloaded report.
+        self.ws_last_connected: datetime | None = None
+        # Most recent REST/WebSocket failure, for diagnostics (never raised).
+        self.last_error: str | None = None
+        self.last_error_at: datetime | None = None
         # The datapoint id whose WebSocket push is being dispatched right now, or
         # None for REST-poll-driven updates. Event entities read this to fire on
         # a genuine push edge rather than diffing snapshots (see event.py). It is
@@ -77,6 +89,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.ws_last_frame_by_type: dict[str, str] = {}
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
+        # Per-platform (entity-domain -> unique_ids) sets shared with each
+        # platform's discovery. They are the add-once duplicate guard; the stale
+        # device pruner clears a removed device's ids from them (see
+        # ``forget_device_unique_ids``) so a device that reappears is re-added.
+        self._known_unique_ids: dict[str, set[str]] = {}
         self._ws_task: asyncio.Task[None] | None = None
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
@@ -88,6 +105,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             update_interval=timedelta(minutes=1),
         )
 
+    def _record_error(self, err: BaseException) -> None:
+        """Remember the most recent REST/WebSocket failure for diagnostics."""
+        self.last_error = str(err)
+        self.last_error_at = dt_util.utcnow()
+
     async def _async_update_data(self) -> list[Device]:
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
@@ -96,6 +118,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 self.config["host"], self.config["token"]
             )
         except aiohttp.ClientResponseError as err:
+            self._record_error(err)
             if err.status in (401, 403):
                 # Token revoked/expired — trigger Home Assistant's reauth flow.
                 raise ConfigEntryAuthFailed(
@@ -107,12 +130,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_placeholders={"error": str(err)},
             ) from err
         except aiohttp.ClientError as err:
+            self._record_error(err)
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
                 translation_placeholders={"error": str(err)},
             ) from err
         except TimeoutError as err:
+            self._record_error(err)
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",
@@ -229,6 +254,33 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 return str(name)
         return None
 
+    def known_unique_ids(self, domain: str) -> set[str]:
+        """Return the shared discovery ``known`` set for an entity domain.
+
+        Each platform uses this instead of a private set so the stale-device
+        pruner can reach into it (via ``forget_device_unique_ids``) and drop a
+        removed device's ids — otherwise a device that reappears after being
+        pruned would stay ``known`` and never get its entities re-created.
+        """
+        return self._known_unique_ids.setdefault(domain, set())
+
+    def forget_device_unique_ids(self, device_id: str) -> None:
+        """Drop a device's entity unique_ids from the discovery ``known`` sets.
+
+        Called by the pruner just before it removes a device. Without this the
+        per-platform ``known`` set keeps the id forever, so the platform would
+        never re-add the entity if the gateway reported the device again (it
+        would be missing until an entry reload). Looks the device's entities up
+        in the registry and discards each id from the set for its domain.
+        """
+        entity_registry = er.async_get(self.hass)
+        for entity in er.async_entries_for_device(
+            entity_registry, device_id, include_disabled_entities=True
+        ):
+            known = self._known_unique_ids.get(entity.domain)
+            if known is not None:
+                known.discard(entity.unique_id)
+
     async def activate_scene(self, scene_id: str) -> None:
         """Activate a scene via REST (the WebSocket scene command is unimplemented)."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
@@ -276,15 +328,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     if self.config_entry is not None:
                         self.config_entry.async_start_reauth(self.hass)
                     return
+                self._record_error(err)
                 _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
             except Exception as err:
+                self._record_error(err)
                 _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
             if self._closing:
                 break
             _LOGGER.debug(
                 "Reconnecting to Jung Home WebSocket in %ss", self._reconnect_delay
             )
-            await asyncio.sleep(self._reconnect_delay)
+            await asyncio.sleep(
+                self._reconnect_delay + random.uniform(0, RECONNECT_JITTER)  # noqa: S311
+            )
             self._reconnect_delay = min(self._reconnect_delay * 2, MAX_RECONNECT_DELAY)
 
     async def _run_websocket(self) -> None:
@@ -301,6 +357,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             self._reconnect_delay = INITIAL_RECONNECT_DELAY
             _LOGGER.info("Jung Home WebSocket connected")
             self.ws_connected = True
+            self.ws_last_connected = dt_util.utcnow()
             await self.async_request_refresh()
             try:
                 async for msg in ws:
@@ -493,25 +550,38 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         event_data: dict[str, Any] = {"scene_id": scene_id, "label": label}
         if self.config_entry is not None:
             event_data["entry_id"] = self.config_entry.entry_id
-        self.hass.bus.async_fire(f"{DOMAIN}_scene_recalled", event_data)
+        self.hass.bus.async_fire(EVENT_SCENE_RECALLED, event_data)
 
     def _apply_gateway_version(self) -> None:
-        """Push the gateway firmware version onto our devices in the registry.
+        """Push the firmware version onto our devices in the registry.
 
         An entity's ``device_info`` is only read when it is first added, which
         may happen before the WebSocket ``version`` frame arrives. Update the
         registry directly so the device page shows the version without needing a
         reload. Combined with the ``device_info`` fallback this covers either
         ordering (entities created before or after the frame).
+
+        The value written per device mirrors ``JungHomeEntity.device_info``
+        exactly: a device that reports its **own** ``sw_version`` keeps it, and
+        only devices without one (plus the synthetic gateway hub, which has no
+        entry in the function list) fall back to the gateway version. Writing the
+        gateway version unconditionally used to clobber a per-device version, so
+        the two mechanisms disagreed whenever the gateway populated it.
         """
         if self.gateway_version is None or self.config_entry is None:
             return
+        by_slug = {device_slug(d): d for d in (self.data or [])}
         registry = dr.async_get(self.hass)
         for device in dr.async_entries_for_config_entry(
             registry, self.config_entry.entry_id
         ):
-            if device.sw_version != self.gateway_version:
-                registry.async_update_device(device.id, sw_version=self.gateway_version)
+            desired = self.gateway_version
+            for domain, identifier in device.identifiers:
+                if domain == DOMAIN and identifier in by_slug:
+                    desired = by_slug[identifier].get("sw_version") or desired
+                    break
+            if device.sw_version != desired:
+                registry.async_update_device(device.id, sw_version=desired)
 
     async def start(self) -> None:
         """Connect to the WebSocket.

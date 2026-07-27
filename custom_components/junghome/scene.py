@@ -70,7 +70,20 @@ async def async_setup_entry(
         for scene in coordinator.scenes or []:
             label = scene.get("label")
             if label:
-                current[f"{_scene_slug(label)}_scene"] = label
+                uid = f"{_scene_slug(label)}_scene"
+                # Two scenes whose labels slug identically collide on one uid, so
+                # only one entity can exist (same accepted limitation as devices —
+                # see const.device_slug). Surface the dropped one rather than
+                # letting it vanish silently.
+                if uid in current and current[uid] != label:
+                    _LOGGER.warning(
+                        "Jung Home scenes %r and %r map to the same id %r; "
+                        "only one scene entity will be created",
+                        current[uid],
+                        label,
+                        uid,
+                    )
+                current[uid] = label
 
         new_entities: list[JungHomeScene] = []
         for uid, label in current.items():

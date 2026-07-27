@@ -12,6 +12,11 @@ if TYPE_CHECKING:
 
 DOMAIN = "junghome"
 
+# Fired when the gateway reports a scene recall (including from a physical
+# button), so users can automate on it. Shared with logbook.py so the
+# registered description always matches the event actually fired.
+EVENT_SCENE_RECALLED = f"{DOMAIN}_scene_recalled"
+
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
 # the device describe it identically (see ``gateway_device_info``).
@@ -49,14 +54,25 @@ DATA_AREA_ASSIGNED = "auto_area_assigned"
 _PRESENCE_LABEL_KEYWORDS = ("presence", "occupancy", "motion")
 
 
-def is_presence_quantity(label: str | None) -> bool:
+def is_presence_quantity(label: str | None, unit: str | None = None) -> bool:
     """Whether a quantity datapoint's label denotes presence/occupancy (boolean).
 
     The binary_sensor platform claims such datapoints and the numeric sensor
     platform skips them, so the two never double-expose the same datapoint (see
     ``binary_sensor.py`` / ``sensor.py``).
+
+    ``unit`` is the datapoint's ``quantity_unit``. A boolean presence datapoint
+    carries an **empty** unit (the detector's 0/1 detection flag); a *measured*
+    quantity that merely happens to contain a keyword in its label (e.g. a
+    "Motion Light Level" illuminance reading with unit ``lux``) carries a real
+    unit and must stay a numeric sensor. So a non-empty unit vetoes the match:
+    keyword alone is not enough. When ``unit`` is omitted, only the label
+    heuristic applies (callers that already know the datapoint has no usable
+    unit).
     """
     if not label:
+        return False
+    if unit is not None and unit.strip():
         return False
     text = label.strip().lower()
     return any(keyword in text for keyword in _PRESENCE_LABEL_KEYWORDS)

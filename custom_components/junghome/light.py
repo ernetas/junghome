@@ -5,12 +5,13 @@ from typing import Any
 
 from homeassistant.components.light import LightEntity
 from homeassistant.components.light.const import ColorMode
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home lights from a config entry."""
     coordinator = config_entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.LIGHT)
 
     @callback
     def _discover_lights() -> None:
@@ -40,9 +41,8 @@ async def async_setup_entry(
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "switch":
                         uid = stable_unique_id(device, datapoint)
-                        if uid in known:
+                        if not claim_new_entity(known, uid):
                             continue
-                        known.add(uid)
                         new_entities.append(
                             JungHomeLight(coordinator, device, datapoint)
                         )

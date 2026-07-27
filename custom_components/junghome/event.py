@@ -3,12 +3,13 @@
 import logging
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Jung Home event entities from a config entry."""
     coordinator = entry.runtime_data
-    known: set[str] = set()
+    known = coordinator.known_unique_ids(Platform.EVENT)
 
     @callback
     def _discover_events() -> None:
@@ -49,9 +50,8 @@ async def async_setup_entry(
                         "trigger_request",
                     }:
                         uid = stable_unique_id(device, datapoint, "event")
-                        if uid in known:
+                        if not claim_new_entity(known, uid):
                             continue
-                        known.add(uid)
                         new_entities.append(
                             JungHomeEventEntity(coordinator, device, datapoint)
                         )
