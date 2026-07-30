@@ -10,6 +10,6 @@
   "issue_tracker": "https://github.com/ernetas/junghome/issues",
   "quality_scale": "platinum",
   "requirements": [],
-  "version": "1.3.2b2",
+  "version": "1.3.2",
   "zeroconf": ["_junghome._tcp.local."]
 }
