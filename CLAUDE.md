@@ -28,6 +28,14 @@ JUNG HOME Gateway over its REST API and WebSocket.
     binary_sensor**, while other `quantity` datapoints become numeric sensors.
     `is_presence_quantity` (in `const.py`) is the single split point: the
     binary_sensor platform claims those labels and `sensor.py` skips them.
+    Likewise a **`Thermostat`'s `switch` datapoint is not an on/off**: the gateway
+    re-labels the RTR's `automatic_mode` state as type `switch`, and in the field
+    it tracks the regulator's momentary heating output — it flips on its own
+    several times an hour. A room regulator has no on/off at all, so the climate
+    entity is permanently `HVACMode.HEAT` (`hvac_modes = [HEAT]`) and that
+    datapoint only feeds `hvac_action` (heating/idle); never map it to
+    `hvac_mode` again (issue #121, evidence in
+    [docs/gateway-websocket.md](docs/gateway-websocket.md)).
     Scenes come from the WebSocket `scenes` broadcast and recall over REST
     (`POST /scenes/{id}`; the WebSocket `scene` command is unimplemented).
     **Cover position convention is confirmed against gateway firmware** — a

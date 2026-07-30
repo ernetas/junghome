@@ -2,9 +2,11 @@
 
 from unittest.mock import AsyncMock, patch
 
-from homeassistant.components.climate.const import HVACMode
+import pytest
+from homeassistant.components.climate.const import HVACAction, HVACMode
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.climate import JungHomeClimate
@@ -69,15 +71,32 @@ async def test_climate_created(hass: HomeAssistant, init_integration) -> None:
     assert state.attributes["preset_mode"] == "comfort"
     # Current temperature read from the sibling °C quantity datapoint.
     assert state.attributes["current_temperature"] == 20.0
-    # The switch datapoint (value "1") maps to HVAC HEAT, with OFF available.
+    # A room regulator is heat-only: HEAT is the only mode, and the switch
+    # datapoint (value "1") shows up as the momentary action instead.
     assert state.state == "heat"
-    assert set(state.attributes["hvac_modes"]) == {"off", "heat"}
+    assert state.attributes["hvac_modes"] == ["heat"]
+    assert state.attributes["hvac_action"] == "heating"
 
 
-async def test_climate_hvac_on_off(hass: HomeAssistant, init_integration) -> None:
-    """HVAC OFF / HEAT drives the thermostat's switch datapoint."""
-    coordinator = init_integration.runtime_data
+async def test_climate_hvac_off_is_rejected(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The thermostat advertises no OFF mode, so HA rejects a request for one."""
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": "climate.living_room", "hvac_mode": "off"},
+            blocking=True,
+        )
     assert hass.states.get("climate.living_room").state == "heat"
+
+
+async def test_climate_set_hvac_mode_heat_sends_nothing(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Re-asserting HEAT is accepted but never writes the switch datapoint."""
+    coordinator = init_integration.runtime_data
     with (
         patch.object(coordinator, "turn_off_switch", AsyncMock()) as off,
         patch.object(coordinator, "turn_on_switch", AsyncMock()) as on,
@@ -85,37 +104,49 @@ async def test_climate_hvac_on_off(hass: HomeAssistant, init_integration) -> Non
         await hass.services.async_call(
             "climate",
             "set_hvac_mode",
-            {"entity_id": "climate.living_room", "hvac_mode": "off"},
-            blocking=True,
-        )
-        await hass.services.async_call(
-            "climate",
-            "set_hvac_mode",
             {"entity_id": "climate.living_room", "hvac_mode": "heat"},
             blocking=True,
         )
-    off.assert_called_once_with("idrtr1-000")
-    on.assert_called_once_with("idrtr1-000")
+    off.assert_not_called()
+    on.assert_not_called()
+    assert hass.states.get("climate.living_room").state == "heat"
 
 
-async def test_climate_hvac_mode_follows_switch_echo(
+async def test_switch_echo_moves_hvac_action_not_state(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A switch=0 echo flips the thermostat to OFF without touching target/preset."""
+    """Regression for #121: the regulator's own cycling must not change the state.
+
+    The gateway's Thermostat `switch` datapoint tracks momentary heating activity
+    (it flips several times an hour on its own), so it may only move
+    ``hvac_action`` — mapping it to ``hvac_mode`` flooded the logbook and fired
+    every ``climate.*`` state automation.
+    """
     coordinator = init_integration.runtime_data
-    assert hass.states.get("climate.living_room").state == "heat"
-    coordinator._handle_websocket_message(
-        {
-            "type": "datapoint",
-            "data": {"id": "idrtr1-000", "values": [{"key": "switch", "value": "0"}]},
-        }
-    )
-    await hass.async_block_till_done()
     state = hass.states.get("climate.living_room")
-    assert state.state == "off"
-    # Target temperature/preset unchanged by the switch echo.
-    assert state.attributes["temperature"] == 21.5
-    assert state.attributes["preset_mode"] == "comfort"
+    assert (state.state, state.attributes["hvac_action"]) == ("heat", "heating")
+    last_changed = state.last_changed
+
+    for value, action in (("0", "idle"), ("1", "heating"), ("0", "idle")):
+        coordinator._handle_websocket_message(
+            {
+                "type": "datapoint",
+                "data": {
+                    "id": "idrtr1-000",
+                    "values": [{"key": "switch", "value": value}],
+                },
+            }
+        )
+        await hass.async_block_till_done()
+        state = hass.states.get("climate.living_room")
+        assert state.state == "heat"
+        assert state.attributes["hvac_action"] == action
+        # An attribute-only change leaves last_changed alone, which is exactly
+        # what keeps the logbook (and state triggers) quiet.
+        assert state.last_changed == last_changed
+        # Target temperature/preset unchanged by the switch echo.
+        assert state.attributes["temperature"] == 21.5
+        assert state.attributes["preset_mode"] == "comfort"
 
 
 async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
@@ -140,17 +171,22 @@ async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
     assert sp.call_args.args[1] == "eco"
 
 
-async def test_climate_hvac_mode_from_switch_value(hass: HomeAssistant) -> None:
-    """Switch 1/0 maps to HEAT/OFF; a thermostat without a switch stays HEAT-only."""
+async def test_climate_hvac_action_from_switch_value(hass: HomeAssistant) -> None:
+    """Switch 1/0 maps to HEATING/IDLE; anything else leaves the action unknown."""
     coord = _bare_coordinator(hass)
-    on = _climate(coord, switch="1")
-    assert on._attr_hvac_mode == HVACMode.HEAT
-    assert set(on._attr_hvac_modes) == {HVACMode.OFF, HVACMode.HEAT}
-    off = _climate(coord, switch="0")
-    assert off._attr_hvac_mode == HVACMode.OFF
-    none = _climate(coord)  # no switch datapoint
+    heating = _climate(coord, switch="1")
+    assert heating.hvac_action == HVACAction.HEATING
+    assert heating.hvac_mode == HVACMode.HEAT
+    assert heating.hvac_modes == [HVACMode.HEAT]
+    assert _climate(coord, switch="0").hvac_action == HVACAction.IDLE
+    # The gateway reports "NaN" for an offline device: unknown, not heating.
+    assert _climate(coord, switch="NaN").hvac_action is None
+    none = _climate(coord)  # no switch datapoint at all
     assert none._switch_datapoint_id is None
-    assert none._attr_hvac_modes == [HVACMode.HEAT]
+    assert none.hvac_action is None
+    assert none.hvac_mode == HVACMode.HEAT
+    # A switch datapoint with no `switch` key is unknown too.
+    assert none._get_hvac_action_from_datapoint({"id": "x", "values": []}) is None
 
 
 async def test_climate_extractors_defensive(hass: HomeAssistant) -> None:
@@ -236,13 +272,31 @@ async def test_climate_unknown_preset_noops(hass: HomeAssistant) -> None:
     sp.assert_not_called()
 
 
-async def test_switchless_thermostat_hvac_mode_is_noop(hass: HomeAssistant) -> None:
-    """A thermostat without a switch datapoint accepts set_hvac_mode but sends nothing."""
+async def test_set_hvac_mode_never_writes_the_switch_datapoint(
+    hass: HomeAssistant,
+) -> None:
+    """set_hvac_mode is inert: the regulator has no on/off to command."""
     coordinator = _bare_coordinator(hass)
-    climate = _climate(coordinator)  # no switch datapoint
+    climate = _climate(coordinator, switch="1")
     with patch.object(coordinator, "send_websocket_message", AsyncMock()) as send:
         await climate.async_set_hvac_mode(HVACMode.HEAT)  # must not raise
     send.assert_not_called()
+    assert climate.hvac_action == HVACAction.HEATING
+
+
+async def test_climate_poll_refreshes_hvac_action(hass: HomeAssistant) -> None:
+    """A REST poll (no pushed datapoint) re-reads the action from the device data."""
+    coordinator = _bare_coordinator(hass)
+    climate = _climate(coordinator, switch="1")
+    coordinator.data = [climate._device]
+    assert climate.hvac_action == HVACAction.HEATING
+    switch_dp = next(
+        dp for dp in climate._device["datapoints"] if dp["type"] == "switch"
+    )
+    switch_dp["values"] = [{"key": "switch", "value": "0"}]
+    with patch.object(climate, "async_write_ha_state"):
+        climate._handle_coordinator_update()
+    assert climate.hvac_action == HVACAction.IDLE
 
 
 async def test_climate_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
