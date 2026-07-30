@@ -3,12 +3,25 @@
 A ``Thermostat`` function exposes three datapoints (see
 ``cdb_types_datapoints.json`` / ``cdb_types_functions.json``):
 
-- ``switch`` — on/off (``0`` / ``1``), mapped to HVAC mode OFF / HEAT.
 - ``temperature_ctrl`` — the target temperature in °C (range 5..30) plus a
   ``temperature_ctrl_preset`` key (``none`` / ``frost`` / ``eco`` / ``comfort``).
 - ``quantity`` — the room temperature reading, surfaced here as
   ``current_temperature``. (Sensor discovery does not turn a Thermostat's
   quantity into a standalone sensor entity; it is only the ambient reading.)
+- ``switch`` — despite the datapoint *type* name, **not** the thermostat's
+  on/off. It is the room regulator's momentary activity, surfaced here as
+  ``hvac_action`` (heating / idle), never as ``hvac_mode``.
+
+**The regulator has no on/off, so the entity is permanently ``HVACMode.HEAT``.**
+The gateway builds a Thermostat from exactly three device *states* — setpoint,
+ambient temperature and ``automatic_mode`` (``JungHome_Thermostat`` in
+``jung-home-device.js``) — and re-labels the third as a ``switch`` datapoint on
+the way to the API (``datapoint_helper_methods.js``). None of them turns the
+regulator off; the closest equivalent is the ``frost`` preset. Reading that
+datapoint as an off/on mode is what made every thermostat flip between ``off``
+and ``heat`` several times an hour while its configuration never changed (issue
+#121) — the value tracks the device's momentary heating output. Full firmware
+evidence is in the Thermostat note in ``docs/gateway-websocket.md``.
 """
 
 import logging
@@ -21,6 +34,7 @@ from homeassistant.components.climate.const import (
     PRESET_ECO,
     PRESET_NONE,
     ClimateEntityFeature,
+    HVACAction,
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE, Platform, UnitOfTemperature
@@ -52,6 +66,11 @@ _HA_TO_DEVICE_PRESET = {
     PRESET_COMFORT: "comfort",
 }
 _DEVICE_TO_HA_PRESET = {v: k for k, v in _HA_TO_DEVICE_PRESET.items()}
+
+# The Thermostat's ``switch`` datapoint value -> momentary HVAC action. Any other
+# value (notably the ``"NaN"`` the gateway sends for an offline device) leaves the
+# action unknown rather than asserting the regulator is heating.
+_SWITCH_TO_HVAC_ACTION = {"1": HVACAction.HEATING, "0": HVACAction.IDLE}
 
 
 async def async_setup_entry(
@@ -109,6 +128,11 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     )
+    # A room regulator is heat-only and cannot be switched off through the
+    # gateway (see the module docstring), so the mode is a constant. HA requires
+    # a non-empty hvac_modes list, and validates set_hvac_mode against it.
+    _attr_hvac_modes = [HVACMode.HEAT]
+    _attr_hvac_mode = HVACMode.HEAT
 
     def __init__(
         self,
@@ -122,20 +146,15 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self._ctrl_datapoint_id = ctrl_datapoint["id"]
         self._name = device.get("label", "Jung Thermostat")
         self._attr_unique_id = stable_unique_id(device, ctrl_datapoint)
-        # The Thermostat function carries a `switch` datapoint for on/off; map it
-        # to HVAC OFF/HEAT. A thermostat without one (defensive) stays HEAT-only,
-        # and HA requires a non-empty hvac_modes list either way.
+        # The Thermostat function's `switch` datapoint is the regulator's
+        # momentary activity, not an on/off — it drives hvac_action only. A
+        # thermostat that doesn't report one leaves the action unknown.
         switch_dp = next(
             (dp for dp in device.get("datapoints", []) if dp.get("type") == "switch"),
             None,
         )
         self._switch_datapoint_id = switch_dp.get("id") if switch_dp else None
-        self._attr_hvac_modes = (
-            [HVACMode.OFF, HVACMode.HEAT]
-            if self._switch_datapoint_id is not None
-            else [HVACMode.HEAT]
-        )
-        self._attr_hvac_mode = self._get_hvac_mode_from_datapoint(switch_dp)
+        self._attr_hvac_action = self._get_hvac_action_from_datapoint(switch_dp)
         self._target_temperature = self._get_target_from_datapoint(ctrl_datapoint)
         self._preset_mode = self._get_preset_from_datapoint(ctrl_datapoint)
         self._current_temperature = self._get_current_temperature(device)
@@ -177,15 +196,15 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Turn the thermostat on (HEAT) or off via its switch datapoint."""
-        if self._switch_datapoint_id is None:
-            return  # no on/off control on this thermostat
-        if hvac_mode == HVACMode.OFF:
-            await self.coordinator.turn_off_switch(self._switch_datapoint_id)
-        else:
-            await self.coordinator.turn_on_switch(self._switch_datapoint_id)
-        self._attr_hvac_mode = hvac_mode
-        self.async_write_ha_state()
+        """Accept HEAT, the mode the regulator is permanently in.
+
+        There is nothing to send: the gateway exposes no on/off for a room
+        regulator (see the module docstring). HA validates the requested mode
+        against ``hvac_modes`` before calling this, so only HEAT ever arrives —
+        but the override still has to exist, or a card/automation re-asserting
+        "heat" would hit ``ClimateEntity``'s ``NotImplementedError``.
+        """
+        _LOGGER.debug("Thermostat %s is heat-only; ignoring set_hvac_mode", self._name)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -205,7 +224,7 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         if self._switch_datapoint_id is not None and self._should_refresh(
             self._switch_datapoint_id
         ):
-            self._attr_hvac_mode = self._get_hvac_mode_from_datapoint(
+            self._attr_hvac_action = self._get_hvac_action_from_datapoint(
                 self._find_datapoint(self._switch_datapoint_id)
             )
         # The ambient reading is read-only (never set optimistically), so always
@@ -213,11 +232,22 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self._current_temperature = self._get_current_temperature(device)
         self.async_write_ha_state()
 
-    def _get_hvac_mode_from_datapoint(self, datapoint: Datapoint | None) -> HVACMode:
-        """Map the switch datapoint to an HVAC mode (OFF only when explicitly off)."""
-        if datapoint is not None and datapoint_value(datapoint, "switch") == "0":
-            return HVACMode.OFF
-        return HVACMode.HEAT
+    def _get_hvac_action_from_datapoint(
+        self, datapoint: Datapoint | None
+    ) -> HVACAction | None:
+        """Map the ``switch`` datapoint to the regulator's momentary action.
+
+        ``1`` reads as HEATING and ``0`` as IDLE; a missing datapoint or any other
+        value (e.g. ``"NaN"`` for an offline device) leaves the action unknown.
+        Unlike ``hvac_mode`` this is an attribute, so the device's own heating
+        cycle no longer rewrites the entity *state* every few minutes.
+        """
+        if datapoint is None:
+            return None
+        value = datapoint_value(datapoint, "switch")
+        if value is None:
+            return None
+        return _SWITCH_TO_HVAC_ACTION.get(value)
 
     def _get_target_from_datapoint(self, datapoint: Datapoint | None) -> float | None:
         value = datapoint_value(datapoint, "temperature_ctrl")

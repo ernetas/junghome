@@ -48,10 +48,10 @@ def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
 
     The platforms freeze an entity's supported features from the datapoints
     present when it is first built (a cover's tilt, a light's brightness/colour,
-    a thermostat's off mode), and ``_discover_*`` is add-only — it never revisits
-    a device it has already created. So this fingerprint changing on an existing
-    device means its entities now carry a stale feature set, and the entry must be
-    reloaded to rebuild them. Only the datapoint *types* matter here (not their
+    a thermostat's heating action), and ``_discover_*`` is add-only — it never
+    revisits a device it has already created. So this fingerprint changing on an
+    existing device means its entities now carry a stale feature set, and the entry
+    must be reloaded to rebuild them. Only the datapoint *types* matter here (not their
     values), so a normal value push never changes the signature.
     """
     return (

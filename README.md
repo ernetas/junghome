@@ -12,7 +12,10 @@ Currently functional things:
 - Sockets - On/Off, energy statistics, etc.
 - Blinds / shutters (covers) - open/close/stop, position, and slat tilt. Awnings,
   which report position inverted, can be flagged in the integration's options.
-- Thermostats (room temperature regulators) - target temperature and presets.
+- Thermostats (room temperature regulators) - target temperature, presets, and
+  heating activity (`hvac_action`). The gateway offers no on/off for a regulator,
+  so these entities are heat-only; the **frost protection** preset is the closest
+  thing to "off".
 - Scenes - recall any Jung Home scene from Home Assistant.
 - Measurement sensors (e.g. ambient brightness on presence detectors).
 - IoT integration for Rocker Switches - allows triggering any script or automation in HomeAssistant via button presses.

@@ -151,6 +151,30 @@ Common `values` keys by device type:
 > datapoint and reloads the entry when a device's datapoint set changes so the
 > capability is rebuilt (see `_register_capability_reload` in `__init__.py`).
 
+> **A Thermostat's `switch` datapoint is *not* the regulator's on/off — and a room
+> regulator has no on/off at all.** The middleware builds a `Thermostat` from
+> exactly three device states — `SetPoint`, `sensor_ambient_temperature` and
+> `AutomaticMode` (`jung-home-device.js`, `JungHome_Thermostat`) — and
+> `datapoint_helper_methods.js` re-labels the third one on the way out
+> (`case StateType.AutomaticMode: return DatapointType.Switch`), so it reaches the
+> API as an ordinary `switch` = `"0"` / `"1"` datapoint with nothing to
+> distinguish it from a light's or a socket's. Internally it is a Generic OnOff
+> `0x1000` server state the gateway reads as `"manu"` (0) / `"auto"` (1)
+> (`btmesh_get_datapoint_service.js`), and the RTR scheduler property
+> `LBC_PROP_RTR_SCHEDULER_ENABLE_ID` writes into that *same* state
+> (`handleThermostatAutomaticMode` in `btmesh_device_property_service.js`) — two
+> sources feeding one value. In the field it flips on its own several times an
+> hour, tracking the regulator's momentary heating output (these RTRs drive
+> heating with a ~15-minute PWM cycle) while setpoint, preset and ambient
+> temperature stay unchanged — see
+> [issue #121](https://github.com/ernetas/junghome/issues/121). Nothing in the
+> state set switches a regulator off, either: `Property_RTR_SensorHVAC_Mode`
+> exists in the middleware but is commented out and never exposed, so the `frost`
+> preset is the closest equivalent. The integration therefore reads this datapoint
+> as HA's `hvac_action` (`heating` / `idle`) only, holds `hvac_mode` at `heat`, and
+> never writes it. Treating it as an on/off is what made every thermostat entity
+> flap between `off` and `heat`.
+
 ### Other command types
 
 | `type` | Behaviour |
