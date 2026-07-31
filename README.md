@@ -86,8 +86,12 @@ to point at the new address.
 # Button automations (rocker switches)
 
 Rocker buttons show up as Home Assistant **event entities** (one per up/down
-side). The gateway only reports raw press/release, so single/double/hold gestures
-are derived in an automation — a ready-made **blueprint** does this for you:
+side), and each button also offers **device triggers** — open the button's device
+page, add an automation, and pick e.g. *"Up button pressed"*. That's the quickest
+route for a simple "press this, do that" automation.
+
+The gateway only reports raw press/release, so single/double/hold gestures are
+derived in an automation — a ready-made **blueprint** does this for you:
 
 - Blueprint: [`blueprints/automation/junghome/button_gestures.yaml`](blueprints/automation/junghome/button_gestures.yaml)
 - Full guide + copy-paste recipes: [`docs/example-button-automation.md`](docs/example-button-automation.md)

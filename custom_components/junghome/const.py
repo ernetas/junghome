@@ -17,6 +17,31 @@ DOMAIN = "junghome"
 # registered description always matches the event actually fired.
 EVENT_SCENE_RECALLED = f"{DOMAIN}_scene_recalled"
 
+# Fired on every genuine rocker-button edge the gateway pushes. The event
+# entities already expose those edges, but a device trigger has to attach to
+# something on the *bus* (this is how HA's own button integrations do it — see
+# Shelly and Hue), so the button platform re-emits each edge here and
+# ``device_trigger`` matches on it.
+EVENT_BUTTON_ACTION = f"{DOMAIN}_button_action"
+
+# Device-trigger vocabulary.
+#
+# ``type`` is which side of the rocker fired and ``subtype`` is the raw edge.
+# The gateway reports only press/release — it has no native single/double/hold —
+# so those two edges are all a device trigger can honestly offer; gestures are
+# still derived in an automation (see the shipped blueprint).
+CONF_SUBTYPE = "subtype"
+
+# Rocker datapoint type -> button side. Also drives the event entities'
+# translation keys, so both surfaces name a given side identically.
+BUTTON_DATAPOINT_TYPES = {
+    "up_request": "up",
+    "down_request": "down",
+    "trigger_request": "press",
+}
+BUTTON_TRIGGER_TYPES = set(BUTTON_DATAPOINT_TYPES.values())
+BUTTON_TRIGGER_SUBTYPES = {"pressed", "depressed"}
+
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
 # the device describe it identically (see ``gateway_device_info``).
