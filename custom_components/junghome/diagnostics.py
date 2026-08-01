@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,25 @@ if TYPE_CHECKING:
 # retained in `devices` below: they're the stable identity anchor and are the
 # main thing that makes a diagnostics dump useful for debugging.
 TO_REDACT = {CONF_TOKEN, "token", CONF_HOST, "host"}
+
+# `async_redact_data` only masks values it can reach by *key*. Several fields
+# below are free-form text that can quote a secret inside a larger string, where
+# no key exists to match:
+#
+# - `last_error` is `str(err)`, and an aiohttp connect failure reads
+#   "Cannot connect to host <host>:443 ssl:True [...]" — re-leaking the host that
+#   TO_REDACT deliberately removes from `entry.data`.
+# - the raw WebSocket frames are gateway JSON kept verbatim for protocol
+#   debugging. The token travels as a connect header rather than a frame body,
+#   so it should never appear there, but a downloadable report that gets pasted
+#   into public issues is the wrong place to rely on "should".
+#
+# So those go through `_scrub`, which does a literal (case-insensitive) sweep for
+# the entry's own secrets.
+#
+# Only secrets of at least this length are swept: a one- or two-character host
+# would otherwise match constantly and shred the very output being debugged.
+_MIN_SCRUBBABLE = 4
 
 # Function/datapoint types the integration turns into entities. These mirror the
 # platform discovery (light/switch/sensor/event/cover/climate). The
@@ -55,6 +75,23 @@ _HANDLED_DATAPOINT_TYPES = {
 }
 
 
+def _secrets(entry: JungHomeConfigEntry) -> list[str]:
+    """Return the entry's secrets, longest first so the token wins any overlap."""
+    values = [str(entry.data.get(key) or "") for key in (CONF_TOKEN, CONF_HOST)]
+    return sorted(
+        (v for v in values if len(v) >= _MIN_SCRUBBABLE), key=len, reverse=True
+    )
+
+
+def _scrub(text: str | None, secrets: list[str]) -> str | None:
+    """Mask any of ``secrets`` appearing inside free-form ``text``."""
+    if not text:
+        return text
+    for secret in secrets:
+        text = re.sub(re.escape(secret), "**REDACTED**", text, flags=re.IGNORECASE)
+    return text
+
+
 def _support_summary(devices: list[Device]) -> dict[str, Any]:
     """Count device/datapoint types and flag any the integration doesn't handle."""
     function_types: Counter[str] = Counter(d.get("type") or "Unknown" for d in devices)
@@ -79,6 +116,7 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = entry.runtime_data
     devices = coordinator.data or []
+    secrets = _secrets(entry)
     return {
         "entry": {
             "data": async_redact_data(entry.data, TO_REDACT),
@@ -93,7 +131,7 @@ async def async_get_config_entry_diagnostics(
         # REST/WebSocket failure (if any) — together they show how long a dump
         # taken mid-outage has been degraded and what's causing it.
         "ws_last_connected": coordinator.ws_last_connected,
-        "last_error": coordinator.last_error,
+        "last_error": _scrub(coordinator.last_error, secrets),
         "last_error_at": coordinator.last_error_at,
         # Quick map of what the gateway exposes vs what we implement — the first
         # thing to check when matching real hardware against our support.
@@ -110,12 +148,17 @@ async def async_get_config_entry_diagnostics(
         "groups": coordinator.groups,
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...
-        "recent_websocket_frames": list(coordinator.ws_frame_log),
+        "recent_websocket_frames": [
+            _scrub(frame, secrets) for frame in coordinator.ws_frame_log
+        ],
         # ...plus the latest *full* (untruncated) frame of each type, which always
         # retains the complete connect-time handshake (message / version /
         # functions / groups / scenes) even on a spammy gateway where the rolling
         # log above has churned past it.
-        "latest_websocket_frame_by_type": coordinator.ws_last_frame_by_type,
+        "latest_websocket_frame_by_type": {
+            frame_type: _scrub(frame, secrets)
+            for frame_type, frame in coordinator.ws_last_frame_by_type.items()
+        },
     }
 
 
@@ -136,6 +179,7 @@ async def async_get_device_diagnostics(
     pruned.
     """
     coordinator = entry.runtime_data
+    secrets = _secrets(entry)
     # HA devices are keyed by the firmware-stable slug, so resolve back through
     # the same function that produced the identifier.
     slugs = {
@@ -148,7 +192,7 @@ async def async_get_device_diagnostics(
     return {
         "gateway_version": coordinator.gateway_version,
         "ws_connected": coordinator.ws_connected,
-        "last_error": coordinator.last_error,
+        "last_error": _scrub(coordinator.last_error, secrets),
         "last_error_at": coordinator.last_error_at,
         "identifiers": sorted(slugs),
         # Redacted with the same rule as the entry dump: a per-device report is
