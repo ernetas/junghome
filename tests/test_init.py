@@ -20,7 +20,10 @@ from custom_components.junghome.const import (
     DOMAIN,
     device_slug,
 )
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.coordinator import (
+    JungHomeDataUpdateCoordinator,
+    _parse_color_temp_range,
+)
 from custom_components.junghome.diagnostics import (
     _support_summary,
     async_get_config_entry_diagnostics,
@@ -756,6 +759,63 @@ async def test_area_for_device_resolves_group_name(hass: HomeAssistant) -> None:
     assert (
         coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) == "Bathroom"
     )
+
+
+async def test_color_temp_range_for_device_reads_group_metadata(
+    hass: HomeAssistant,
+) -> None:
+    """color_temp_range_for_device resolves the group's advertised Kelvin range."""
+    coordinator = _bare_coordinator(hass)
+    device = {"id": "d", "parent_groups": ["g1"]}
+    # Both plausible encodings are accepted, and values may be strings.
+    coordinator.groups = [
+        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 6500}}
+    ]
+    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
+    coordinator.groups = [{"id": "g1", "color_temperature_range": ["2700", "6500"]}]
+    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
+    # No parent groups / an id that doesn't resolve / a group without a range.
+    assert coordinator.color_temp_range_for_device({"id": "d"}) is None
+    assert (
+        coordinator.color_temp_range_for_device({"id": "d", "parent_groups": ["gX"]})
+        is None
+    )
+    coordinator.groups = [{"id": "g1", "name": "Living room"}]
+    assert coordinator.color_temp_range_for_device(device) is None
+    # The first parent group advertising a usable range wins.
+    coordinator.groups = [
+        {"id": "g0", "name": "no range here"},
+        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 4000}},
+    ]
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g0", "g1"]}
+    ) == (2200, 4000)
+
+
+def test_parse_color_temp_range_rejects_bad_payloads() -> None:
+    """The range parser only trusts a well-formed, plausible pair of numbers."""
+    assert _parse_color_temp_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
+    assert _parse_color_temp_range([2700, 6500]) == (2700, 6500)
+    for raw in (
+        None,
+        "2700-6500",
+        42,
+        {},  # no keys at all
+        {"min": 2700},  # half a range
+        {"min": "warm", "max": "cool"},  # non-numeric
+        {"min": None, "max": 6500},
+        {"min": {"nested": 1}, "max": 6500},  # not a scalar
+        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
+        {"min": 6500, "max": 2700},  # reversed
+        {"min": 4000, "max": 4000},  # zero-width
+        {"min": 10, "max": 6500},  # implausibly low
+        {"min": 2700, "max": 999999},  # implausibly high
+        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
+        {"min": 2700, "max": float("inf")},  # ...and Infinity
+        [2700],  # wrong arity
+        [2000, 4000, 6500],
+    ):
+        assert _parse_color_temp_range(raw) is None, raw
 
 
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
