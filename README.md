@@ -1,6 +1,6 @@
 # What?
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/ernetas/junghome)](https://github.com/ernetas/junghome/releases)
 
 This is a custom Jung Home integration based on WebSocket communication with Jung Home Gateway. A gateway is required.
@@ -41,14 +41,30 @@ Any feedback is welcome, this is my first integration with HomeAssistant.
 
 ## HACS (recommended)
 
-Until this is in the HACS default store, add it as a custom repository:
+**Jung Home is in the HACS default store** — no custom repository needed.
 
 [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ernetas&repository=junghome&category=integration)
 
-1. HACS → ⋮ (top right) → **Custom repositories**.
-2. Repository: `https://github.com/ernetas/junghome`, Category: **Integration**. Add.
-3. Find **Jung Home** in HACS, **Download** the latest release, then restart Home Assistant.
-4. Settings → Devices & Services → **Add Integration** → Jung Home (see [Setup](#setup)).
+1. **HACS** → search for **Jung Home**.
+2. **Download**, then restart Home Assistant.
+3. Settings → Devices & Services → **Add Integration** → Jung Home (see
+   [Setup](#setup)). In most cases the gateway is discovered for you and appears
+   there on its own, so you can just click **Configure**.
+
+The button above opens the repository straight in your HACS. If HACS is new to
+you, install it first: <https://hacs.xyz/docs/use/download/download/>.
+
+### Updating
+
+HACS notifies you when a new release is out (**HACS → Jung Home → Update**).
+Restart Home Assistant afterwards. Config entries, entity IDs and automations
+survive updates — entity `unique_id`s are derived from device labels rather than
+the gateway's internal ids precisely so they stay put.
+
+### Beta releases
+
+Pre-releases are hidden by default. To test one, open **HACS → Jung Home → ⋮ →
+Redownload** and enable **Show beta versions**.
 
 ## Manual
 
