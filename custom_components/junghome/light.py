@@ -248,9 +248,14 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         value = datapoint_value(datapoint, "brightness")
         if value is None:
             return 0
+        # Parse as a float, not an int: gateway numerics arrive as strings, and
+        # `int("50.0")` raises — which silently read as brightness 0, i.e. a lamp
+        # stuck at 0 % with nothing logged. Every other platform (cover, climate,
+        # sensor) already goes through float(). ValueError also covers NaN and
+        # OverflowError covers inf, both of which `round` rejects.
         try:
-            raw = int(value)
-        except (TypeError, ValueError):
+            raw = round(float(value))
+        except (TypeError, ValueError, OverflowError):
             raw = 0
         # Device reports 0-100; convert linearly to HA 0-255, clamping the
         # untrusted gateway value into HA's documented 0-255 brightness range.
@@ -268,9 +273,11 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         value = datapoint_value(datapoint, "color_temperature")
         if value is None:
             return None
+        # Same as brightness above: a decimal-formatted Kelvin value must not
+        # blank the colour temperature.
         try:
-            kelvin = int(value)
-        except (TypeError, ValueError):
+            kelvin = round(float(value))
+        except (TypeError, ValueError, OverflowError):
             return None
         # Clamp to this light's own advertised range (gateway-supplied where
         # available, defaults otherwise) so an out-of-range value doesn't violate

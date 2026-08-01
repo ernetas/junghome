@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -35,6 +36,7 @@ def _color_light(
     *,
     parent_groups: list | None = None,
     color_temp: str = "3000",
+    brightness: str = "50",
 ) -> JungHomeLight:
     device = {
         "id": "c",
@@ -49,7 +51,7 @@ def _color_light(
             {
                 "id": "c-2",
                 "type": "brightness",
-                "values": [{"key": "brightness", "value": "50"}],
+                "values": [{"key": "brightness", "value": brightness}],
             },
             {
                 "id": "c-4",
@@ -480,3 +482,44 @@ async def test_all_light_entities(
     """
     entry = await init_platform(Platform.LIGHT)
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_pct"),
+    [("50", 50), ("50.0", 50), ("49.6", 50), ("100.0", 100)],
+)
+async def test_decimal_brightness_is_parsed(
+    hass: HomeAssistant, raw: str, expected_pct: int
+) -> None:
+    """A decimal-formatted brightness must not read as 0.
+
+    Gateway numerics arrive as strings, and `int("50.0")` raises — which fell
+    through to brightness 0, showing the lamp at 0 % with nothing logged. Cover,
+    climate and sensor all parse via float(); this brings light into line.
+    """
+    light = _color_light(_bare_coordinator(hass), brightness=raw)
+    assert light.brightness == round(expected_pct * 255 / 100)
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "", "abc"])
+async def test_unparseable_brightness_falls_back_to_zero(
+    hass: HomeAssistant, raw: str
+) -> None:
+    """Genuinely unusable values still degrade safely rather than raise."""
+    assert _color_light(_bare_coordinator(hass), brightness=raw).brightness == 0
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("2700", 2700), ("2700.0", 2700)])
+async def test_decimal_color_temp_is_parsed(
+    hass: HomeAssistant, raw: str, expected: int
+) -> None:
+    """A decimal-formatted Kelvin value must not blank the colour temperature."""
+    light = _color_light(_bare_coordinator(hass), color_temp=raw)
+    assert light.color_temp_kelvin == expected
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "abc"])
+async def test_unparseable_color_temp_is_none(hass: HomeAssistant, raw: str) -> None:
+    """An unusable Kelvin value yields None rather than raising."""
+    light = _color_light(_bare_coordinator(hass), color_temp=raw)
+    assert light.color_temp_kelvin is None
