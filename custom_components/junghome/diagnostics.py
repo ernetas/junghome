@@ -8,8 +8,11 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 
+from .const import DOMAIN, device_slug
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.device_registry import DeviceEntry
 
     from .coordinator import JungHomeConfigEntry
     from .models import Device
@@ -113,4 +116,42 @@ async def async_get_config_entry_diagnostics(
         # functions / groups / scenes) even on a spammy gateway where the rolling
         # log above has churned past it.
         "latest_websocket_frame_by_type": coordinator.ws_last_frame_by_type,
+    }
+
+
+async def async_get_device_diagnostics(
+    hass: HomeAssistant, entry: JungHomeConfigEntry, device: DeviceEntry
+) -> dict[str, Any]:
+    """Return diagnostics for a single device.
+
+    The entry-level dump above carries every device on the gateway, which is
+    unwieldy on a large installation when the question is about one blind or one
+    thermostat. This narrows it to the selected device while keeping the gateway
+    context needed to interpret it — firmware version, whether live push is up,
+    and the most recent error.
+
+    ``matched`` is None when the HA device has no counterpart in the current
+    poll, which is itself the useful signal: it means the gateway has stopped
+    reporting it (renamed label, removed hardware) and it is on its way to being
+    pruned.
+    """
+    coordinator = entry.runtime_data
+    # HA devices are keyed by the firmware-stable slug, so resolve back through
+    # the same function that produced the identifier.
+    slugs = {
+        identifier for domain, identifier in device.identifiers if domain == DOMAIN
+    }
+    matched = next(
+        (d for d in coordinator.data or [] if device_slug(d) in slugs),
+        None,
+    )
+    return {
+        "gateway_version": coordinator.gateway_version,
+        "ws_connected": coordinator.ws_connected,
+        "last_error": coordinator.last_error,
+        "last_error_at": coordinator.last_error_at,
+        "identifiers": sorted(slugs),
+        # Redacted with the same rule as the entry dump: a per-device report is
+        # pasted into public issues just as often as a full one.
+        "device": async_redact_data(matched, TO_REDACT) if matched else None,
     }

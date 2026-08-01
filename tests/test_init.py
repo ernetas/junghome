@@ -24,6 +24,7 @@ from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.diagnostics import (
     _support_summary,
     async_get_config_entry_diagnostics,
+    async_get_device_diagnostics,
 )
 from tests.conftest import DEVICES, _fake_run_websocket
 
@@ -99,6 +100,70 @@ async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     assert diag["support_summary"]["unhandled_function_types"] == []
     assert diag["support_summary"]["unhandled_datapoint_types"] == []
     assert diag["support_summary"]["function_types"]["ColorLight"] >= 1
+
+
+async def test_device_diagnostics(hass: HomeAssistant, init_integration) -> None:
+    """A per-device dump narrows to one device and keeps gateway context."""
+    coordinator = init_integration.runtime_data
+    coordinator.gateway_version = "1.5.0"
+    dev_reg = dr.async_get(hass)
+    slug = device_slug(DEVICES[0])
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, slug)})
+    assert device is not None
+
+    diag = await async_get_device_diagnostics(hass, init_integration, device)
+
+    assert diag["identifiers"] == [slug]
+    assert diag["device"] is not None
+    assert diag["device"]["label"] == DEVICES[0]["label"]
+    # Gateway context travels with the device so the dump is interpretable.
+    assert diag["gateway_version"] == "1.5.0"
+    assert diag["ws_connected"] is True
+
+
+async def test_device_diagnostics_redacts_credentials(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Per-device dumps get the same redaction as the entry dump.
+
+    They are pasted into public issues just as often, so a gateway payload that
+    ever carries a token/host must not leak through the narrower report.
+    """
+    coordinator = init_integration.runtime_data
+    devices = copy.deepcopy(DEVICES)
+    devices[0]["token"] = "super-secret"
+    devices[0]["host"] = "192.168.1.50"
+    coordinator.async_set_updated_data(devices)
+    await hass.async_block_till_done()
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    diag = await async_get_device_diagnostics(hass, init_integration, device)
+
+    assert diag["device"]["token"] == "**REDACTED**"
+    assert diag["device"]["host"] == "**REDACTED**"
+
+
+async def test_device_diagnostics_when_gateway_no_longer_reports_it(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A device the gateway has stopped reporting yields device=None.
+
+    That is the useful signal: it is on its way to being pruned rather than
+    simply absent from the dump for an unexplained reason.
+    """
+    dev_reg = dr.async_get(hass)
+    ghost = dev_reg.async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={(DOMAIN, "ghost_device")},
+    )
+
+    diag = await async_get_device_diagnostics(hass, init_integration, ghost)
+
+    assert diag["identifiers"] == ["ghost_device"]
+    assert diag["device"] is None
+    # Gateway context is still present, so the report is not empty.
+    assert diag["ws_connected"] is True
 
 
 def test_support_summary_flags_unhandled_types() -> None:
