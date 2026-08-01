@@ -165,6 +165,77 @@ async def test_user_flow_already_configured(hass: HomeAssistant) -> None:
     assert result["reason"] == "already_configured"
 
 
+async def test_manual_host_aborts_when_gateway_discovered_under_hostname(
+    hass: HomeAssistant,
+) -> None:
+    """Typing a discovered gateway's IP must not add it a second time.
+
+    A zeroconf-discovered entry is keyed by its mDNS *hostname*, so the manual
+    flow's `async_set_unique_id(host)` claims a different id for the same
+    gateway and nothing aborts on unique_id alone.
+    """
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await _choose(hass, result, "app_approval")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "1.2.3.4"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_manual_password_host_aborts_when_discovered_under_hostname(
+    hass: HomeAssistant,
+) -> None:
+    """The password step is the other `_async_apply_host` caller."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await _choose(hass, result, "password")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_manual_host_proceeds_when_no_entry_uses_it(
+    hass: HomeAssistant,
+) -> None:
+    """A different host must still be accepted (the guard must not over-abort)."""
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    ).add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await _choose(hass, result, "app_approval")
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, AsyncMock(return_value="tok")), fetch, run_ws:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        result = await _advance_progress(hass, result)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOST] == "5.6.7.8"
+
+
 def _zeroconf_info(hostname: str = "junghome-abc.local.") -> ZeroconfServiceInfo:
     return ZeroconfServiceInfo(
         ip_address="1.2.3.4",
