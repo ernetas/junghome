@@ -46,6 +46,17 @@ MAX_RECONNECT_FAILURES = 5
 # roughly once a second forever, never raising the repair issue and flapping every
 # controllable entity. A session shorter than this is treated as a failed attempt.
 STABLE_SESSION_SECONDS = 30
+# Bound for the WebSocket handshake. Home Assistant's shared session carries
+# aiohttp's default ClientTimeout(total=300, sock_connect=30), so a gateway that
+# accepts the TCP connection and then says nothing parks the reconnect loop for a
+# full five minutes: no retry, no failure counted, no progress toward the repair
+# issue, and every controllable entity unavailable throughout. A gateway on the
+# LAN either answers quickly or is not answering.
+WS_CONNECT_TIMEOUT = 30
+# Bound for a single outbound frame. `send_str` awaits the transport drain and
+# has no timeout of its own, so a peer that stops reading can block the calling
+# service call indefinitely. Short, because this is a LAN write of a few bytes.
+WS_SEND_TIMEOUT = 10
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 
@@ -545,12 +556,55 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             },
         )
 
+    def _dispatch_text_frame(self, raw: str) -> None:
+        """Parse one TEXT frame and route it to the right handler.
+
+        Split out of ``_run_websocket`` so that function stays about the session
+        lifecycle. Never raises: a malformed frame must not tear down an
+        otherwise healthy connection.
+        """
+        _LOGGER.debug("Received WebSocket message: %s", raw)
+        self._log_ws_frame(raw)
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                _LOGGER.error("Received WebSocket message is a list: %s", data)
+                return
+            if data.get("type") == "version":
+                self.gateway_version = data.get("data")
+                _LOGGER.info(
+                    "Jung Home gateway firmware version: %s", self.gateway_version
+                )
+                self._apply_gateway_version()
+                return
+            if data.get("type") == "message":
+                text = data.get("data")
+                if isinstance(text, str) and text.startswith("error:"):
+                    # The gateway reports a rejected command (e.g. a bad set) as
+                    # an `error:` message frame. There is no message_id
+                    # correlation, but surfacing it at WARNING beats dropping it.
+                    _LOGGER.warning("Jung Home gateway reported an error: %s", text)
+                else:
+                    _LOGGER.debug("Received message frame: %s", data)
+                return
+            self._handle_websocket_message(data)
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Error decoding WebSocket message: %s", e)
+        except Exception as e:
+            _LOGGER.error("Unexpected error handling WebSocket message: %s", e)
+            _LOGGER.error("Message content: %s", raw)
+
     async def _run_websocket(self) -> None:
         """Open one WebSocket session and pump messages until it closes."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
         url = f"wss://{self.config['host']}/ws"
         headers = {"token": f"{self.config['token']}"}
-        async with session.ws_connect(url, headers=headers, heartbeat=30) as ws:
+        # Only the handshake is bounded — wrapping the `async with` below would
+        # tear down a perfectly healthy session after WS_CONNECT_TIMEOUT. Once
+        # connected, `heartbeat=30` is what detects a silently dead peer.
+        async with asyncio.timeout(WS_CONNECT_TIMEOUT):
+            ws = await session.ws_connect(url, headers=headers, heartbeat=30)
+        async with ws:
             self.websocket = ws
             # Connected: resync state we may have missed while disconnected.
             # Logged at INFO (paired with the WARNING on disconnect) so the
@@ -575,45 +629,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             try:
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
-                        _LOGGER.debug("Received WebSocket message: %s", msg.data)
-                        self._log_ws_frame(msg.data)
-                        try:
-                            data = json.loads(msg.data)
-                            if isinstance(data, list):
-                                _LOGGER.error(
-                                    "Received WebSocket message is a list: %s", data
-                                )
-                                continue
-                            if data.get("type") == "version":
-                                self.gateway_version = data.get("data")
-                                _LOGGER.info(
-                                    "Jung Home gateway firmware version: %s",
-                                    self.gateway_version,
-                                )
-                                self._apply_gateway_version()
-                                continue
-                            if data.get("type") == "message":
-                                text = data.get("data")
-                                if isinstance(text, str) and text.startswith("error:"):
-                                    # The gateway reports a rejected command (e.g.
-                                    # a bad set) as an `error:` message frame. There
-                                    # is no message_id correlation, but surfacing it
-                                    # at WARNING beats silently dropping it.
-                                    _LOGGER.warning(
-                                        "Jung Home gateway reported an error: %s",
-                                        text,
-                                    )
-                                else:
-                                    _LOGGER.debug("Received message frame: %s", data)
-                                continue
-                            self._handle_websocket_message(data)
-                        except json.JSONDecodeError as e:
-                            _LOGGER.error("Error decoding WebSocket message: %s", e)
-                        except Exception as e:
-                            _LOGGER.error(
-                                "Unexpected error handling WebSocket message: %s", e
-                            )
-                            _LOGGER.error("Message content: %s", msg.data)
+                        self._dispatch_text_frame(msg.data)
                     elif msg.type == aiohttp.WSMsgType.ERROR:
                         raise ConnectionError(f"WebSocket error frame: {msg}")
                 # The gateway closed the socket cleanly: `async for` just ends,
@@ -884,7 +900,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         _LOGGER.debug("Sending WebSocket message: %s", message)
         if self.websocket and not self.websocket.closed:
             try:
-                await self.websocket.send_str(json.dumps(message))
+                async with asyncio.timeout(WS_SEND_TIMEOUT):
+                    await self.websocket.send_str(json.dumps(message))
                 _LOGGER.debug("WebSocket message sent successfully")
             except Exception as err:
                 raise HomeAssistantError(

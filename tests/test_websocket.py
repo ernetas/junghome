@@ -29,6 +29,15 @@ class _FakeWS:
     def __init__(self, frames: list[_FakeMsg]) -> None:
         self._frames = frames
         self.closed = False
+        self.close_code = 1000
+
+    def __await__(self):
+        """aiohttp's ws_connect result is awaitable as well as an async CM."""
+
+        async def _resolve() -> "Self":
+            return self
+
+        return _resolve().__await__()
 
     async def __aenter__(self) -> Self:
         return self
