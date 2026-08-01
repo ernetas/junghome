@@ -1,5 +1,6 @@
 """Tests for the Jung Home data update coordinator."""
 
+import asyncio
 import json
 from datetime import timedelta
 from typing import Self
@@ -20,7 +21,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import (
+    INITIAL_RECONNECT_DELAY,
     MAX_RECONNECT_FAILURES,
+    STABLE_SESSION_SECONDS,
     JungHomeDataUpdateCoordinator,
 )
 
@@ -199,6 +202,7 @@ class _EmptyWS:
 
     def __init__(self) -> None:
         self.closed = False
+        self.close_code = 1000
 
     async def __aenter__(self) -> Self:
         return self
@@ -265,16 +269,118 @@ async def test_no_repair_issue_below_failure_threshold(hass: HomeAssistant) -> N
     )
 
 
-async def test_repair_issue_cleared_on_successful_reconnect(
-    hass: HomeAssistant,
+class _HoldingWS:
+    """A WebSocket that connects and stays open until `release` is set."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.close_code = 1000
+        self.release = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> bool:
+        return False
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> object:
+        await self.release.wait()
+        raise StopAsyncIteration
+
+
+async def test_repair_issue_cleared_once_session_proves_stable(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:
-    """Getting the WebSocket back deletes the issue and resets the counter."""
+    """A session that *holds up* clears the issue and resets the counter.
+
+    Recovery is judged on the session lasting `STABLE_SESSION_SECONDS`, not on
+    the handshake succeeding — see the flapping test below for why.
+    """
     coordinator = _coordinator(hass)
     coordinator.data = []
     await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
 
+    coordinator._closing = False
+    ws = _HoldingWS()
+    session = Mock()
+    session.ws_connect = Mock(return_value=ws)
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+    ):
+        # NB: not async_block_till_done — the session is deliberately still open,
+        # so the task never completes. Yield just enough for it to reach the pump.
+        task = hass.async_create_task(coordinator._run_websocket())
+        for _ in range(5):
+            await asyncio.sleep(0)
+        # Still connected, but not yet proven stable.
+        assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+
+        freezer.tick(timedelta(seconds=STABLE_SESSION_SECONDS + 1))
+        async_fire_time_changed(hass)
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        assert (
+            registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id) is None
+        )
+        assert coordinator._reconnect_failures == 0
+        assert coordinator._reconnect_delay == INITIAL_RECONNECT_DELAY
+
+        coordinator._closing = True
+        ws.release.set()
+        await task
+
+
+async def test_flapping_session_keeps_escalating(hass: HomeAssistant) -> None:
+    """A connect that drops straight away is a failure, not a recovery.
+
+    Resetting the backoff on connect made the escalation unreachable: the delay
+    returned to 1 s before the doubling could apply and the failure counter never
+    reached the repair-issue threshold, so a gateway in a reboot loop reconnected
+    about once a second forever with nothing surfaced to the user.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    coordinator._reconnect_failures = MAX_RECONNECT_FAILURES - 1
+    coordinator._reconnect_delay = 8
+
+    session = Mock()
+    session.ws_connect = Mock(return_value=_EmptyWS())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        pytest.raises(ConnectionError),
+    ):
+        await coordinator._run_websocket()
+
+    # The instant close neither reset the backoff nor cleared the counter.
+    assert coordinator._reconnect_delay == 8
+    assert coordinator._reconnect_failures == MAX_RECONNECT_FAILURES - 1
+
+
+async def test_clean_server_close_is_counted_as_a_failure(
+    hass: HomeAssistant,
+) -> None:
+    """A gateway that closes the socket politely still escalates.
+
+    `async for` simply ends on a clean close, so this used to return normally:
+    no warning, no `last_error`, no failure count — and therefore never the
+    repair issue that exists for exactly this silent degradation.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
     coordinator._closing = False
     session = Mock()
     session.ws_connect = Mock(return_value=_EmptyWS())
@@ -284,11 +390,22 @@ async def test_repair_issue_cleared_on_successful_reconnect(
             return_value=session,
         ),
         patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        pytest.raises(ConnectionError, match="closed the WebSocket"),
     ):
         await coordinator._run_websocket()
 
+
+async def test_stop_clears_the_repair_issue(hass: HomeAssistant) -> None:
+    """Unloading while degraded must not strand the issue in the repairs UI."""
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+
+    await coordinator.stop()
+
     assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id) is None
-    assert coordinator._reconnect_failures == 0
 
 
 def _pushable_device() -> dict:
