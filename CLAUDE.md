@@ -133,12 +133,12 @@ not commitments — evaluate cost/value per item before implementing.
   `async_unload_entry`, so a full HA shutdown (not an entry unload) skips the
   orderly `ws.close()`/task-cancel. Shelly registers this per-coordinator
   (`_handle_ha_stop`).
-- DONE: repeated WebSocket reconnect failures now raise a non-fixable repair
-  issue (`websocket_push_failure`) after `MAX_RECONNECT_FAILURES` consecutive
-  drops, mirroring Shelly's `MAX_PUSH_UPDATE_FAILURES`, so the silent fallback
-  to 60 s REST-only polling is visible; `_run_websocket` deletes it on the next
-  successful connect. Still open: the device-id-churn reload path in
-  `_reload_if_device_ids_changed`, which only logs today.
+- Repeated WebSocket reconnect failures in `_websocket_loop` only log a
+  warning; there's no user-visible signal that the integration has silently
+  fallen back to 60 s REST-only polling. Shelly raises a repair issue after
+  `MAX_PUSH_UPDATE_FAILURES`. A repair issue here (fixable=False is fine) would
+  cover both this and the device-id-churn reload path in
+  `_reload_if_device_ids_changed`, which also only logs today.
 - Minor: add jitter to the reconnect backoff (avoids synchronized reconnect
   storms if multiple gateways share a network blip); surface "last successful
   WS connection" timestamp in `diagnostics.py` alongside the existing
@@ -171,9 +171,9 @@ not commitments — evaluate cost/value per item before implementing.
   consistently.
 
 **Repairs, logbook, services**
-- No `repairs.py`: the WS reconnect-failure issue is raised straight from the
-  coordinator and is `is_fixable=False`, so it needs no repair flow. The
-  device-id-churn reload path is the remaining candidate — it still only logs.
+- No `repairs.py`. The two silent-degradation paths above (WS
+  reconnect-failure fallback, device-id-churn reload) are the concrete
+  candidates — turn the existing log warnings into dismissible repair issues.
 - No `logbook.py`. The coordinator already fires a `junghome_scene_recalled`
   bus event (`coordinator.py`); without `async_describe_events` it shows up
   raw in the HA logbook instead of "Scene 'Evening' was recalled" — cheap win
