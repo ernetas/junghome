@@ -663,13 +663,28 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     break
             if updated:
                 # Flag the pushed datapoint for the duration of this dispatch so
-                # event entities fire on the push itself. `async_set_updated_data`
+                # event entities fire on the push itself. The dispatch below
                 # notifies listeners synchronously, so the flag is valid for
                 # exactly this push and is cleared immediately afterwards; REST
                 # polls never set it and therefore never fire phantom events.
                 self.pushed_datapoint_id = datapoint_id
                 try:
-                    self.async_set_updated_data(self.data)
+                    # Deliberately NOT `async_set_updated_data`: that helper
+                    # cancels the scheduled refresh and re-arms it a full
+                    # `update_interval` from now, so a gateway that pushes more
+                    # often than once a minute would defer the REST poll forever.
+                    # The poll is the only thing that discovers new devices,
+                    # prunes removed ones, assigns areas and detects gateway id
+                    # churn, so starving it silently breaks all four.
+                    #
+                    # The merge above mutated the dicts already in `self.data`, so
+                    # there is no new object to store. Setting `last_update_success`
+                    # keeps the availability contract documented in `entity.py`
+                    # (a push counts as proof the gateway is alive), and
+                    # `async_update_listeners` gives the same synchronous
+                    # notification the helper would have.
+                    self.last_update_success = True
+                    self.async_update_listeners()
                 finally:
                     self.pushed_datapoint_id = None
             else:

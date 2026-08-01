@@ -1,17 +1,22 @@
 """Tests for the Jung Home data update coordinator."""
 
 import json
+from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import (
@@ -284,3 +289,88 @@ async def test_repair_issue_cleared_on_successful_reconnect(
 
     assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id) is None
     assert coordinator._reconnect_failures == 0
+
+
+def _pushable_device() -> dict:
+    """A device with one datapoint a WebSocket push can address."""
+    return {
+        "id": "dev1",
+        "label": "Lamp",
+        "datapoints": [{"id": "dev1-001", "type": "switch", "values": []}],
+    }
+
+
+def _push(datapoint_id: str = "dev1-001") -> dict:
+    """A datapoint push frame for ``datapoint_id``."""
+    return {
+        "type": "datapoint",
+        "data": {"id": datapoint_id, "values": [{"key": "switch", "value": "1"}]},
+    }
+
+
+async def test_push_notifies_listeners_without_rearming_the_poll(
+    hass: HomeAssistant,
+) -> None:
+    """A push must notify listeners but leave the scheduled REST poll alone.
+
+    Dispatching pushes through ``async_set_updated_data`` re-armed the refresh
+    timer on every frame, so a gateway pushing faster than ``update_interval``
+    deferred the poll indefinitely.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_pushable_device()]
+    notified = 0
+
+    @callback
+    def _listener() -> None:
+        nonlocal notified
+        notified += 1
+
+    unsub = coordinator.async_add_listener(_listener)
+    coordinator.last_update_success = False
+
+    with patch.object(coordinator, "_schedule_refresh") as schedule:
+        coordinator._handle_websocket_message(_push())
+    unsub()
+
+    assert schedule.call_count == 0, "a push must not re-arm the poll timer"
+    # ...but everything async_set_updated_data used to provide still happens.
+    assert notified == 1
+    assert coordinator.last_update_success is True
+    assert coordinator.data[0]["datapoints"][0]["values"] == [
+        {"key": "switch", "value": "1"}
+    ]
+
+
+async def test_rest_poll_still_runs_under_a_continuous_push_stream(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The 60 s poll keeps firing on a gateway that pushes every 20 s.
+
+    The poll is the only thing that discovers new devices, prunes removed ones,
+    assigns areas and detects gateway id churn, so starving it breaks all four.
+    """
+    coordinator = _coordinator(hass)
+    devices = [_pushable_device()]
+    coordinator.data = devices
+
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_async_update_data",
+        AsyncMock(return_value=devices),
+    ) as poll:
+        # A listener is what makes the coordinator schedule refreshes at all.
+        unsub = coordinator.async_add_listener(lambda: None)
+        # Three minutes of traffic, one push every 20 s.
+        for _ in range(9):
+            freezer.tick(timedelta(seconds=20))
+            async_fire_time_changed(hass)
+            await hass.async_block_till_done()
+            coordinator._handle_websocket_message(_push())
+            await hass.async_block_till_done()
+        unsub()
+
+    # Three minutes at a 60 s interval: at least two polls should have landed.
+    assert poll.call_count >= 2, (
+        f"pushes starved the REST poll (ran {poll.call_count} times in 3 minutes)"
+    )
