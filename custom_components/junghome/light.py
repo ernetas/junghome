@@ -123,24 +123,25 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             if self._has_brightness
             else None
         )
-        # Prefer the range the gateway advertises for this device's group over the
-        # module defaults: a fixture whose real range is narrower than 2000-6500 K
-        # gets a slider it cannot honour, and — worse — a read outside the
-        # declared range is clamped, so the reported colour temperature silently
-        # differs from the device's. Resolve it BEFORE the first read below, which
-        # already clamps against it.
+        # The module defaults are authoritative. `coordinator.color_temp_range_for
+        # _device` can parse a per-group range out of the `groups` broadcast, but
+        # nothing is wired to it: no captured firmware sends a colour-temperature
+        # field on groups at all (see that method's docstring), so consuming it
+        # would be pure speculation. Two things have to be settled before it can
+        # drive an entity, and neither is answerable without a real capture:
+        #
+        #  - Clamping is asymmetric. Reads are clamped to the range below, writes
+        #    are not, and Home Assistant does not validate `color_temp_kelvin`
+        #    against the declared range either (the service schema is only
+        #    `cv.positive_int`). So `light.turn_on` at 6500 K against a narrower
+        #    advertised range reaches the hardware unchanged, and the entity then
+        #    reports the clamped value — a state contradicting both the device and
+        #    its own declared attributes. Today the window is wide enough that the
+        #    clamp effectively never fires; narrowing it makes that the common path.
+        #  - A group range is a *group* property. Applying it per-fixture is only
+        #    right if every fixture in the group shares it.
         self._min_kelvin, self._max_kelvin = DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN
         if self._has_color_temp:
-            advertised = coordinator.color_temp_range_for_device(device)
-            if advertised is not None:
-                self._min_kelvin, self._max_kelvin = advertised
-                _LOGGER.debug(
-                    "Light %s uses the gateway-advertised colour-temperature "
-                    "range %s-%sK",
-                    self._name,
-                    self._min_kelvin,
-                    self._max_kelvin,
-                )
             self._attr_min_color_temp_kelvin = self._min_kelvin
             self._attr_max_color_temp_kelvin = self._max_kelvin
         self._color_temp: int | None = (

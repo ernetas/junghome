@@ -2,5 +2,20 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "pytest-homeassistant-custom-component pins homeassistant, pytest and syrupy to exact versions, so bumping any of them on its own is an unresolvable dependency conflict rather than a test failure. Move the whole set in one PR.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "homeassistant",
+        "pytest",
+        "pytest-homeassistant-custom-component",
+        "syrupy"
+      ],
+      "groupName": "home-assistant test stack"
+    }
   ]
 }
