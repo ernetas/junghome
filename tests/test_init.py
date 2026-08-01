@@ -16,6 +16,7 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome import (
     STALE_DEVICE_PRUNE_MISSES,
@@ -1701,3 +1702,70 @@ async def test_pruning_a_device_is_logged(
 
     assert "removing device" in caplog.text
     assert "ghost_device" in caplog.text
+
+
+async def test_device_registry_entries(
+    hass: HomeAssistant, init_integration, snapshot: SnapshotAssertion
+) -> None:
+    """Pin the device-registry rows.
+
+    `snapshot_platform` in the per-platform tests is entity-only, so every
+    device-level attribute was unpinned: the slug in `identifiers`, the
+    `via_device` link to the synthetic hub, and manufacturer/model/sw_version/
+    area. A change to `device_slug`, to `device_info`, or to the hub wiring was
+    invisible to the suite unless it happened to alter an entity `unique_id`.
+
+    Registry ids are random per run, so `via_device_id` is resolved back to the
+    parent's identifiers and the rows are sorted by identifier.
+    """
+    dev_reg = dr.async_get(hass)
+    devices = dr.async_entries_for_config_entry(dev_reg, init_integration.entry_id)
+    assert devices, "no devices registered"
+
+    by_id = {device.id: sorted(device.identifiers) for device in devices}
+    rows = sorted(
+        (
+            {
+                "identifiers": sorted(device.identifiers),
+                "name": device.name,
+                "manufacturer": device.manufacturer,
+                "model": device.model,
+                "sw_version": device.sw_version,
+                "area_id": device.area_id,
+                "entry_type": device.entry_type,
+                # Resolved, because the raw id is random per run.
+                "via_device": by_id.get(device.via_device_id),
+            }
+            for device in devices
+        ),
+        key=lambda row: row["identifiers"],
+    )
+    assert rows == snapshot
+
+
+async def test_every_device_links_to_the_gateway_hub(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Each per-function device hangs off the synthetic hub via `via_device`.
+
+    Asserted separately from the snapshot so the *invariant* is stated, not just
+    recorded — a regenerated snapshot could otherwise quietly accept a broken
+    topology.
+    """
+    dev_reg = dr.async_get(hass)
+    hub = dev_reg.async_get_device(
+        identifiers={(DOMAIN, gateway_device_id(init_integration))}
+    )
+    assert hub is not None
+    assert hub.via_device_id is None, "the hub must not be hung off anything"
+
+    others = [
+        device
+        for device in dr.async_entries_for_config_entry(
+            dev_reg, init_integration.entry_id
+        )
+        if device.id != hub.id
+    ]
+    assert others
+    for device in others:
+        assert device.via_device_id == hub.id, f"{device.name} is not linked to the hub"
