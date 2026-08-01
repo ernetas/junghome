@@ -2,6 +2,7 @@
 
 import copy
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -29,6 +30,8 @@ from custom_components.junghome.coordinator import (
     _parse_color_temp_range,
 )
 from custom_components.junghome.diagnostics import (
+    _scrub,
+    _secrets,
     _support_summary,
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
@@ -1441,3 +1444,78 @@ async def test_notify_websocket_closed_skips_during_teardown(
         coordinator._closing = True
         coordinator._notify_websocket_closed()
         assert notify.call_count == 1
+
+
+async def test_diagnostics_scrubs_host_from_free_form_text(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The host must not survive inside `last_error` or a raw WebSocket frame.
+
+    `async_redact_data` masks values by key; these are free-form strings where no
+    key exists to match. An aiohttp connect failure reads "Cannot connect to host
+    <host>:443 ...", which re-leaked exactly what TO_REDACT removes from
+    entry.data — and diagnostics get pasted into public issues.
+    """
+    coordinator = init_integration.runtime_data
+    host = init_integration.data[CONF_HOST]
+    token = init_integration.data[CONF_TOKEN]
+    coordinator.last_error = f"Cannot connect to host {host}:443 ssl:True [timeout]"
+    coordinator.ws_frame_log.append(f'{{"type":"x","url":"wss://{host}/ws"}}')
+    coordinator.ws_last_frame_by_type = {"version": f'{{"url":"wss://{host}/ws"}}'}
+
+    diag = await async_get_config_entry_diagnostics(hass, init_integration)
+
+    assert host not in diag["last_error"]
+    assert "**REDACTED**" in diag["last_error"]
+    # The surrounding context survives, so the dump is still debuggable.
+    assert "Cannot connect to host" in diag["last_error"]
+    assert host not in diag["recent_websocket_frames"][-1]
+    assert host not in diag["latest_websocket_frame_by_type"]["version"]
+    # The fixture's 3-character token is below the sweep threshold; see
+    # test_scrub_masks_secrets_but_ignores_tiny_ones for a realistic one.
+    assert token == "tok"
+
+
+async def test_device_diagnostics_scrubs_host_from_last_error(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The per-device dump gets the same treatment as the entry dump."""
+    coordinator = init_integration.runtime_data
+    host = init_integration.data[CONF_HOST]
+    coordinator.last_error = f"Cannot connect to host {host}:443"
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    diag = await async_get_device_diagnostics(hass, init_integration, device)
+
+    assert host not in diag["last_error"]
+
+
+def test_scrub_masks_secrets_but_ignores_tiny_ones() -> None:
+    """`_scrub` masks realistic secrets and leaves absurdly short ones alone.
+
+    A real gateway token is long; a one- or two-character value would match
+    everywhere and shred the very output being debugged, so short values are
+    deliberately not swept.
+    """
+    token = "eyJhbGciOiJIUzI1NiJ9.secret-token-value"
+    host = "junghome-0022d1059602.local"
+    secrets = _secrets(
+        SimpleNamespace(data={CONF_TOKEN: token, CONF_HOST: host})  # type: ignore[arg-type]
+    )
+
+    text = f"GET https://{host}/api with token={token} failed"
+    scrubbed = _scrub(text, secrets)
+    assert token not in scrubbed
+    assert host not in scrubbed
+    assert scrubbed.startswith("GET https://**REDACTED**/api")
+
+    # Case-insensitive: an error may echo a differently-cased hostname.
+    assert host not in _scrub(f"Cannot connect to host {host.upper()}:443", secrets)
+
+    # Below the threshold -> not swept, so a dump isn't shredded by a stub value.
+    assert _secrets(SimpleNamespace(data={CONF_TOKEN: "t", CONF_HOST: "h"})) == []  # type: ignore[arg-type]
+    assert _scrub("the host is h", []) == "the host is h"
+
+    # Nothing to do on empty input.
+    assert _scrub(None, secrets) is None
