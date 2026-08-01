@@ -164,10 +164,12 @@ implementing.
   logbook line via `async_describe_events`.
 - **Per-platform test files.** `tests/` now has one file per platform plus
   `test_logbook.py`; `test_init.py` is down to setup/entity-lifecycle.
-- **Status-LED `entity_category`: decided against.** The rocker status LED is
-  deliberately left a primary switch rather than an `EntityCategory.CONFIG`
-  entity so it stays directly controllable — this is a recorded decision, not a
-  gap (`quality_scale.yaml:53-58`).
+- **Status-LED `entity_category`.** The rocker status LED *is* an
+  `EntityCategory.CONFIG` switch (`switch.py:129`) — it configures how the
+  physical button looks rather than controlling a load. It remains fully
+  actuable; a config entity is only sorted out of the primary controls. (Earlier
+  revisions of this file recorded the opposite as a deliberate decision; the code
+  has set CONFIG throughout, so that note was wrong, not stale.)
 
 ### Deliberate non-goals
 
@@ -186,52 +188,45 @@ implementing.
 
 ### Still open
 
-Several of these already have a PR in flight; check the linked issue/PR before
-starting so work isn't duplicated.
+**This list was audited on 2026-08-01 against the code.** Items previously
+recorded here as open — repair issues for WebSocket degradation, #131
+(config-flow host collision), #132 (reconfigure connect-then-commit), #134
+(per-device diagnostics) and "coverage is not gated" — are all **implemented**.
+Don't re-open them. The items below are what that audit actually found.
 
-- **Repair issues for silent degradation** (PR branch
-  `repair-websocket-degraded`). There is no `repairs.py`. Repeated WebSocket
-  reconnect failures in `_websocket_loop` only log a warning, with no
-  user-visible signal that the integration has silently fallen back to 60 s
-  REST-only polling (the core convention is to raise a repair issue once
-  consecutive push failures pass a bounded threshold). A repair issue
-  (`fixable=False` is fine) would cover both this and the device-id-churn
-  reload in `_reload_if_device_ids_changed`, which also only logs today.
-- **Config-flow host collision** (#131, `fix-manual-host-duplicate`).
-  `_async_apply_host` (`config_flow.py:238`) only calls `async_set_unique_id` +
-  `_abort_if_unique_id_configured`; unlike `async_step_zeroconf` it never
-  cross-checks `CONF_HOST` against existing entries, so a gateway already added
-  via zeroconf (unique_id = mDNS hostname) can be re-added manually by typing
-  its IP. Fix: reuse the same `CONF_HOST`-collision check in both paths.
-- **Reconfigure connect-then-commit** (#132, `verify-reconfigure-host`).
-  `async_step_reconfigure` (`config_flow.py:381`) checks the new host against
-  other entries but never verifies it is reachable or is the *same* gateway
-  (the core pattern re-checks the device identity and calls
-  `_abort_if_unique_id_mismatch`). A typo or wrong IP is accepted and only
-  surfaces as a later reauth/connect failure.
-- **Broad `except Exception` handlers** (#133, `narrow-broad-excepts`). The
-  best-effort handlers in `__init__.py`'s migration code (376, 400, 408) and in
-  `coordinator.py` (237, 333, 399, 624) are broader than the specific
-  `aiohttp`/`asyncio` types used elsewhere; narrowing them stops real bugs being
-  swallowed as "best-effort".
-- **Per-device diagnostics** (#134, `device-diagnostics`).
-  `diagnostics.py` implements only `async_get_config_entry_diagnostics`; adding
-  `async_get_device_diagnostics` would let a user download one device's data.
-- ~~**Device triggers for button gestures**~~ — **done** (#125).
-  `device_trigger.py` exposes the press/release primitives on the device page;
-  the shipped blueprint still derives single/double/hold from those edges,
-  since the gateway reports no native gestures.
-- **Device-registry snapshots.** The entity snapshots pin every `unique_id`,
-  but `snapshot_platform` is entity-only: `device_slug()`, `via_device`,
-  `manufacturer`/`model`/`sw_version` and `area_id` are not pinned by any
-  snapshot, so a change there is invisible to the suite. `device_slug` changes
-  are caught indirectly (it composes into every entity `unique_id`); the rest
-  would need an explicit loop over `dr.async_entries_for_config_entry`.
-- **Reusable JSON device/API fixtures.** No `tests/fixtures/` (core
-  integrations keep per-model fixtures there); current tests build
+- **`log-when-unavailable` logs every cycle.** `_websocket_loop`
+  (`coordinator.py`) logs a WARNING on *every* failed reconnect, so an
+  unreachable gateway warns roughly once a minute indefinitely. The convention
+  is once at WARNING, DEBUG thereafter. The rule is marked `done`.
+- **Narrow the remaining broad excepts** (#133). Three remain, all in
+  `coordinator.py` (the reconnect loop, the message-handler catch-all, and the
+  WebSocket send path). The `__init__.py` handlers this issue originally cited
+  no longer exist.
+- **Reconfigure verifies reachability but not identity** (residual of #132).
+  `async_step_reconfigure` probes the new host, but never calls
+  `_abort_if_unique_id_mismatch`, so a *different* gateway at a valid address is
+  accepted and only surfaces later as a reauth. Keying the entry on the gateway
+  serial/MAC from the mDNS TXT record would fix this, `discovery-update-info`
+  for manually-added entries, and the manual-vs-discovered duplicate at once.
+- **Zeroconf host update double-reloads.** `_abort_if_unique_id_configured`
+  is called with the default `reload_on_update=True` while the entry's own
+  update listener already reloads on a host change. HA emits a deprecation
+  report for this that becomes a hard failure in **2026.12.0**.
+- **Diagnostics dump raw WebSocket frames unredacted.**
+  `recent_websocket_frames` / `latest_websocket_frame_by_type` bypass
+  `async_redact_data`, and `last_error` re-leaks the host that `TO_REDACT`
+  deliberately removes.
+- **No timeouts on the WebSocket paths.** Every REST call uses
+  `asyncio.timeout(30)`; `ws_connect` and `send_str` have none, so a black-holed
+  gateway stalls the reconnect loop indefinitely.
+- **Scenes have no REST fallback.** `coordinator.scenes` is populated only from
+  the WebSocket broadcast, which opens *after* platform setup — so scene
+  entities don't exist at the end of `async_setup_entry`, and never appear at
+  all if the WebSocket can't connect, even though `GET /scenes/` exists.
+- **Device-registry snapshots.** The entity snapshots pin every `unique_id`, but
+  `snapshot_platform` is entity-only: `device_slug()`, `via_device`,
+  `manufacturer`/`model`/`sw_version` and `area_id` are pinned by nothing.
+- **Reusable JSON device/API fixtures.** No `tests/fixtures/`; tests build
   device/datapoint dicts inline.
-- **Coverage is not gated.** `.github/workflows/test.yml` collects
-  `--cov-report=term-missing` but passes no `--cov-fail-under=`, so coverage
-  can silently regress.
 - **Minor: richer `zeroconf_confirm`.** Could show more device identity
   (model/serial) if the mDNS TXT records carry it, for multi-gateway networks.

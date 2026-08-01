@@ -80,8 +80,9 @@ to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
 
 The issued token is stored in the config entry. Devices added or removed in the
 Jung Home app afterwards are picked up automatically. If the gateway's IP later
-changes, discovery updates it automatically, or you can **Reconfigure** the entry
-to point at the new address.
+changes, discovery updates it automatically **for gateways that were added via
+discovery**; an entry you added manually is keyed by the address you typed, so
+use **Reconfigure** to point it at the new one.
 
 # Button automations (rocker switches)
 
@@ -133,6 +134,63 @@ update in real time. It also re-fetches the full device list over REST once a
 minute as a backstop, and on every WebSocket reconnect. If the WebSocket drops it
 reconnects automatically with backoff. No cloud and no account are involved.
 
+# Removing the integration
+
+1. **Settings → Devices & Services → Jung Home → ⋮ → Delete.** This removes the
+   config entry and every device and entity it created.
+2. **Revoke Home Assistant's access in the Jung Home app**, under
+   **Settings → Gateway → Access Permissions**. The gateway keeps the token it
+   issued until you revoke it there — deleting the entry in Home Assistant does
+   not tell the gateway to forget it.
+3. Optionally remove the repository from HACS (**HACS → Jung Home → ⋮ →
+   Remove**) if you don't intend to reinstall.
+
+Automations that referenced the removed entities keep their (now missing)
+entity IDs — Home Assistant will flag them as unavailable until you edit them.
+
+# Troubleshooting
+
+**The gateway isn't discovered / `junghome.local` doesn't resolve.**
+mDNS doesn't cross VLANs or most VPNs. Add the integration manually with
+**Add Integration → Jung Home** and type the gateway's IP (e.g.
+`192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
+
+**Setup times out waiting for approval.**
+The gateway only holds the request open for about three minutes. Open the Jung
+Home app *first* (**Settings → Gateway → Access Permissions → Open Requests**),
+then submit the form and approve straight away. If it times out, just submit
+again. The alternative is the **network-key password** option, which connects
+immediately with no approval step.
+
+**"Live updates have stopped" repair notice.**
+The WebSocket that carries live push has been down for several consecutive
+reconnect attempts. The integration keeps working on a 60-second REST poll, so
+states stay correct but stop being instant, and controllable entities read
+unavailable because commands only travel over the WebSocket. It clears itself
+once the connection is genuinely back. If it persists, check that the gateway is
+reachable and hasn't been rebooting.
+
+**Entities are unavailable but the gateway is up.**
+Controllable entities (lights, sockets, covers, thermostats, status LEDs)
+require the live WebSocket, since that is the only path commands take. Read-only
+entities (sensors, binary sensors, events) stay available on the REST poll
+alone. So "sensors fine, lights unavailable" points at the WebSocket
+specifically — see the repair notice above.
+
+**Home Assistant asks you to re-authenticate.**
+The gateway rejected the stored token, usually because it was revoked in the app
+or the gateway was factory-reset. Follow the reauth prompt to issue a new one.
+
+**A device you added in the app doesn't show up.**
+New devices are picked up on the next REST poll (within a minute). If it still
+doesn't appear, download diagnostics (**⋮ → Download diagnostics** on the entry)
+— `support_summary.unhandled_function_types` and `unhandled_datapoint_types`
+list anything the gateway reports that this integration doesn't yet map, which
+is exactly what an issue report needs.
+
+**Filing a bug.** Attach the diagnostics download. The gateway token and host
+are redacted; device labels are kept because they are the identity anchor.
+
 # Known limitations
 
 - **Metering sockets report instantaneous power (W) and current (A), not
@@ -146,6 +204,12 @@ reconnects automatically with backoff. No cloud and no account are involved.
 - The rocker **status-LED colour** can't be set from here (on/off only); colour
   is configured in the JUNG app or over BT-Mesh.
 - The **puck** isn't supported/validated yet.
+- **Two devices with the same label collide.** The gateway exposes no hardware
+  identifier and regenerates its device ids on firmware updates, so the device
+  *label* is the only stable identity anchor available. Devices whose labels are
+  identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1` — map to the
+  same id and only the first one gets entities. Give each device a distinct
+  label in the Jung Home app.
 
 # Gateway internals (for contributors)
 

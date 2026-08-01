@@ -14,10 +14,16 @@ rules:
     comment: The integration registers no service actions.
   docs-high-level-description: done
   docs-installation-instructions: done
-  docs-removal-instructions: done
+  docs-removal-instructions: done  # README "Removing the integration"
   entity-event-setup: done
   entity-unique-id: done
-  has-entity-name: done
+  has-entity-name:
+    status: done
+    comment: >-
+      Every device-backed entity sets it. The scene platform is the one
+      exception: scenes have no backing device to carry the label, so
+      JungHomeScene sets has_entity_name False and names itself from the
+      gateway's scene label.
   runtime-data: done
   test-before-configure: done
   test-before-setup: done
@@ -47,15 +53,17 @@ rules:
   docs-known-limitations: done
   docs-supported-devices: done
   docs-supported-functions: done
-  docs-troubleshooting: done
+  docs-troubleshooting: done  # README "Troubleshooting"
   docs-use-cases: done
   dynamic-devices: done
   entity-category:
     status: done
     comment: >-
-      Primary controls (lights, sockets, buttons) carry no category. The rocker
-      status LED is intentionally kept a primary switch rather than a config
-      entity so it stays directly controllable.
+      Primary controls (lights, sockets, covers, thermostats, buttons) carry no
+      category. The rocker status LED is an EntityCategory.CONFIG switch: it
+      configures how the physical button looks rather than controlling the load,
+      which is what the category is for. It stays fully controllable — a config
+      entity is still actuable, it is only sorted out of the primary controls.
   entity-device-class: done
   entity-disabled-by-default:
     status: exempt
