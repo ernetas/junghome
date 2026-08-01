@@ -16,6 +16,25 @@
         "syrupy"
       ],
       "groupName": "home-assistant test stack"
+    },
+    {
+      "description": "Stay on the Home Assistant 2026.7 line: test against what users actually run, not a beta. 2026.8 exists only as betas so far. pytest-homeassistant-custom-component is capped alongside it because it pins homeassistant exactly, and 0.13.349 onwards target 2026.8 betas -- 0.13.348 is the last release on 2026.7.4. Lift both caps together once 2026.8.0 is released and a matching phacc exists.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "homeassistant"
+      ],
+      "allowedVersions": "<2026.8.0"
+    },
+    {
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchPackageNames": [
+        "pytest-homeassistant-custom-component"
+      ],
+      "allowedVersions": "<0.13.349"
     }
   ]
 }
