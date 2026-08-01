@@ -315,7 +315,7 @@ async def test_reauth_flow(hass: HomeAssistant) -> None:
     assert entry.data[CONF_TOKEN] == "new-tok"
 
 
-async def test_reconfigure_flow(hass: HomeAssistant) -> None:
+async def test_reconfigure_flow(hass: HomeAssistant, aioclient_mock) -> None:
     """Reconfigure updates the gateway host in place."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -323,6 +323,7 @@ async def test_reconfigure_flow(hass: HomeAssistant) -> None:
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
     fetch, run_ws = _no_network()
     with fetch, run_ws:
         result = await entry.start_reconfigure_flow(hass)
@@ -337,7 +338,7 @@ async def test_reconfigure_flow(hass: HomeAssistant) -> None:
 
 
 async def test_reconfigure_reloads_once_and_keeps_unique_id(
-    hass: HomeAssistant,
+    hass: HomeAssistant, aioclient_mock
 ) -> None:
     """A reconfigure host change reloads exactly once and preserves unique_id.
 
@@ -351,6 +352,7 @@ async def test_reconfigure_reloads_once_and_keeps_unique_id(
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
     fetch, run_ws = _no_network()
     with fetch, run_ws:
         await hass.config_entries.async_setup(entry.entry_id)
@@ -542,6 +544,79 @@ async def test_reconfigure_host_collision(hass: HomeAssistant) -> None:
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_reconfigure_rejects_unreachable_host(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A typo'd address must be caught on the form, not committed.
+
+    Before connect-then-commit the new host was stored unverified and the
+    mistake only surfaced later as a connect/reauth failure.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get(
+        "https://5.6.7.9/api/junghome/functions", exc=aiohttp.ClientError
+    )
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "5.6.7.9"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    # The typo must not have been persisted.
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+
+
+async def test_reconfigure_accepts_host_that_rejects_the_token(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A 401 still proves a gateway is reachable at the new address.
+
+    The probe asserts reachability only: a rejected token means the address now
+    points at a different gateway (or the token was revoked), which the reauth
+    flow handles. Failing the form for it would strand the user on a screen that
+    cannot fix it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", status=401)
+
+    fetch, run_ws = _no_network()
+    with fetch, run_ws:
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+
+
+async def test_reconfigure_rejects_host_that_times_out(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A hanging address fails the form rather than blocking the commit."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.9/api/junghome/functions", exc=TimeoutError)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "5.6.7.9"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert entry.data[CONF_HOST] == "1.2.3.4"
 
 
 async def test_register_step_captures_failure(hass: HomeAssistant) -> None:

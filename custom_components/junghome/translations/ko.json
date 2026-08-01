@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Jung Home 장면 {label}을(를) 게이트웨이에서 더 이상 사용할 수 없습니다."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Jung Home 실시간 업데이트가 중단되었습니다",
+      "description": "Home Assistant가 {host}의 Jung Home 게이트웨이에 {failures}회 연속으로 다시 연결하지 못했습니다. 기기 상태가 더 이상 즉시 전송되지 않으며 이제 1분에 한 번만 새로 고쳐집니다. 게이트웨이의 전원이 켜져 있고 네트워크에서 연결할 수 있는지 확인하세요. 연결이 복구되면 이 문제는 자동으로 사라집니다."
+    }
   }
 }

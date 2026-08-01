@@ -65,10 +65,15 @@ rules:
   icon-translations: done
   reconfiguration-flow: done
   repair-issues:
-    status: exempt
+    status: done
     comment: >-
-      The only recoverable failure is a revoked token, which is handled by the
-      reauthentication flow rather than a repair issue.
+      A revoked token is handled by the reauthentication flow rather than a
+      repair issue. Losing the WebSocket, however, degrades the integration
+      silently — states keep updating on the 60 s REST poll, so nothing looks
+      broken, it just stops being live. After MAX_RECONNECT_FAILURES consecutive
+      failed reconnects the coordinator raises a non-fixable warning issue
+      (`websocket_push_failure`) and deletes it again on the next successful
+      connect, since only the gateway or the network coming back resolves it.
   stale-devices: done
 
   # Platinum

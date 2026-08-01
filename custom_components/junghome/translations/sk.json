@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Scéna Jung Home {label} už na bráne nie je dostupná."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Živé aktualizácie Jung Home sa zastavili",
+      "description": "Home Assistantu sa {failures}× po sebe nepodarilo znova pripojiť k bráne Jung Home na adrese {host}. Stavy zariadení sa už neodosielajú okamžite a obnovujú sa len raz za minútu. Skontrolujte, či je brána zapnutá a dostupná vo vašej sieti. Tento problém zmizne sám, hneď ako sa spojenie obnoví."
+    }
   }
 }

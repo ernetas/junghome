@@ -92,9 +92,22 @@
       "no_covers": "No covers were found on this gateway, so there is nothing to configure."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Up button {subtype}",
+      "down": "Down button {subtype}",
+      "press": "Button {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "pressed",
+      "depressed": "released"
+    }
+  },
   "entity": {
     "binary_sensor": {
-      "gateway_connectivity": { "name": "Connection" }
+      "gateway_connectivity": {
+        "name": "Connection"
+      }
     },
     "climate": {
       "thermostat": {
@@ -108,12 +121,20 @@
       }
     },
     "event": {
-      "up": { "name": "Up" },
-      "down": { "name": "Down" },
-      "press": { "name": "Press" }
+      "up": {
+        "name": "Up"
+      },
+      "down": {
+        "name": "Down"
+      },
+      "press": {
+        "name": "Press"
+      }
     },
     "switch": {
-      "status_led": { "name": "Status LED" }
+      "status_led": {
+        "name": "Status LED"
+      }
     }
   },
   "exceptions": {
@@ -131,6 +152,15 @@
     },
     "scene_not_found": {
       "message": "The Jung Home scene {label} is no longer available on the gateway."
+    },
+    "invalid_trigger": {
+      "message": "The Jung Home device does not support the trigger {trigger}."
+    }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Jung Home live updates have stopped",
+      "description": "Home Assistant has failed to reconnect to the Jung Home gateway at {host} {failures} times in a row. Device states are no longer pushed instantly and now refresh only once a minute. Check that the gateway is powered on and reachable on your network. This issue disappears on its own once the connection is restored."
     }
   }
 }

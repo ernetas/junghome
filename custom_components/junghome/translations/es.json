@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "La escena {label} de Jung Home ya no está disponible en la pasarela."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Las actualizaciones en directo de Jung Home se han detenido",
+      "description": "Home Assistant no ha podido volver a conectarse a la pasarela Jung Home en {host} {failures} veces seguidas. Los estados de los dispositivos ya no se envían al instante y ahora solo se actualizan una vez por minuto. Comprueba que la pasarela esté encendida y sea accesible en tu red. Este problema desaparecerá por sí solo cuando se restablezca la conexión."
+    }
   }
 }

@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Scena Jung Home {label} nie jest już dostępna na bramce."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Aktualizacje na żywo z Jung Home zostały przerwane",
+      "description": "Home Assistant nie zdołał ponownie połączyć się z bramką Jung Home pod adresem {host} {failures} razy z rzędu. Stany urządzeń nie są już przesyłane natychmiast i odświeżają się teraz tylko raz na minutę. Sprawdź, czy bramka jest włączona i dostępna w Twojej sieci. Ten problem zniknie samoczynnie po przywróceniu połączenia."
+    }
   }
 }
