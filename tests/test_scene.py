@@ -1,8 +1,10 @@
 """Scene platform tests for Jung Home."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+import aiohttp
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -16,6 +18,7 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.scene import JungHomeScene, _scene_slug
+from tests.conftest import _fake_run_websocket
 
 
 def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -133,3 +136,114 @@ async def test_all_scene_entities(
     )
     await hass.async_block_till_done()
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+@pytest.mark.real_scenes_fetch
+async def test_scenes_exist_without_the_websocket(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Scenes come up on the REST fetch alone.
+
+    They previously arrived only in the WebSocket handshake, which connects
+    *after* the platforms are set up — so scene entities did not exist at the end
+    of setup, and never appeared at all on a gateway whose WebSocket could not
+    connect, even though every other platform keeps working on the REST poll.
+    """
+    aioclient_mock.get(
+        "https://1.2.3.4/api/junghome/scenes/",
+        json=[{"id": "id0001", "label": "Movie night"}],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+
+    async def _never_connects(self) -> None:
+        raise aiohttp.ClientError("no websocket here")
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", _never_connects),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert hass.states.get("scene.movie_night") is not None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.real_scenes_fetch
+async def test_scene_fetch_failure_is_not_fatal(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A scene list is not worth failing setup over."""
+    aioclient_mock.get("https://1.2.3.4/api/junghome/scenes/", status=500)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.scenes == []
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_revoked_token_on_recall_starts_reauth(hass: HomeAssistant) -> None:
+    """A 401 on scene recall is permanent, so it must drive reauth.
+
+    It used to be reported as `cannot_send` — "the gateway is reconnecting, try
+    again in a moment" — leaving the user retrying a scene forever with nothing
+    prompting them to re-authenticate.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="h", data={CONF_HOST: "h", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "h", "token": "t"}, entry
+    )
+
+    class _Denied:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def raise_for_status(self):
+            raise aiohttp.ClientResponseError(Mock(), (), status=401)
+
+    session = Mock()
+    session.post = Mock(return_value=_Denied())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.activate_scene("id0001")
+    start_reauth.assert_called_once()

@@ -329,6 +329,39 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return []
         return [g for g in data if isinstance(g, dict)]
 
+    async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
+        """Fetch the gateway's scenes from the REST API."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/scenes/"
+        headers = {"token": f"{token}", "Content-Type": "application/json"}
+        async with asyncio.timeout(30):
+            async with session.get(url, headers=headers) as response:
+                response.raise_for_status()
+                data = await response.json()
+        if not isinstance(data, list):
+            return []
+        return cast("list[Scene]", [s for s in data if isinstance(s, dict)])
+
+    async def async_fetch_scenes(self) -> None:
+        """Populate ``self.scenes`` from REST, best-effort.
+
+        Scenes otherwise arrive only in the WebSocket handshake, which connects
+        *after* the platforms are set up — so `scene.*` entities did not exist at
+        the end of setup, and never appeared at all if the WebSocket could not
+        connect, even though every other platform keeps working on the REST poll.
+        Fetching here means scenes are present as soon as setup finishes and
+        survive a gateway whose WebSocket is unavailable.
+
+        Best-effort for the same reason as the groups fetch: a scene list is not
+        worth failing setup over, and the handshake delivers it moments later.
+        """
+        try:
+            self.scenes = await self._fetch_scenes_from_api(
+                self.config["host"], self.config["token"]
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not fetch Jung Home scenes: %s", err)
+
     async def async_fetch_groups(self) -> None:
         """Populate ``self.groups`` from REST, best-effort.
 
@@ -462,6 +495,26 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             async with asyncio.timeout(30):
                 async with session.post(url, headers=headers) as response:
                     response.raise_for_status()
+        except aiohttp.ClientResponseError as err:
+            if err.status in (401, 403):
+                # A revoked/expired token is permanent: reporting it as
+                # "reconnecting, try again in a moment" left the user retrying a
+                # scene forever with nothing prompting them to re-authenticate.
+                # The REST poll and the WebSocket upgrade both drive reauth on
+                # these statuses; this is the third path that can see one.
+                _LOGGER.warning(
+                    "Jung Home gateway rejected the token on scene recall "
+                    "(HTTP %s); starting reauthentication",
+                    err.status,
+                )
+                if self.config_entry is not None:
+                    self.config_entry.async_start_reauth(self.hass)
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="auth_failed"
+                ) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="cannot_send"
+            ) from err
         except (aiohttp.ClientError, TimeoutError) as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="cannot_send"
