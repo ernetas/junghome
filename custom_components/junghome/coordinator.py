@@ -12,12 +12,13 @@ from urllib.parse import quote
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -38,6 +39,13 @@ RECONNECT_JITTER = 0.5
 # rides out silently; past it the gateway has been unreachable long enough that
 # the user is unknowingly running on the 60 s REST poll and deserves to be told.
 MAX_RECONNECT_FAILURES = 5
+# How long a session must stay up before it counts as a genuine recovery rather
+# than a flap. Resetting the backoff at the moment of connect made the escalation
+# unreachable: a gateway that accepts the upgrade and drops us immediately (a
+# reboot loop, a websocket server restart cycle, a client limit) would reconnect
+# roughly once a second forever, never raising the repair issue and flapping every
+# controllable entity. A session shorter than this is treated as a failed attempt.
+STABLE_SESSION_SECONDS = 30
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 
@@ -524,18 +532,25 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         headers = {"token": f"{self.config['token']}"}
         async with session.ws_connect(url, headers=headers, heartbeat=30) as ws:
             self.websocket = ws
-            # Connected: reset the backoff and resync state we may have missed
-            # while disconnected. Logged at INFO (paired with the WARNING on
-            # disconnect) so the drop/recover story is visible without enabling
-            # debug logging during a long soak.
-            self._reconnect_delay = INITIAL_RECONNECT_DELAY
-            # Live push is back, so clear the counter and the degraded-mode
-            # repair issue (a no-op when it was never raised).
-            self._reconnect_failures = 0
-            ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
+            # Connected: resync state we may have missed while disconnected.
+            # Logged at INFO (paired with the WARNING on disconnect) so the
+            # drop/recover story is visible without enabling debug logging
+            # during a long soak.
+            #
+            # The backoff and the failure counter are deliberately NOT reset
+            # here. A successful upgrade proves nothing yet — a gateway stuck in
+            # a reboot loop accepts the handshake and drops us straight away, and
+            # resetting on connect made that flap immortal: the delay went back
+            # to 1 s before the doubling could ever apply, and the counter never
+            # reached MAX_RECONNECT_FAILURES so the repair issue never appeared.
+            # `_mark_session_stable` below does the reset once the session has
+            # actually lasted STABLE_SESSION_SECONDS.
             _LOGGER.info("Jung Home WebSocket connected")
             self.ws_connected = True
             self.ws_last_connected = dt_util.utcnow()
+            cancel_stable = async_call_later(
+                self.hass, STABLE_SESSION_SECONDS, self._mark_session_stable
+            )
             await self.async_request_refresh()
             try:
                 async for msg in ws:
@@ -581,10 +596,36 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                             _LOGGER.error("Message content: %s", msg.data)
                     elif msg.type == aiohttp.WSMsgType.ERROR:
                         raise ConnectionError(f"WebSocket error frame: {msg}")
+                # The gateway closed the socket cleanly: `async for` just ends,
+                # without raising. Returning normally here would make the drop
+                # invisible — no warning, no `last_error`, and no reconnect-failure
+                # count, so a gateway that politely closes every session would
+                # never raise the repair issue that exists for exactly this
+                # silent degradation. Route it through the same failure path a
+                # noisy drop takes.
+                if not self._closing:
+                    raise ConnectionError(
+                        f"gateway closed the WebSocket (code {ws.close_code})"
+                    )
             finally:
+                cancel_stable()
                 self.websocket = None
                 self.ws_connected = False
                 self._notify_websocket_closed()
+
+    @callback
+    def _mark_session_stable(self, _now: datetime) -> None:
+        """Treat the live session as a genuine recovery once it has held up.
+
+        Fires ``STABLE_SESSION_SECONDS`` after a successful connect, and is
+        cancelled if the session dies first — so a flapping gateway keeps
+        escalating its backoff and keeps accumulating failures towards the repair
+        issue, while a gateway that is actually back clears both (and the issue,
+        a no-op when it was never raised).
+        """
+        self._reconnect_delay = INITIAL_RECONNECT_DELAY
+        self._reconnect_failures = 0
+        ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
 
     def _notify_websocket_closed(self) -> None:
         """Push the WebSocket-down state to listeners after a live drop.
@@ -797,6 +838,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """Stop the coordinator and close the WebSocket connection."""
         _LOGGER.debug("Stopping coordinator and closing WebSocket")
         self._closing = True
+        # Drop the degraded-push repair issue on the way out. It was only ever
+        # deleted on a successful reconnect, so unloading, disabling or removing
+        # the entry while degraded stranded it in the repairs UI forever, naming
+        # a gateway that may no longer be configured. A no-op when unraised.
+        ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:
