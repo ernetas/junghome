@@ -32,8 +32,8 @@ MAX_RECONNECT_DELAY = 60
 # Small random addition to each reconnect wait, so multiple gateways/entries on
 # the same network don't all retry in lockstep after a shared network blip.
 RECONNECT_JITTER = 0.5
-# Consecutive failed reconnects before raising a repair issue, mirroring Shelly's
-# MAX_PUSH_UPDATE_FAILURES. Below this the exponential backoff has waited well
+# Consecutive failed reconnects before raising a repair issue, following the core
+# convention of bounding push failures. Below this the backoff has waited well
 # under a minute in total, which an ordinary blip (gateway reboot, Wi-Fi hiccup)
 # rides out silently; past it the gateway has been unreachable long enough that
 # the user is unknowingly running on the 60 s REST poll and deserves to be told.
