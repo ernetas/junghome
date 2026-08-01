@@ -121,7 +121,21 @@ When working on anything that touches the gateway protocol, consult
   `pytest_homeassistant_custom_component`'s `hass` fixture, `MockConfigEntry`,
   `aioclient_mock`. Needs the pinned `homeassistant`; runs on Python 3.14 like
   the other workflows. Run `pytest`; wired into `.github/workflows/test.yml`.
-  Snapshot tests are still absent — see the backlog notes below.
+- **Snapshot tests.** Each platform test file ends with a
+  `test_all_<platform>_entities` case running
+  `pytest_homeassistant_custom_component.common.snapshot_platform` over a
+  single-platform setup (the `init_platform` fixture patches `PLATFORMS` down to
+  one, because `snapshot_platform` refuses a mixed entry). The committed
+  `tests/snapshots/*.ambr` pin every entity's registry entry — `unique_id`
+  included — plus state and attributes, so a change to `stable_unique_id` or to
+  a platform's published attributes shows up as a diff instead of silently
+  re-keying users' entities. Regenerate with `pytest --snapshot-update` and
+  **review the diff**; a `unique_id` change in it is a bug, not a snapshot to
+  accept. A deleted entity surfaces as `N snapshots unused` with a non-zero exit
+  but **no `FAILED` line** — don't misread that as flaky infrastructure.
+  Fixtures hand the coordinator a `deepcopy` of `PRISTINE_DEVICES`: the
+  coordinator merges pushes into the device dicts it is given, so sharing the
+  module-level list by reference lets one test's actuation leak into the next.
 
 ## Ideas from comparing against Home Assistant core conventions
 
@@ -203,13 +217,16 @@ starting so work isn't duplicated.
 - **Per-device diagnostics** (#134, `device-diagnostics`).
   `diagnostics.py` implements only `async_get_config_entry_diagnostics`; adding
   `async_get_device_diagnostics` would let a user download one device's data.
-- **Device triggers for button gestures** (#125,
-  `it-rec:claude/button-device-triggers`). No `device_trigger.py`; the shipped
-  blueprint is currently the only path from raw edges to single/double/hold.
-- **Snapshot testing** (PR branch `snapshot-tests`). No `syrupy`, no `.ambr`
-  files — snapshots would catch unintended entity-attribute/unique-id
-  regressions more cheaply than hand-written assertions, especially now that
-  the platform files exist.
+- ~~**Device triggers for button gestures**~~ — **done** (#125).
+  `device_trigger.py` exposes the press/release primitives on the device page;
+  the shipped blueprint still derives single/double/hold from those edges,
+  since the gateway reports no native gestures.
+- **Device-registry snapshots.** The entity snapshots pin every `unique_id`,
+  but `snapshot_platform` is entity-only: `device_slug()`, `via_device`,
+  `manufacturer`/`model`/`sw_version` and `area_id` are not pinned by any
+  snapshot, so a change there is invisible to the suite. `device_slug` changes
+  are caught indirectly (it composes into every entity `unique_id`); the rest
+  would need an explicit loop over `dr.async_entries_for_config_entry`.
 - **Reusable JSON device/API fixtures.** No `tests/fixtures/` (core
   integrations keep per-model fixtures there); current tests build
   device/datapoint dicts inline.
