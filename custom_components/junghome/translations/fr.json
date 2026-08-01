@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Passerelle Jung Home découverte",
+        "description": "Une passerelle Jung Home a été trouvée à l'adresse {host}. Choisissez le mode de connexion.",
+        "menu_options": {
+          "app_approval": "Approuver la connexion dans l'application Jung Home",
+          "password": "Saisir le mot de passe de la clé réseau de la passerelle (connexion immédiate)"
+        }
+      },
+      "user": {
+        "title": "Se connecter à Jung Home",
+        "description": "Votre passerelle est généralement détectée automatiquement et affichée sur la page Intégrations. Si ce n'est pas le cas, choisissez ci-dessous le mode de connexion.",
+        "menu_options": {
+          "app_approval": "Approuver la connexion dans l'application Jung Home",
+          "password": "Saisir le mot de passe de la clé réseau de la passerelle (connexion immédiate)"
+        }
+      },
+      "app_approval": {
+        "title": "Se connecter à Jung Home",
+        "description": "Confirmez ou saisissez l'adresse de votre passerelle Jung Home. Après avoir continué, approuvez la demande d'accès dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes.",
+        "data": {
+          "host": "Hôte"
+        },
+        "data_description": {
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Se connecter à Jung Home",
+        "description": "Confirmez l'adresse de la passerelle et saisissez le mot de passe de sa clé réseau pour vous connecter immédiatement, sans approuver de demande dans l'application. Vous trouverez ce mot de passe dans l'application Jung Home.",
+        "data": {
+          "host": "Hôte",
+          "password": "Mot de passe de la clé réseau"
+        },
+        "data_description": {
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50).",
+          "password": "Le mot de passe de la clé réseau de la passerelle Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Échec de l'enregistrement",
+        "description": "La demande d'accès n'a pas été approuvée à temps ou la passerelle n'a pas pu être contactée. Validez pour réessayer, puis approuvez la demande dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes."
+      },
+      "reauth_confirm": {
+        "title": "Réautoriser Jung Home",
+        "description": "La passerelle n'accepte plus le jeton d'accès enregistré. Approuvez la nouvelle demande d'accès dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes."
+      },
+      "reauth_failed": {
+        "title": "Échec de la réautorisation",
+        "description": "La demande d'accès n'a pas été approuvée à temps ou la passerelle n'a pas pu être contactée. Validez pour réessayer, puis approuvez la demande dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes."
+      },
+      "reconfigure": {
+        "title": "Reconfigurer Jung Home",
+        "description": "Mettez à jour l'adresse de votre passerelle Jung Home, par exemple après un changement de son adresse IP.",
+        "data": {
+          "host": "Hôte"
+        },
+        "data_description": {
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50 ou junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Approuvez la demande d'accès dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes."
+    },
+    "error": {
+      "invalid_host": "L'hôte n'est pas valide.",
+      "cannot_connect": "Échec de la connexion à la passerelle.",
+      "invalid_auth": "La passerelle a rejeté le mot de passe de la clé réseau.",
+      "register_failed": "L'enregistrement n'a pas abouti. Assurez-vous d'approuver la demande dans l'application."
+    },
+    "abort": {
+      "already_configured": "Cette passerelle Jung Home est déjà configurée.",
+      "reauth_successful": "La réauthentification a réussi.",
+      "reconfigure_successful": "L'adresse de la passerelle a été mise à jour."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options des volets Jung Home",
+        "description": "Sélectionnez les volets dont la position est signalée de manière inversée, comme les stores bannes. Leur position est inversée afin que la position entièrement fermée corresponde à 0 pour cent (fermé) et la position entièrement ouverte à 100 pour cent (ouvert). Laissez les volets roulants et les stores intérieurs non sélectionnés.",
+        "data": {
+          "inverted_covers": "Volets inversés (stores bannes)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Aucun volet n'a été trouvé sur cette passerelle, il n'y a donc rien à configurer."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Connexion" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Protection contre le gel"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Haut" },
+      "down": { "name": "Bas" },
+      "press": { "name": "Appui" }
+    },
+    "switch": {
+      "status_led": { "name": "LED d'état" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "La passerelle Jung Home a rejeté le jeton d'accès."
+    },
+    "cannot_connect": {
+      "message": "Erreur de communication avec la passerelle Jung Home : {error}"
+    },
+    "cannot_send": {
+      "message": "Impossible de joindre la passerelle Jung Home pour envoyer la commande ; elle est en cours de reconnexion. Réessayez dans un instant."
+    },
+    "invalid_response": {
+      "message": "La passerelle Jung Home a renvoyé une réponse inattendue."
+    },
+    "scene_not_found": {
+      "message": "La scène Jung Home {label} n'est plus disponible sur la passerelle."
+    }
+  }
+}
