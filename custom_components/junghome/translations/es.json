@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Pasarela Jung Home detectada",
+        "description": "Se ha encontrado una pasarela Jung Home en {host}. Elige cómo conectarte.",
+        "menu_options": {
+          "app_approval": "Aprobar la conexión en la aplicación Jung Home",
+          "password": "Introducir la contraseña de la clave de red de la pasarela (conecta al instante)"
+        }
+      },
+      "user": {
+        "title": "Conectar con Jung Home",
+        "description": "Normalmente la pasarela se detecta automáticamente y aparece en la página de integraciones. Si no ha sido así, elige a continuación cómo conectarte.",
+        "menu_options": {
+          "app_approval": "Aprobar la conexión en la aplicación Jung Home",
+          "password": "Introducir la contraseña de la clave de red de la pasarela (conecta al instante)"
+        }
+      },
+      "app_approval": {
+        "title": "Conectar con Jung Home",
+        "description": "Confirma o introduce la dirección de tu pasarela Jung Home. Después de continuar, aprueba la solicitud de acceso en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, el valor predeterminado junghome.local funciona en muchas redes, o puedes usar la dirección IP (por ejemplo, 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Conectar con Jung Home",
+        "description": "Confirma la dirección de la pasarela e introduce la contraseña de su clave de red para conectarte de inmediato, sin aprobar una solicitud en la aplicación. Puedes consultar la contraseña en la aplicación Jung Home.",
+        "data": {
+          "host": "Host",
+          "password": "Contraseña de la clave de red"
+        },
+        "data_description": {
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, el valor predeterminado junghome.local funciona en muchas redes, o puedes usar la dirección IP (por ejemplo, 192.168.1.50).",
+          "password": "La contraseña de la clave de red de la pasarela Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Error de registro",
+        "description": "La solicitud de acceso no se aprobó a tiempo o no se pudo contactar con la pasarela. Envía el formulario para volver a intentarlo y después aprueba la solicitud en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
+      },
+      "reauth_confirm": {
+        "title": "Volver a autorizar Jung Home",
+        "description": "La pasarela ya no acepta el token de acceso guardado. Aprueba la nueva solicitud de acceso en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
+      },
+      "reauth_failed": {
+        "title": "Error al volver a autorizar",
+        "description": "La solicitud de acceso no se aprobó a tiempo o no se pudo contactar con la pasarela. Envía el formulario para volver a intentarlo y después aprueba la solicitud en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
+      },
+      "reconfigure": {
+        "title": "Reconfigurar Jung Home",
+        "description": "Actualiza la dirección de tu pasarela Jung Home, por ejemplo después de que haya cambiado su dirección IP.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home (por ejemplo, 192.168.1.50 o junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Aprueba la solicitud de acceso en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
+    },
+    "error": {
+      "invalid_host": "El host no es válido.",
+      "cannot_connect": "No se pudo conectar con la pasarela.",
+      "invalid_auth": "La pasarela rechazó la contraseña de la clave de red.",
+      "register_failed": "El registro no se completó. Asegúrate de aprobar la solicitud en la aplicación."
+    },
+    "abort": {
+      "already_configured": "Esta pasarela Jung Home ya está configurada.",
+      "reauth_successful": "La reautenticación se realizó correctamente.",
+      "reconfigure_successful": "Se ha actualizado la dirección de la pasarela."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de persianas de Jung Home",
+        "description": "Selecciona las persianas cuya posición se comunique invertida, como los toldos. Su posición se invierte para que totalmente cerrada se indique como 0 por ciento (cerrada) y totalmente abierta como 100 por ciento (abierta). Deja sin seleccionar las persianas enrollables y las venecianas.",
+        "data": {
+          "inverted_covers": "Persianas invertidas (toldos)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "No se encontraron persianas en esta pasarela, así que no hay nada que configurar."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Conexión" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Protección antiheladas"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Arriba" },
+      "down": { "name": "Abajo" },
+      "press": { "name": "Pulsación" }
+    },
+    "switch": {
+      "status_led": { "name": "LED de estado" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "La pasarela Jung Home rechazó el token de acceso."
+    },
+    "cannot_connect": {
+      "message": "Error de comunicación con la pasarela Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "No se pudo contactar con la pasarela Jung Home para enviar el comando; se está reconectando. Vuelve a intentarlo dentro de un momento."
+    },
+    "invalid_response": {
+      "message": "La pasarela Jung Home devolvió una respuesta inesperada."
+    },
+    "scene_not_found": {
+      "message": "La escena {label} de Jung Home ya no está disponible en la pasarela."
+    }
+  }
+}
