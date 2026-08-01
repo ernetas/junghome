@@ -197,6 +197,18 @@ specifically — see the repair notice above.
 The gateway rejected the stored token, usually because it was revoked in the app
 or the gateway was factory-reset. Follow the reauth prompt to issue a new one.
 
+**A device disappeared from Home Assistant.**
+The integration removes a device once the gateway has stopped reporting it for
+ten consecutive polls (about ten minutes) — that is how a device you delete in
+the JUNG HOME app also leaves Home Assistant. A removal is logged as a warning
+naming the device, so check the log if one goes unexpectedly. If the device is
+still installed, make sure it is powered and in range of the mesh; it is re-added
+automatically once the gateway reports it again, though any custom name, area or
+`entity_id` you had set is not restored. You can also remove a stale device
+yourself from its device page (**⋮ → Delete**); Home Assistant refuses this while
+the gateway is still reporting the device, since it would simply come straight
+back.
+
 **A device you added in the app doesn't show up.**
 New devices are picked up on the next REST poll (within a minute). If it still
 doesn't appear, download diagnostics (**⋮ → Download diagnostics** on the entry)
