@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home-gateway gevonden",
+        "description": "Er is een Jung Home-gateway gevonden op {host}. Kies hoe je verbinding wilt maken.",
+        "menu_options": {
+          "app_approval": "De verbinding goedkeuren in de Jung Home-app",
+          "password": "Het netwerksleutelwachtwoord van de gateway invoeren (maakt direct verbinding)"
+        }
+      },
+      "user": {
+        "title": "Verbinding maken met Jung Home",
+        "description": "Je gateway wordt meestal automatisch gevonden en op de pagina Integraties getoond. Is dat niet gebeurd, kies dan hieronder hoe je verbinding wilt maken.",
+        "menu_options": {
+          "app_approval": "De verbinding goedkeuren in de Jung Home-app",
+          "password": "Het netwerksleutelwachtwoord van de gateway invoeren (maakt direct verbinding)"
+        }
+      },
+      "app_approval": {
+        "title": "Verbinding maken met Jung Home",
+        "description": "Bevestig het adres van je Jung Home-gateway of voer het in. Nadat je verdergaat, keur je het toegangsverzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; anders werkt de standaardwaarde junghome.local in veel netwerken, of gebruik het IP-adres (bijvoorbeeld 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Verbinding maken met Jung Home",
+        "description": "Bevestig het gateway-adres en voer het netwerksleutelwachtwoord in om direct verbinding te maken, zonder een verzoek in de app goed te keuren. Je vindt het wachtwoord in de Jung Home-app.",
+        "data": {
+          "host": "Host",
+          "password": "Netwerksleutelwachtwoord"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; anders werkt de standaardwaarde junghome.local in veel netwerken, of gebruik het IP-adres (bijvoorbeeld 192.168.1.50).",
+          "password": "Het netwerksleutelwachtwoord van de Jung Home-gateway."
+        }
+      },
+      "register_failed": {
+        "title": "Registratie mislukt",
+        "description": "Het toegangsverzoek is niet op tijd goedgekeurd of de gateway was niet bereikbaar. Verzend het formulier om het opnieuw te proberen en keur daarna het verzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken."
+      },
+      "reauth_confirm": {
+        "title": "Jung Home opnieuw autoriseren",
+        "description": "De gateway accepteert het opgeslagen toegangstoken niet meer. Keur het nieuwe toegangsverzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken."
+      },
+      "reauth_failed": {
+        "title": "Opnieuw autoriseren mislukt",
+        "description": "Het toegangsverzoek is niet op tijd goedgekeurd of de gateway was niet bereikbaar. Verzend het formulier om het opnieuw te proberen en keur daarna het verzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken."
+      },
+      "reconfigure": {
+        "title": "Jung Home opnieuw configureren",
+        "description": "Werk het adres van je Jung Home-gateway bij, bijvoorbeeld nadat het IP-adres is gewijzigd.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP-adres of hostnaam van de Jung Home-gateway (bijvoorbeeld 192.168.1.50 of junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Keur het toegangsverzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken."
+    },
+    "error": {
+      "invalid_host": "De host is ongeldig.",
+      "cannot_connect": "Verbinding maken met de gateway is mislukt.",
+      "invalid_auth": "De gateway heeft het netwerksleutelwachtwoord geweigerd.",
+      "register_failed": "De registratie is niet voltooid. Zorg ervoor dat je het verzoek in de app goedkeurt."
+    },
+    "abort": {
+      "already_configured": "Deze Jung Home-gateway is al geconfigureerd.",
+      "reauth_successful": "Opnieuw verifiëren is gelukt.",
+      "reconfigure_successful": "Het gateway-adres is bijgewerkt."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home-zonweringsopties",
+        "description": "Selecteer de zonweringen waarvan de positie omgekeerd wordt gemeld, zoals zonneschermen. Hun positie wordt omgedraaid, zodat volledig gesloten als 0 procent (gesloten) en volledig geopend als 100 procent (geopend) wordt weergegeven. Laat rolluiken en jaloezieën niet geselecteerd.",
+        "data": {
+          "inverted_covers": "Omgekeerde zonwering (zonneschermen)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Er is geen zonwering gevonden op deze gateway, dus er valt niets te configureren."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Verbinding" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Vorstbeveiliging"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Omhoog" },
+      "down": { "name": "Omlaag" },
+      "press": { "name": "Druk" }
+    },
+    "switch": {
+      "status_led": { "name": "Status-LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "De Jung Home-gateway heeft het toegangstoken geweigerd."
+    },
+    "cannot_connect": {
+      "message": "Fout bij communicatie met de Jung Home-gateway: {error}"
+    },
+    "cannot_send": {
+      "message": "De Jung Home-gateway was niet bereikbaar om de opdracht te versturen; de verbinding wordt hersteld. Probeer het zo meteen opnieuw."
+    },
+    "invalid_response": {
+      "message": "De Jung Home-gateway gaf een onverwacht antwoord."
+    },
+    "scene_not_found": {
+      "message": "De Jung Home-scène {label} is niet meer beschikbaar op de gateway."
+    }
+  }
+}

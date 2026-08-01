@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Wykryto bramkę Jung Home",
+        "description": "Znaleziono bramkę Jung Home pod adresem {host}. Wybierz sposób połączenia.",
+        "menu_options": {
+          "app_approval": "Zatwierdź połączenie w aplikacji Jung Home",
+          "password": "Wprowadź hasło klucza sieciowego bramki (łączy natychmiast)"
+        }
+      },
+      "user": {
+        "title": "Połącz z Jung Home",
+        "description": "Bramka jest zwykle wykrywana automatycznie i wyświetlana na stronie Integracje. Jeśli tak się nie stało, wybierz poniżej sposób połączenia.",
+        "menu_options": {
+          "app_approval": "Zatwierdź połączenie w aplikacji Jung Home",
+          "password": "Wprowadź hasło klucza sieciowego bramki (łączy natychmiast)"
+        }
+      },
+      "app_approval": {
+        "title": "Połącz z Jung Home",
+        "description": "Potwierdź lub wpisz adres swojej bramki Jung Home. Po przejściu dalej zatwierdź żądanie dostępu w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie domyślna wartość junghome.local działa w wielu sieciach, można też użyć adresu IP (na przykład 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Połącz z Jung Home",
+        "description": "Potwierdź adres bramki i wprowadź hasło jej klucza sieciowego, aby połączyć się natychmiast, bez zatwierdzania żądania w aplikacji. Hasło znajdziesz w aplikacji Jung Home.",
+        "data": {
+          "host": "Host",
+          "password": "Hasło klucza sieciowego"
+        },
+        "data_description": {
+          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie domyślna wartość junghome.local działa w wielu sieciach, można też użyć adresu IP (na przykład 192.168.1.50).",
+          "password": "Hasło klucza sieciowego bramki Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Rejestracja nie powiodła się",
+        "description": "Żądanie dostępu nie zostało zatwierdzone na czas lub nie udało się połączyć z bramką. Wyślij ponownie, aby spróbować jeszcze raz, a następnie zatwierdź żądanie w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania."
+      },
+      "reauth_confirm": {
+        "title": "Ponowna autoryzacja Jung Home",
+        "description": "Bramka nie akceptuje już zapisanego tokena dostępu. Zatwierdź nowe żądanie dostępu w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania."
+      },
+      "reauth_failed": {
+        "title": "Ponowna autoryzacja nie powiodła się",
+        "description": "Żądanie dostępu nie zostało zatwierdzone na czas lub nie udało się połączyć z bramką. Wyślij ponownie, aby spróbować jeszcze raz, a następnie zatwierdź żądanie w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania."
+      },
+      "reconfigure": {
+        "title": "Ponowna konfiguracja Jung Home",
+        "description": "Zaktualizuj adres swojej bramki Jung Home, na przykład po zmianie jej adresu IP.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Adres IP lub nazwa hosta bramki Jung Home (na przykład 192.168.1.50 lub junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Zatwierdź żądanie dostępu w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania."
+    },
+    "error": {
+      "invalid_host": "Host jest nieprawidłowy.",
+      "cannot_connect": "Nie udało się połączyć z bramką.",
+      "invalid_auth": "Bramka odrzuciła hasło klucza sieciowego.",
+      "register_failed": "Rejestracja nie została ukończona. Upewnij się, że zatwierdzasz żądanie w aplikacji."
+    },
+    "abort": {
+      "already_configured": "Ta bramka Jung Home jest już skonfigurowana.",
+      "reauth_successful": "Ponowne uwierzytelnienie powiodło się.",
+      "reconfigure_successful": "Adres bramki został zaktualizowany."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje rolet Jung Home",
+        "description": "Zaznacz rolety, których pozycja jest raportowana odwrotnie, na przykład markizy. Ich pozycja zostanie odwrócona, tak aby całkowicie zamknięta była pokazywana jako 0 procent (zamknięta), a całkowicie otwarta jako 100 procent (otwarta). Rolet zewnętrznych i żaluzji nie zaznaczaj.",
+        "data": {
+          "inverted_covers": "Rolety odwrócone (markizy)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Na tej bramce nie znaleziono żadnych rolet, więc nie ma nic do skonfigurowania."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Połączenie" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Ochrona przed zamarzaniem"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Góra" },
+      "down": { "name": "Dół" },
+      "press": { "name": "Naciśnięcie" }
+    },
+    "switch": {
+      "status_led": { "name": "Dioda LED stanu" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Bramka Jung Home odrzuciła token dostępu."
+    },
+    "cannot_connect": {
+      "message": "Błąd komunikacji z bramką Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "Nie udało się połączyć z bramką Jung Home, aby wysłać polecenie; trwa ponowne łączenie. Spróbuj ponownie za chwilę."
+    },
+    "invalid_response": {
+      "message": "Bramka Jung Home zwróciła nieoczekiwaną odpowiedź."
+    },
+    "scene_not_found": {
+      "message": "Scena Jung Home {label} nie jest już dostępna na bramce."
+    }
+  }
+}

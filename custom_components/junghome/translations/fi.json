@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home -yhdyskäytävä löytyi",
+        "description": "Osoitteesta {host} löytyi Jung Home -yhdyskäytävä. Valitse, miten haluat yhdistää.",
+        "menu_options": {
+          "app_approval": "Hyväksy yhteys Jung Home -sovelluksessa",
+          "password": "Anna yhdyskäytävän verkkoavaimen salasana (yhdistää heti)"
+        }
+      },
+      "user": {
+        "title": "Yhdistä Jung Homeen",
+        "description": "Yhdyskäytävä löytyy yleensä automaattisesti ja näkyy Integraatiot-sivulla. Jos näin ei käynyt, valitse alta, miten haluat yhdistää.",
+        "menu_options": {
+          "app_approval": "Hyväksy yhteys Jung Home -sovelluksessa",
+          "password": "Anna yhdyskäytävän verkkoavaimen salasana (yhdistää heti)"
+        }
+      },
+      "app_approval": {
+        "title": "Yhdistä Jung Homeen",
+        "description": "Vahvista tai anna Jung Home -yhdyskäytäväsi osoite. Kun jatkat, hyväksy käyttöoikeuspyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt.",
+        "data": {
+          "host": "Isäntä"
+        },
+        "data_description": {
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Yhdistä Jung Homeen",
+        "description": "Vahvista yhdyskäytävän osoite ja anna sen verkkoavaimen salasana, niin yhteys muodostuu heti ilman pyynnön hyväksymistä sovelluksessa. Löydät salasanan Jung Home -sovelluksesta.",
+        "data": {
+          "host": "Isäntä",
+          "password": "Verkkoavaimen salasana"
+        },
+        "data_description": {
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50).",
+          "password": "Jung Home -yhdyskäytävän verkkoavaimen salasana."
+        }
+      },
+      "register_failed": {
+        "title": "Rekisteröinti epäonnistui",
+        "description": "Käyttöoikeuspyyntöä ei hyväksytty ajoissa tai yhdyskäytävään ei saatu yhteyttä. Lähetä lomake yrittääksesi uudelleen ja hyväksy sitten pyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt."
+      },
+      "reauth_confirm": {
+        "title": "Valtuuta Jung Home uudelleen",
+        "description": "Yhdyskäytävä ei enää hyväksy tallennettua käyttöoikeustunnusta. Hyväksy uusi käyttöoikeuspyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt."
+      },
+      "reauth_failed": {
+        "title": "Uudelleenvaltuutus epäonnistui",
+        "description": "Käyttöoikeuspyyntöä ei hyväksytty ajoissa tai yhdyskäytävään ei saatu yhteyttä. Lähetä lomake yrittääksesi uudelleen ja hyväksy sitten pyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt."
+      },
+      "reconfigure": {
+        "title": "Määritä Jung Home uudelleen",
+        "description": "Päivitä Jung Home -yhdyskäytäväsi osoite, esimerkiksi sen IP-osoitteen muututtua.",
+        "data": {
+          "host": "Isäntä"
+        },
+        "data_description": {
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50 tai junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Hyväksy käyttöoikeuspyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt."
+    },
+    "error": {
+      "invalid_host": "Isäntä ei kelpaa.",
+      "cannot_connect": "Yhdyskäytävään ei saatu yhteyttä.",
+      "invalid_auth": "Yhdyskäytävä hylkäsi verkkoavaimen salasanan.",
+      "register_failed": "Rekisteröintiä ei viety loppuun. Varmista, että hyväksyt pyynnön sovelluksessa."
+    },
+    "abort": {
+      "already_configured": "Tämä Jung Home -yhdyskäytävä on jo määritetty.",
+      "reauth_successful": "Uudelleentodennus onnistui.",
+      "reconfigure_successful": "Yhdyskäytävän osoite päivitettiin."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home -verhojen asetukset",
+        "description": "Valitse verhot, joiden asento raportoidaan käänteisenä, kuten markiisit. Niiden asento käännetään, joten täysin suljettu näkyy arvona 0 prosenttia (suljettu) ja täysin avoin arvona 100 prosenttia (avoin). Jätä rullaverhot ja sälekaihtimet valitsematta.",
+        "data": {
+          "inverted_covers": "Käänteiset verhot (markiisit)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Tästä yhdyskäytävästä ei löytynyt verhoja, joten määritettävää ei ole."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Yhteys" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Jäätymissuoja"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Ylös" },
+      "down": { "name": "Alas" },
+      "press": { "name": "Painallus" }
+    },
+    "switch": {
+      "status_led": { "name": "Tilan LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home -yhdyskäytävä hylkäsi käyttöoikeustunnuksen."
+    },
+    "cannot_connect": {
+      "message": "Virhe viestinnässä Jung Home -yhdyskäytävän kanssa: {error}"
+    },
+    "cannot_send": {
+      "message": "Jung Home -yhdyskäytävään ei saatu yhteyttä komennon lähettämiseksi; se yhdistää uudelleen. Yritä hetken kuluttua uudelleen."
+    },
+    "invalid_response": {
+      "message": "Jung Home -yhdyskäytävä palautti odottamattoman vastauksen."
+    },
+    "scene_not_found": {
+      "message": "Jung Home -skene {label} ei ole enää käytettävissä yhdyskäytävässä."
+    }
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Gateway Jung Home descoperit",
+        "description": "A fost găsit un gateway Jung Home la {host}. Alege modul de conectare.",
+        "menu_options": {
+          "app_approval": "Aprobă conexiunea în aplicația Jung Home",
+          "password": "Introdu parola cheii de rețea a gateway-ului (se conectează imediat)"
+        }
+      },
+      "user": {
+        "title": "Conectare la Jung Home",
+        "description": "De obicei gateway-ul este găsit automat și afișat în pagina Integrări. Dacă nu s-a întâmplat asta, alege mai jos modul de conectare.",
+        "menu_options": {
+          "app_approval": "Aprobă conexiunea în aplicația Jung Home",
+          "password": "Introdu parola cheii de rețea a gateway-ului (se conectează imediat)"
+        }
+      },
+      "app_approval": {
+        "title": "Conectare la Jung Home",
+        "description": "Confirmă sau introdu adresa gateway-ului tău Jung Home. După ce continui, aprobă cererea de acces în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise.",
+        "data": {
+          "host": "Gazdă"
+        },
+        "data_description": {
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, valoarea implicită junghome.local funcționează în multe rețele sau folosește adresa IP (de exemplu 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Conectare la Jung Home",
+        "description": "Confirmă adresa gateway-ului și introdu parola cheii sale de rețea pentru a te conecta imediat, fără să aprobi o cerere în aplicație. Găsești parola în aplicația Jung Home.",
+        "data": {
+          "host": "Gazdă",
+          "password": "Parola cheii de rețea"
+        },
+        "data_description": {
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, valoarea implicită junghome.local funcționează în multe rețele sau folosește adresa IP (de exemplu 192.168.1.50).",
+          "password": "Parola cheii de rețea a gateway-ului Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Înregistrare eșuată",
+        "description": "Cererea de acces nu a fost aprobată la timp sau gateway-ul nu a putut fi contactat. Trimite din nou pentru a reîncerca, apoi aprobă cererea în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise."
+      },
+      "reauth_confirm": {
+        "title": "Reautorizează Jung Home",
+        "description": "Gateway-ul nu mai acceptă tokenul de acces stocat. Aprobă noua cerere de acces în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise."
+      },
+      "reauth_failed": {
+        "title": "Reautorizare eșuată",
+        "description": "Cererea de acces nu a fost aprobată la timp sau gateway-ul nu a putut fi contactat. Trimite din nou pentru a reîncerca, apoi aprobă cererea în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise."
+      },
+      "reconfigure": {
+        "title": "Reconfigurează Jung Home",
+        "description": "Actualizează adresa gateway-ului tău Jung Home, de exemplu după ce adresa sa IP s-a schimbat.",
+        "data": {
+          "host": "Gazdă"
+        },
+        "data_description": {
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home (de exemplu 192.168.1.50 sau junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Aprobă cererea de acces în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise."
+    },
+    "error": {
+      "invalid_host": "Gazda nu este validă.",
+      "cannot_connect": "Conectarea la gateway a eșuat.",
+      "invalid_auth": "Gateway-ul a respins parola cheii de rețea.",
+      "register_failed": "Înregistrarea nu a fost finalizată. Asigură-te că aprobi cererea în aplicație."
+    },
+    "abort": {
+      "already_configured": "Acest gateway Jung Home este deja configurat.",
+      "reauth_successful": "Reautentificarea a reușit.",
+      "reconfigure_successful": "Adresa gateway-ului a fost actualizată."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni pentru jaluzelele Jung Home",
+        "description": "Selectează jaluzelele a căror poziție este raportată inversat, cum ar fi copertinele. Poziția lor este inversată, astfel încât complet închis să apară ca 0 la sută (închis), iar complet deschis ca 100 la sută (deschis). Lasă rulourile și jaluzelele interioare neselectate.",
+        "data": {
+          "inverted_covers": "Jaluzele inversate (copertine)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Nu au fost găsite jaluzele pe acest gateway, așadar nu este nimic de configurat."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Conexiune" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Protecție împotriva înghețului"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Sus" },
+      "down": { "name": "Jos" },
+      "press": { "name": "Apăsare" }
+    },
+    "switch": {
+      "status_led": { "name": "LED de stare" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Gateway-ul Jung Home a respins tokenul de acces."
+    },
+    "cannot_connect": {
+      "message": "Eroare la comunicarea cu gateway-ul Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "Gateway-ul Jung Home nu a putut fi contactat pentru a trimite comanda; se reconectează. Încearcă din nou peste o clipă."
+    },
+    "invalid_response": {
+      "message": "Gateway-ul Jung Home a returnat un răspuns neașteptat."
+    },
+    "scene_not_found": {
+      "message": "Scena Jung Home {label} nu mai este disponibilă pe gateway."
+    }
+  }
+}

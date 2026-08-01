@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Gateway Jung Home rilevato",
+        "description": "È stato trovato un gateway Jung Home su {host}. Scegli come connetterti.",
+        "menu_options": {
+          "app_approval": "Approva la connessione nell'app Jung Home",
+          "password": "Inserisci la password della chiave di rete del gateway (connette immediatamente)"
+        }
+      },
+      "user": {
+        "title": "Connettiti a Jung Home",
+        "description": "Di solito il gateway viene rilevato automaticamente e mostrato nella pagina Integrazioni. Se non è successo, scegli qui sotto come connetterti.",
+        "menu_options": {
+          "app_approval": "Approva la connessione nell'app Jung Home",
+          "password": "Inserisci la password della chiave di rete del gateway (connette immediatamente)"
+        }
+      },
+      "app_approval": {
+        "title": "Connettiti a Jung Home",
+        "description": "Conferma o inserisci l'indirizzo del tuo gateway Jung Home. Dopo aver proseguito, approva la richiesta di accesso nell'app Jung Home in Impostazioni, Gateway, Autorizzazioni di accesso, Richieste aperte.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti il valore predefinito junghome.local funziona su molte reti, oppure usa l'indirizzo IP (ad esempio 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Connettiti a Jung Home",
+        "description": "Conferma l'indirizzo del gateway e inserisci la password della sua chiave di rete per connetterti subito, senza approvare una richiesta nell'app. Puoi trovare la password nell'app Jung Home.",
+        "data": {
+          "host": "Host",
+          "password": "Password della chiave di rete"
+        },
+        "data_description": {
+          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti il valore predefinito junghome.local funziona su molte reti, oppure usa l'indirizzo IP (ad esempio 192.168.1.50).",
+          "password": "La password della chiave di rete del gateway Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Registrazione non riuscita",
+        "description": "La richiesta di accesso non è stata approvata in tempo oppure il gateway non è raggiungibile. Invia di nuovo per riprovare, quindi approva la richiesta nell'app Jung Home in Impostazioni, Gateway, Autorizzazioni di accesso, Richieste aperte."
+      },
+      "reauth_confirm": {
+        "title": "Autorizza di nuovo Jung Home",
+        "description": "Il gateway non accetta più il token di accesso memorizzato. Approva la nuova richiesta di accesso nell'app Jung Home in Impostazioni, Gateway, Autorizzazioni di accesso, Richieste aperte."
+      },
+      "reauth_failed": {
+        "title": "Nuova autorizzazione non riuscita",
+        "description": "La richiesta di accesso non è stata approvata in tempo oppure il gateway non è raggiungibile. Invia di nuovo per riprovare, quindi approva la richiesta nell'app Jung Home in Impostazioni, Gateway, Autorizzazioni di accesso, Richieste aperte."
+      },
+      "reconfigure": {
+        "title": "Riconfigura Jung Home",
+        "description": "Aggiorna l'indirizzo del tuo gateway Jung Home, ad esempio dopo che il suo indirizzo IP è cambiato.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "Indirizzo IP o nome host del gateway Jung Home (ad esempio 192.168.1.50 o junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Approva la richiesta di accesso nell'app Jung Home in Impostazioni, Gateway, Autorizzazioni di accesso, Richieste aperte."
+    },
+    "error": {
+      "invalid_host": "L'host non è valido.",
+      "cannot_connect": "Connessione al gateway non riuscita.",
+      "invalid_auth": "Il gateway ha rifiutato la password della chiave di rete.",
+      "register_failed": "La registrazione non è stata completata. Assicurati di approvare la richiesta nell'app."
+    },
+    "abort": {
+      "already_configured": "Questo gateway Jung Home è già configurato.",
+      "reauth_successful": "La nuova autenticazione è riuscita.",
+      "reconfigure_successful": "L'indirizzo del gateway è stato aggiornato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni tapparelle Jung Home",
+        "description": "Seleziona le tapparelle la cui posizione viene segnalata invertita, come le tende da sole. La loro posizione viene invertita in modo che completamente chiusa risulti 0 percento (chiusa) e completamente aperta 100 percento (aperta). Lascia deselezionate le tapparelle avvolgibili e le veneziane.",
+        "data": {
+          "inverted_covers": "Tapparelle invertite (tende da sole)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Non è stata trovata alcuna tapparella su questo gateway, quindi non c'è nulla da configurare."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Connessione" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Protezione antigelo"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Su" },
+      "down": { "name": "Giù" },
+      "press": { "name": "Pressione" }
+    },
+    "switch": {
+      "status_led": { "name": "LED di stato" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Il gateway Jung Home ha rifiutato il token di accesso."
+    },
+    "cannot_connect": {
+      "message": "Errore di comunicazione con il gateway Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "Non è stato possibile raggiungere il gateway Jung Home per inviare il comando; è in fase di riconnessione. Riprova tra un momento."
+    },
+    "invalid_response": {
+      "message": "Il gateway Jung Home ha restituito una risposta imprevista."
+    },
+    "scene_not_found": {
+      "message": "La scena Jung Home {label} non è più disponibile sul gateway."
+    }
+  }
+}
