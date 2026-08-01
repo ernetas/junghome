@@ -1,13 +1,18 @@
 """Shared fixtures for the Jung Home test suite."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from copy import deepcopy
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.syrupy import (
+    HomeAssistantSnapshotExtension,
+)
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
@@ -194,6 +199,18 @@ DEVICES = [
 ]
 
 
+# A deep copy of ``DEVICES`` taken at import time, before any test has run.
+#
+# ``DEVICES`` is handed to the coordinator by reference, and the coordinator
+# merges WebSocket pushes straight into the device dicts it was given — so a
+# test that turns a light on or drives a blind mutates the shared list for every
+# test that follows it. That is harmless for tests asserting on structure (a
+# device count, a slug), but the snapshot tests pin *values*, so they would
+# otherwise pass or fail depending on execution order. Snapshot setups start
+# from this pristine copy instead.
+PRISTINE_DEVICES: list[dict] = deepcopy(DEVICES)
+
+
 async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
     """Stand in for the real WebSocket: present a fake socket, then park."""
     ws = AsyncMock()
@@ -206,6 +223,81 @@ async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
     # ws_connected was still False and would otherwise stay unavailable.
     self.async_update_listeners()
     await asyncio.Event().wait()
+
+
+@pytest.fixture
+def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    """Return the snapshot fixture with Home Assistant's syrupy extension.
+
+    Both ``syrupy`` and ``pytest_homeassistant_custom_component`` ship a plugin
+    fixture named ``snapshot``, and which one wins depends on plugin
+    registration order — which is not stable across machines (it bit CI on this
+    very PR: locally the Home Assistant one won, on the runner syrupy's plain
+    one did, so the extension's ``snapshots/`` directory was never consulted and
+    every snapshot read as missing). Re-applying the extension from a conftest
+    fixture settles it: conftest fixtures always take precedence over plugin
+    fixtures, and re-wrapping an already-extended assertion is a no-op. This
+    mirrors what Home Assistant core does in its own ``tests/conftest.py``.
+    """
+    return snapshot.use_extension(HomeAssistantSnapshotExtension)
+
+
+@pytest.fixture
+async def init_platform(
+    hass: HomeAssistant,
+) -> AsyncGenerator[Callable[..., Awaitable[MockConfigEntry]]]:
+    """Return a factory that sets the integration up with a single platform.
+
+    ``snapshot_platform`` refuses to snapshot a config entry that owns entities
+    from more than one domain, so the snapshot tests load exactly one platform
+    at a time by patching ``PLATFORMS`` for the duration of setup. Everything
+    else (gateway devices, the faked WebSocket) matches ``init_integration``, so
+    the snapshotted entities are the ones the rest of the suite exercises.
+
+    The factory is awaited by the test and returns the entry; every entry it
+    created is unloaded on teardown, with the coordinator patches still in place
+    so the unload never reaches the real gateway.
+
+    ``devices`` overrides the polled device list for callers that need a device
+    ``PRISTINE_DEVICES`` does not carry (the presence detector, say), without
+    perturbing the shared fixture every other test asserts against. Either way
+    the list is deep-copied before the coordinator sees it, so the values a
+    snapshot pins never depend on what an earlier test pushed.
+    """
+    entries: list[MockConfigEntry] = []
+    fetch_devices = AsyncMock(return_value=PRISTINE_DEVICES)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch_devices
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+
+        async def _setup(
+            platform: Platform, devices: list[dict] | None = None
+        ) -> MockConfigEntry:
+            fetch_devices.return_value = deepcopy(
+                PRISTINE_DEVICES if devices is None else devices
+            )
+            entry = MockConfigEntry(
+                domain=DOMAIN,
+                unique_id="1.2.3.4",
+                data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+            )
+            entry.add_to_hass(hass)
+            with patch("custom_components.junghome.PLATFORMS", [platform]):
+                await hass.config_entries.async_setup(entry.entry_id)
+                await hass.async_block_till_done()
+            entries.append(entry)
+            return entry
+
+        yield _setup
+
+        for entry in entries:
+            await hass.config_entries.async_unload(entry.entry_id)
+            await hass.async_block_till_done()
 
 
 @pytest.fixture

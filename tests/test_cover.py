@@ -3,10 +3,15 @@
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    snapshot_platform,
+)
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
@@ -297,3 +302,20 @@ async def test_cover_set_position_is_optimistic(
             blocking=True,
         )
     assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 25
+
+
+async def test_all_cover_entities(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    snapshot: SnapshotAssertion,
+    init_platform,
+) -> None:
+    """Snapshot every cover entity: its registry entry (unique_id) and state.
+
+    Identity here is label-derived (``stable_unique_id``), so a change to the
+    slugging would silently re-key every entity. The committed ``.ambr`` pins
+    the unique_ids alongside the state and attributes each platform publishes,
+    turning that into a visible diff.
+    """
+    entry = await init_platform(Platform.COVER)
+    await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)

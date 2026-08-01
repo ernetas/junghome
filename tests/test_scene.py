@@ -3,10 +3,15 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    snapshot_platform,
+)
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
@@ -98,3 +103,33 @@ async def test_scene_reresolves_id_after_firmware_change(
             "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
         )
     assert act.call_args.args[0] == "new"
+
+
+async def test_all_scene_entities(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    snapshot: SnapshotAssertion,
+    init_platform,
+) -> None:
+    """Snapshot every scene entity: its registry entry (unique_id) and state.
+
+    Identity here is label-derived (``_scene_slug``), so a change to the
+    slugging would silently re-key every entity. The committed ``.ambr`` pins
+    the unique_ids alongside the state and attributes the platform publishes,
+    turning that into a visible diff.
+    """
+    entry = await init_platform(Platform.SCENE)
+    # Scenes have no backing device, so unlike every other platform they don't
+    # come from the polled device list: they only exist once the gateway has
+    # broadcast its scene list. Push one before snapshotting.
+    entry.runtime_data._handle_websocket_message(
+        {
+            "type": "scenes",
+            "data": [
+                {"id": "idscene1", "label": "Movie Night"},
+                {"id": "idscene2", "label": "Good Morning"},
+            ],
+        }
+    )
+    await hass.async_block_till_done()
+    await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
