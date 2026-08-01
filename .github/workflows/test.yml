@@ -1,6 +1,8 @@
 name: Tests
 
 on:
+  # Callable so the release workflow can gate on the exact tagged commit.
+  workflow_call:
   push:
     branches:
       - "main"

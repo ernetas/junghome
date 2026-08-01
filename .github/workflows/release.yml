@@ -7,7 +7,11 @@ name: Release
 #   2. git tag vX.Y.Z && git push origin vX.Y.Z
 #
 # This workflow fails if the tag doesn't match the manifest version, to keep
-# them in sync.
+# them in sync, and it re-runs lint, tests and hassfest/HACS validation against
+# the tagged commit before publishing anything. `test.yml` and friends only
+# trigger on branch pushes and pull requests, so a tag ran *none* of them: a tag
+# pushed alongside its commit could publish to every HACS user before CI on main
+# had finished, or even after it had failed.
 #
 # A plain X.Y.Z tag is a normal release. Anything with a suffix (e.g. 1.1.0b1,
 # 1.1.0-rc1) is published as a GitHub *pre-release*, which HACS hides from users
@@ -19,12 +23,23 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
+  # Gate: the same checks main runs, but against the tag. Called workflows run at
+  # the caller's ref, so these validate exactly what is about to be published.
+  lint:
+    uses: ./.github/workflows/lint.yml
+  test:
+    uses: ./.github/workflows/test.yml
+  validate:
+    uses: ./.github/workflows/validate.yml
+
   release:
+    needs: [lint, test, validate]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

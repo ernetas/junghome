@@ -1,6 +1,8 @@
 name: Validate
 
 on:
+  # Callable so the release workflow can gate on the exact tagged commit.
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron:  "0 0 * * *"
