@@ -9,6 +9,10 @@ import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.syrupy import (
+    HomeAssistantSnapshotExtension,
+)
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
@@ -219,6 +223,23 @@ async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
     # ws_connected was still False and would otherwise stay unavailable.
     self.async_update_listeners()
     await asyncio.Event().wait()
+
+
+@pytest.fixture
+def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    """Return the snapshot fixture with Home Assistant's syrupy extension.
+
+    Both ``syrupy`` and ``pytest_homeassistant_custom_component`` ship a plugin
+    fixture named ``snapshot``, and which one wins depends on plugin
+    registration order — which is not stable across machines (it bit CI on this
+    very PR: locally the Home Assistant one won, on the runner syrupy's plain
+    one did, so the extension's ``snapshots/`` directory was never consulted and
+    every snapshot read as missing). Re-applying the extension from a conftest
+    fixture settles it: conftest fixtures always take precedence over plugin
+    fixtures, and re-wrapping an already-extended assertion is a no-op. This
+    mirrors what Home Assistant core does in its own ``tests/conftest.py``.
+    """
+    return snapshot.use_extension(HomeAssistantSnapshotExtension)
 
 
 @pytest.fixture
