@@ -13,7 +13,11 @@ from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from custom_components.junghome.light import JungHomeLight
+from custom_components.junghome.light import (
+    DEFAULT_MAX_KELVIN,
+    DEFAULT_MIN_KELVIN,
+    JungHomeLight,
+)
 
 
 def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -356,10 +360,17 @@ async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) 
     )
 
 
-async def test_light_uses_gateway_advertised_color_temp_range(
+async def test_light_ignores_any_gateway_advertised_color_temp_range(
     hass: HomeAssistant,
 ) -> None:
-    """The range the gateway advertises for the device's group wins over defaults."""
+    """A group range never reaches the entity — the module defaults are it.
+
+    The coordinator can parse `color_temperature_range` off a group, but no
+    captured firmware sends that field and consuming it is unresolved (asymmetric
+    clamping, group-vs-fixture semantics). This pins that the parser stays
+    disconnected, so wiring it up has to be a deliberate change with a capture
+    behind it rather than something that drifts in.
+    """
     coordinator = _bare_coordinator(hass)
     coordinator.groups = [
         {
@@ -368,17 +379,21 @@ async def test_light_uses_gateway_advertised_color_temp_range(
             "color_temperature_range": {"min": 2700, "max": 4000},
         }
     ]
-    light = _color_light(coordinator, parent_groups=["g1"])
-    assert light.min_color_temp_kelvin == 2700
-    assert light.max_color_temp_kelvin == 4000
-    # A read inside the advertised range is reported as-is.
-    assert light.color_temp_kelvin == 3000
+    # The coordinator does resolve it...
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d1", "parent_groups": ["g1"]}
+    ) == (2700, 4000)
+    # ...but the light is unaffected, and does not clamp a read into it.
+    light = _color_light(coordinator, parent_groups=["g1"], color_temp="6500")
+    assert light.min_color_temp_kelvin == 2000
+    assert light.max_color_temp_kelvin == 6500
+    assert light.color_temp_kelvin == 6500
 
 
-async def test_light_color_temp_range_falls_back_to_defaults(
+async def test_light_color_temp_range_uses_module_defaults(
     hass: HomeAssistant,
 ) -> None:
-    """A missing or malformed advertised range leaves the module defaults in place."""
+    """Every group shape leaves the module defaults in place, valid or not."""
     coordinator = _bare_coordinator(hass)
     for groups in (
         [],  # no groups known yet
@@ -386,31 +401,30 @@ async def test_light_color_temp_range_falls_back_to_defaults(
         [{"id": "g1", "color_temperature_range": "2700-4000"}],  # garbage
         [{"id": "g1", "color_temperature_range": {"min": 4000, "max": 2700}}],
         [{"id": "g1", "color_temperature_range": {"min": 4000, "max": 4000}}],
+        [{"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}],  # valid
     ):
         coordinator.groups = groups
         light = _color_light(coordinator, parent_groups=["g1"])
-        assert light.min_color_temp_kelvin == 2000, groups
-        assert light.max_color_temp_kelvin == 6500, groups
+        assert light.min_color_temp_kelvin == DEFAULT_MIN_KELVIN, groups
+        assert light.max_color_temp_kelvin == DEFAULT_MAX_KELVIN, groups
     # A device in no group at all also keeps the defaults.
     light = _color_light(coordinator)
-    assert (light.min_color_temp_kelvin, light.max_color_temp_kelvin) == (2000, 6500)
+    assert (light.min_color_temp_kelvin, light.max_color_temp_kelvin) == (
+        DEFAULT_MIN_KELVIN,
+        DEFAULT_MAX_KELVIN,
+    )
 
 
-async def test_light_clamps_reads_to_the_gateway_range(hass: HomeAssistant) -> None:
-    """Reads clamp to the resolved range, not to the module constants."""
+async def test_light_clamps_reads_to_the_module_defaults(hass: HomeAssistant) -> None:
+    """Reads clamp to the module defaults, which is the only range in play."""
     coordinator = _bare_coordinator(hass)
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}
-    ]
-    # The initial read happens in __init__, so the range must already be resolved:
-    # 6500 K sits inside the module defaults but above this fixture's 4000 K.
-    light = _color_light(coordinator, parent_groups=["g1"], color_temp="6500")
-    assert light.color_temp_kelvin == 4000
+    light = _color_light(coordinator, color_temp="9000")
+    assert light.color_temp_kelvin == DEFAULT_MAX_KELVIN
     assert (
         light._get_color_temp_from_datapoint(
-            {"id": "x", "values": [{"key": "color_temperature", "value": "2000"}]}
+            {"id": "x", "values": [{"key": "color_temperature", "value": "1000"}]}
         )
-        == 2700
+        == DEFAULT_MIN_KELVIN
     )
     assert (
         light._get_color_temp_from_datapoint(

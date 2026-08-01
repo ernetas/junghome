@@ -66,20 +66,36 @@ def _as_kelvin(raw: Any) -> int | None:
 
     Gateway numerics arrive as strings as often as numbers, so ``"2700"`` and
     ``2700`` are both accepted. ``bool`` is rejected explicitly (it is an ``int``
-    subclass, and ``True`` is not a temperature), and so are the non-finite
-    floats: ``json.loads`` accepts the ``NaN`` / ``Infinity`` literals, and both
-    survive naive comparisons (every ``NaN`` comparison is False, so a NaN range
-    would pass the sanity checks below).
+    subclass, and ``True`` is not a temperature).
+
+    Every conversion below can raise on untrusted JSON, and none of them raise
+    only ``ValueError``:
+
+    - ``float()`` on a huge ``int`` raises ``OverflowError``. ``json.loads``
+      parses integer literals at arbitrary precision, so a frame carrying a
+      400-digit integer reaches this function as an ``int`` Python cannot
+      represent as a float. (A huge *string* is safe — it becomes ``inf``.)
+    - ``json.loads`` also accepts the bare ``NaN`` / ``Infinity`` literals, and
+      ``round()`` rejects both: ``ValueError`` for NaN, ``OverflowError`` for
+      infinity. ``math.isfinite`` screens them out first so the intent is
+      explicit rather than incidental.
+
+    Catching the union keeps a malformed frame a no-op here instead of an
+    exception escaping into ``JungHomeLight.__init__`` and taking down the whole
+    light platform.
     """
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         return None
     try:
         kelvin = float(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(kelvin):
         return None
-    return round(kelvin)
+    try:
+        return round(kelvin)
+    except (ValueError, OverflowError):  # pragma: no cover - isfinite guards it
+        return None
 
 
 def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
@@ -331,27 +347,52 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     def color_temp_range_for_device(self, device: Device) -> tuple[int, int] | None:
         """Return the (min, max) Kelvin range a device's groups advertise.
 
-        The gateway publishes per-group capability metadata in its ``groups``
-        broadcast, including ``color_temperature_range``. Returns None when no
-        parent group advertises a usable range, in which case the light platform
-        keeps its built-in defaults.
+        **No firmware is known to send this.** Captured ``groups`` broadcasts
+        (``disk_dump/ws-capture*/groups.json``, 14 real groups) carry only
+        ``id`` / ``address`` / ``name`` / ``related_functions`` /
+        ``function_types`` — there is no colour-temperature field, and the name
+        ``color_temperature_range`` traces back to a speculative comment rather
+        than a capture. Nothing wires this into an entity yet for exactly that
+        reason; see the light-platform note in ``light.py``.
 
-        The exact wire shape is not pinned down in the gateway docs, so both
-        plausible encodings are accepted (``{"min": .., "max": ..}`` and a
-        two-element ``[min, max]``) and anything unrecognised or implausible is
-        rejected rather than guessed at. That keeps a surprising payload a no-op
-        — the light falls back to its defaults — instead of declaring a nonsense
-        range that Home Assistant would then enforce against the user.
+        It is kept because the ``groups`` broadcast is the only plausible source
+        for a per-fixture range, and having the parser and its tests in place
+        means confirming the field later is a one-line change instead of a
+        design question. Both plausible encodings are accepted
+        (``{"min": .., "max": ..}`` and ``[min, max]``); anything unrecognised
+        or implausible is rejected rather than guessed at.
+
+        Returns the range from the **first** parent group that advertises a
+        usable one. That is arbitrary when a device sits in several groups with
+        different ranges — it depends on the gateway's array order — so any
+        future caller must decide whether first-wins, intersection or union is
+        correct for its use. It is only defensible today because nothing
+        consumes the result.
         """
         parents = device.get("parent_groups") or []
-        if not parents:
+        # Untrusted gateway JSON: a non-list `parent_groups`, or an unhashable
+        # group id, must not raise out of a caller's constructor.
+        if not isinstance(parents, (list, tuple)) or not parents:
             return None
-        by_id = {g.get("id"): g for g in self.groups}
-        for parent in parents:
-            group = by_id.get(parent)
-            if group is None:
+        by_id: dict[Any, dict[str, Any]] = {}
+        for group in self.groups:
+            if not isinstance(group, dict):
                 continue
-            parsed = _parse_color_temp_range(group.get("color_temperature_range"))
+            group_id = group.get("id")
+            if not isinstance(group_id, (str, int)) or isinstance(group_id, bool):
+                continue
+            # First occurrence wins, matching the documented order above; a
+            # plain dict comprehension would silently keep the last duplicate.
+            by_id.setdefault(group_id, group)
+        for parent in parents:
+            if not isinstance(parent, (str, int)) or isinstance(parent, bool):
+                continue
+            parent_group = by_id.get(parent)
+            if parent_group is None:
+                continue
+            parsed = _parse_color_temp_range(
+                parent_group.get("color_temperature_range")
+            )
             if parsed is not None:
                 return parsed
         return None
