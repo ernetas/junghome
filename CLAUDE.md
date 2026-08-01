@@ -202,16 +202,19 @@ Don't re-open them. The items below are what that audit actually found.
   `coordinator.py` (the reconnect loop, the message-handler catch-all, and the
   WebSocket send path). The `__init__.py` handlers this issue originally cited
   no longer exist.
+- ~~**Zeroconf host update double-reloads.**~~ **Investigated and refuted.**
+  Core's reload *and* its 2026.12.0 deprecation report both sit behind
+  `entry.state in (LOADED, SETUP_RETRY)`, and this integration's update listener
+  dispatches synchronously inside `async_update_entry` — so core re-reads the
+  state as UNLOAD_IN_PROGRESS and neither fires. `reload_on_update=False` is
+  passed anyway to state the intent, but it changes nothing today. Don't
+  re-raise this without measuring it again.
 - **Reconfigure verifies reachability but not identity** (residual of #132).
   `async_step_reconfigure` probes the new host, but never calls
   `_abort_if_unique_id_mismatch`, so a *different* gateway at a valid address is
   accepted and only surfaces later as a reauth. Keying the entry on the gateway
   serial/MAC from the mDNS TXT record would fix this, `discovery-update-info`
   for manually-added entries, and the manual-vs-discovered duplicate at once.
-- **Zeroconf host update double-reloads.** `_abort_if_unique_id_configured`
-  is called with the default `reload_on_update=True` while the entry's own
-  update listener already reloads on a host change. HA emits a deprecation
-  report for this that becomes a hard failure in **2026.12.0**.
 - **Diagnostics dump raw WebSocket frames unredacted.**
   `recent_websocket_frames` / `latest_websocket_frame_by_type` bypass
   `async_redact_data`, and `last_error` re-leaks the host that `TO_REDACT`

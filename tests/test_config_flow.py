@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
-from homeassistant.config_entries import SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -854,3 +854,88 @@ async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) ->
         result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "no_covers"
+
+
+async def test_reconfigure_reloads_an_entry_stuck_in_setup_retry(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A gateway that is failing to set up picks the new host up immediately.
+
+    The host-change update listener is registered on the last line of a
+    *successful* setup, so it does not exist in SETUP_RETRY — which is the usual
+    state to reconfigure from. Without an explicit reload the new host sat unused
+    until Home Assistant's retry timer next fired, up to 10 minutes later.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    # Setup fails, leaving the entry in SETUP_RETRY (and with no update listener).
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(side_effect=aiohttp.ClientError("unreachable")),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert not entry.update_listeners
+
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    fetch, run_ws = _no_network()
+    with (
+        fetch,
+        run_ws,
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
+    ):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    schedule_reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_zeroconf_ip_change_updates_the_stored_host(
+    hass: HomeAssistant,
+) -> None:
+    """Re-discovery at a new address updates the entry (discovery-update-info).
+
+    Covers the `updates={CONF_HOST: ...}` path on a *loaded* entry, which the
+    other zeroconf abort tests never reach.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    )
+    entry.add_to_hass(hass)
+
+    info = ZeroconfServiceInfo(
+        ip_address="9.9.9.9",
+        ip_addresses=["9.9.9.9"],
+        port=443,
+        hostname="junghome-abc.local.",
+        type="_junghome._tcp.local.",
+        name="junghome._junghome._tcp.local.",
+        properties={},
+    )
+    fetch, run_ws = _no_network()
+    with fetch, run_ws:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=info
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "9.9.9.9"

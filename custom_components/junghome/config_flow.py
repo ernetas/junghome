@@ -8,7 +8,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_TOKEN, Platform
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import AbortFlow
@@ -431,6 +431,15 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.hass.config_entries.async_update_entry(
                     entry, data={**entry.data, CONF_HOST: host}
                 )
+                # That listener only exists while the entry is loaded — it is
+                # registered on the last line of a successful `async_setup_entry`.
+                # A user reconfiguring a gateway that is failing to set up (the
+                # usual reason to reconfigure) is in SETUP_RETRY, where there is
+                # no listener, so nothing would pick the new host up until HA's
+                # retry timer next fired — up to 10 minutes later. Schedule the
+                # reload explicitly there; it also cancels the pending retry.
+                if entry.state is not ConfigEntryState.LOADED:
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
                 return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
@@ -450,7 +459,19 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         hostname = (discovery_info.hostname or "").rstrip(".") or self._host
         # Stable per-gateway id; update the stored host if its IP changed.
         await self.async_set_unique_id(hostname)
-        self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
+        # `reload_on_update=False`: the entry's own update listener
+        # (`async_reload_entry`) is what reloads on a host change, which is
+        # exactly what Home Assistant asks integrations that have a listener to
+        # do (it reports the alternative as deprecated, breaking in 2026.12.0).
+        #
+        # This is belt-and-braces rather than a bug fix: today the listener
+        # dispatches synchronously inside `async_update_entry`, so by the time
+        # core re-checks `entry.state` it already reads UNLOAD_IN_PROGRESS and
+        # core's own reload branch never runs. Saying so explicitly keeps that
+        # from depending on listener dispatch order.
+        self._abort_if_unique_id_configured(
+            updates={CONF_HOST: self._host}, reload_on_update=False
+        )
         # Also skip gateways already added manually under a different unique id.
         if any(
             entry.data.get(CONF_HOST) in (self._host, hostname)
