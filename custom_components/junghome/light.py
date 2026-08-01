@@ -19,6 +19,12 @@ _LOGGER = logging.getLogger(__name__)
 # Commands are cheap async WebSocket sends; don't serialise them.
 PARALLEL_UPDATES = 0
 
+# Fallback colour-temperature range, used only when the gateway advertises none
+# for the device's group (see JungHomeLight.__init__). Deliberately left wide:
+# the direct BT-Mesh mapping in docs/bt-mesh-direct.md is 2000-6000 K, but that
+# is one JUNG luminaire's Generic Level mapping, not a per-fixture limit, and
+# narrowing the ceiling to 6000 would cap fixtures that genuinely reach further.
+# A real per-device range should come from the gateway, not from this constant.
 DEFAULT_MIN_KELVIN = 2000
 DEFAULT_MAX_KELVIN = 6500
 
@@ -117,14 +123,31 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             if self._has_brightness
             else None
         )
+        # Prefer the range the gateway advertises for this device's group over the
+        # module defaults: a fixture whose real range is narrower than 2000-6500 K
+        # gets a slider it cannot honour, and — worse — a read outside the
+        # declared range is clamped, so the reported colour temperature silently
+        # differs from the device's. Resolve it BEFORE the first read below, which
+        # already clamps against it.
+        self._min_kelvin, self._max_kelvin = DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN
+        if self._has_color_temp:
+            advertised = coordinator.color_temp_range_for_device(device)
+            if advertised is not None:
+                self._min_kelvin, self._max_kelvin = advertised
+                _LOGGER.debug(
+                    "Light %s uses the gateway-advertised colour-temperature "
+                    "range %s-%sK",
+                    self._name,
+                    self._min_kelvin,
+                    self._max_kelvin,
+                )
+            self._attr_min_color_temp_kelvin = self._min_kelvin
+            self._attr_max_color_temp_kelvin = self._max_kelvin
         self._color_temp: int | None = (
             self._get_color_temp_from_datapoint(self._color_temp_datapoint)
             if self._has_color_temp
             else None
         )
-        if self._has_color_temp:
-            self._attr_min_color_temp_kelvin = DEFAULT_MIN_KELVIN
-            self._attr_max_color_temp_kelvin = DEFAULT_MAX_KELVIN
 
         # Color mode is fixed by the device's capabilities (datapoints), not by
         # the current value. Home Assistant requires supported_color_modes to be
@@ -248,9 +271,10 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             kelvin = int(value)
         except (TypeError, ValueError):
             return None
-        # Clamp to the advertised range so an out-of-range gateway value doesn't
-        # violate the declared min/max color-temperature contract.
-        return max(DEFAULT_MIN_KELVIN, min(DEFAULT_MAX_KELVIN, kelvin))
+        # Clamp to this light's own advertised range (gateway-supplied where
+        # available, defaults otherwise) so an out-of-range value doesn't violate
+        # the declared min/max color-temperature contract.
+        return max(self._min_kelvin, min(self._max_kelvin, kelvin))
 
     async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""
