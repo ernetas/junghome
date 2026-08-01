@@ -205,6 +205,14 @@ class _EmptyWS:
         self.closed = False
         self.close_code = 1000
 
+    def __await__(self):
+        """aiohttp's ws_connect result is awaitable as well as an async CM."""
+
+        async def _resolve() -> "Self":
+            return self
+
+        return _resolve().__await__()
+
     async def __aenter__(self) -> Self:
         return self
 
@@ -277,6 +285,14 @@ class _HoldingWS:
         self.closed = False
         self.close_code = 1000
         self.release = asyncio.Event()
+
+    def __await__(self):
+        """aiohttp's ws_connect result is awaitable as well as an async CM."""
+
+        async def _resolve() -> "Self":
+            return self
+
+        return _resolve().__await__()
 
     async def __aenter__(self) -> Self:
         return self
@@ -526,3 +542,50 @@ async def test_recovery_warns_once_and_rearms(
     coordinator._mark_session_stable(None)
 
     assert coordinator._unavailable_logged is False
+
+
+async def test_send_is_bounded_by_a_timeout(hass: HomeAssistant) -> None:
+    """A peer that stops reading must not hang the calling service call.
+
+    `send_str` awaits the transport drain and has no timeout of its own, so
+    without a bound a stalled gateway blocked the caller indefinitely.
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+
+    async def _never_returns(_data: str) -> None:
+        await asyncio.Event().wait()
+
+    ws.send_str = _never_returns
+    coordinator.websocket = ws
+
+    with patch("custom_components.junghome.coordinator.WS_SEND_TIMEOUT", 0.01):
+        with pytest.raises(HomeAssistantError):
+            await coordinator.send_websocket_message({"type": "x"})
+
+
+async def test_connect_is_bounded_by_a_timeout(hass: HomeAssistant) -> None:
+    """A gateway that accepts the socket then says nothing must not park the loop.
+
+    The shared session's default is ClientTimeout(total=300), which would leave
+    the reconnect loop stuck for five minutes with every controllable entity
+    unavailable and no failure counted.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+
+    async def _never_connects(*_args: object, **_kwargs: object) -> object:
+        await asyncio.Event().wait()
+
+    session = Mock()
+    session.ws_connect = Mock(side_effect=_never_connects)
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch("custom_components.junghome.coordinator.WS_CONNECT_TIMEOUT", 0.01),
+        pytest.raises(TimeoutError),
+    ):
+        await coordinator._run_websocket()
