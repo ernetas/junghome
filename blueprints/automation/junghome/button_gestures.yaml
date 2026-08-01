@@ -99,9 +99,19 @@ triggers:
     entity_id: !input button
 
 conditions:
+  # A press, and a *real* one. An event entity restores its last state across a
+  # restart, an entry reload and a failed poll, so the `unavailable -> <restored
+  # timestamp>` transition re-presents the stored `event_type` and looked exactly
+  # like a fresh press here — firing a gesture, and the user's lights, on its own.
+  # A button whose last recorded edge was `pressed` (which is what happens when
+  # the socket drops between press and release) did it on *every* recovery.
+  # Requiring a real previous state costs nothing: the first genuine press after
+  # a recovery still transitions timestamp -> timestamp and fires normally.
   - condition: template
     value_template: >
       {{ trigger is defined and trigger.to_state is not none
+         and trigger.from_state is not none
+         and trigger.from_state.state not in ('unavailable', 'unknown')
          and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 
 actions:
@@ -119,9 +129,13 @@ actions:
       seconds: !input hold_time
     continue_on_timeout: true
   - variables:
+      # Same guard as the trigger condition: a recovery landing inside the hold
+      # window must not be mistaken for the second press of a double-click.
       evt: >-
         {{ wait.trigger.to_state.attributes.get('event_type')
-           if (wait.trigger is not none and wait.trigger.to_state is not none)
+           if (wait.trigger is not none and wait.trigger.to_state is not none
+               and wait.trigger.from_state is not none
+               and wait.trigger.from_state.state not in ('unavailable', 'unknown'))
            else none }}
 
   - choose:
@@ -155,6 +169,8 @@ actions:
               - >
                 {{ wait.trigger is not none
                    and wait.trigger.to_state is not none
+                   and wait.trigger.from_state is not none
+                   and wait.trigger.from_state.state not in ('unavailable', 'unknown')
                    and wait.trigger.to_state.attributes.get('event_type') == 'pressed' }}
             sequence:
               - choose: []
