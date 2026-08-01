@@ -1,5 +1,8 @@
 """Numeric sensor platform tests for Jung Home."""
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -12,6 +15,7 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.sensor import JungHomeQuantity
+from tests.conftest import _fake_run_websocket
 
 
 def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -104,3 +108,92 @@ async def test_all_sensor_entities(
     """
     entry = await init_platform(Platform.SENSOR)
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+def _measurement_device(unit: str | None, label: str = "Cycle Count") -> dict:
+    """A Measurement device whose quantity carries `unit` (None = key absent)."""
+    values: list[dict] = [
+        {"key": "quantity", "value": "7"},
+        {"key": "quantity_label", "value": label},
+    ]
+    if unit is not None:
+        values.append({"key": "quantity_unit", "value": unit})
+    return {
+        "id": "idmeas1",
+        "type": "Measurement",
+        "label": "Boiler",
+        "datapoints": [{"id": "idmeas1-001", "type": "quantity", "values": values}],
+    }
+
+
+@pytest.mark.parametrize("unit", [None, "", "   "])
+async def test_quantity_without_a_unit_still_gets_a_sensor(
+    hass: HomeAssistant, unit: str | None
+) -> None:
+    """A labelled quantity with no unit must not vanish.
+
+    sensor.py required a unit, and binary_sensor only claims presence-ish labels,
+    so a unit-less quantity (a counter, an index) fell through both platforms —
+    no entity, no log. An *unrecognised* unit already became a unitless
+    measurement sensor, so refusing an absent one was inconsistent.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_measurement_device(unit)]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.boiler_cycle_count")
+    assert state is not None, "a unit-less quantity produced no entity"
+    assert state.state == "7.0"
+    # Unitless measurement: numeric with statistics, but no unit or device class.
+    assert state.attributes.get("unit_of_measurement") is None
+    assert state.attributes.get("state_class") == "measurement"
+    assert state.attributes.get("device_class") is None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_presence_labelled_quantity_still_goes_to_binary_sensor(
+    hass: HomeAssistant,
+) -> None:
+    """The split point is unchanged: presence labels are not numeric sensors."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.5",
+        data={CONF_HOST: "1.2.3.5", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    device = _measurement_device(None, label="Presence Detected")
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[device]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.boiler_presence_detected") is None
+    assert hass.states.get("binary_sensor.boiler_presence_detected") is not None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
