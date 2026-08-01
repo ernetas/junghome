@@ -1,6 +1,7 @@
 """Integration setup / entity / lifecycle tests for Jung Home."""
 
 import copy
+import json
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -921,6 +922,91 @@ def test_parse_color_temp_range_rejects_bad_payloads() -> None:
         [2000, 4000, 6500],
     ):
         assert _parse_color_temp_range(raw) is None, raw
+
+
+def test_parse_color_temp_range_survives_unrepresentable_numbers() -> None:
+    """A huge JSON integer is rejected, not raised on.
+
+    `json.loads` parses integer literals at arbitrary precision, so a frame can
+    hand us an `int` that `float()` cannot represent — which raises
+    `OverflowError`, not `ValueError`. This escaped the parser and propagated out
+    of `JungHomeLight.__init__`, so a single malformed frame removed every light
+    entity while the config entry still reported itself loaded.
+    """
+    huge = json.loads("9" * 400)  # an int, not a float
+    assert isinstance(huge, int)
+    with pytest.raises(OverflowError):
+        float(huge)
+    for raw in (
+        {"min": 2700, "max": huge},
+        {"min": huge, "max": 6500},
+        [huge, 6500],
+        [2700, huge],
+        {"min": -huge, "max": huge},
+    ):
+        assert _parse_color_temp_range(raw) is None, raw
+    # A huge *string* is representable (it becomes inf) and is rejected by the
+    # finiteness guard instead.
+    assert _parse_color_temp_range({"min": 2700, "max": "9" * 400}) is None
+
+
+def test_color_temp_range_for_device_survives_malformed_groups(
+    hass: HomeAssistant,
+) -> None:
+    """Non-scalar ids and a non-list parent_groups are rejected, not raised on.
+
+    Both would otherwise raise `TypeError` out of a constructor: an unhashable
+    id blows up the lookup dict, and a non-iterable `parent_groups` blows up the
+    loop.
+    """
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
+    )
+    good = {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}
+    coordinator.groups = [good]
+    for device in (
+        {"id": "d", "parent_groups": 5},  # not iterable
+        {"id": "d", "parent_groups": "g1"},  # a bare string, not a list
+        {"id": "d", "parent_groups": [{"id": "g1"}]},  # unhashable member
+        {"id": "d", "parent_groups": [["g1"]]},
+        {"id": "d", "parent_groups": [None]},
+    ):
+        assert coordinator.color_temp_range_for_device(device) is None, device
+    # Unhashable / malformed group entries are skipped rather than raising.
+    coordinator.groups = [{"id": ["g1"]}, "not a dict", None, good]  # type: ignore[list-item]
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g1"]}
+    ) == (2700, 4000)
+
+
+def test_color_temp_range_for_device_first_group_wins(hass: HomeAssistant) -> None:
+    """When two parent groups disagree, the first in `parent_groups` wins.
+
+    Order-dependent by construction, which is only tolerable because nothing
+    consumes the result yet. Pinned so a future caller finds the behaviour
+    documented rather than discovering it.
+    """
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
+    )
+    coordinator.groups = [
+        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
+        {"id": "g2", "color_temperature_range": {"min": 2200, "max": 6500}},
+    ]
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g1", "g2"]}
+    ) == (2700, 4000)
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g2", "g1"]}
+    ) == (2200, 6500)
+    # Duplicate ids resolve to the first occurrence, matching the docstring.
+    coordinator.groups = [
+        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
+        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 6500}},
+    ]
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g1"]}
+    ) == (2700, 4000)
 
 
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
