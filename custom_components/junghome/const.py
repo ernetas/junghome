@@ -198,6 +198,27 @@ def device_slug(device: Device) -> str:
     return "jung"  # pragma: no cover - "jung" always slugs to itself; unreachable
 
 
+def duplicate_slugs(devices: list[Device]) -> dict[str, list[str]]:
+    """Map each colliding device slug to the labels that produced it.
+
+    ``device_slug`` deliberately does not disambiguate two devices whose labels
+    slug identically (see its docstring: the gateway exposes no hardware id, and
+    per-poll disambiguation would make unique_ids depend on poll order). The
+    second such device simply loses — its entities can't register.
+
+    That is survivable for identity, but **any caller keeping per-device state
+    keyed by slug must skip a colliding slug**, because two devices would
+    otherwise overwrite each other's entry within a single pass and look like a
+    device that changes on every refresh. Returns only the slugs with more than
+    one device, so callers can skip them and report them.
+    """
+    by_slug: dict[str, list[str]] = {}
+    for device in devices:
+        label = device.get("label") or device.get("id") or ""
+        by_slug.setdefault(device_slug(device), []).append(str(label))
+    return {slug: labels for slug, labels in by_slug.items() if len(labels) > 1}
+
+
 def stable_unique_id(
     device: Device, datapoint: Datapoint, qualifier: str | None = None
 ) -> str:
