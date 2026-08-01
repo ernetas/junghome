@@ -27,6 +27,11 @@ _LOGGER = logging.getLogger(__name__)
 REGISTER_TIMEOUT = 190
 REGISTER_USER_NAME = "Home Assistant"
 
+# Reachability check on the reconfigure form. Kept short: the user is sitting in
+# front of the dialog, and an unreachable host should fail fast enough that
+# retyping it feels immediate.
+PROBE_TIMEOUT = 10
+
 # The gateway's generic mDNS hostname (also its TLS certificate CN). Offered as
 # the default host so most users need not look up the gateway's IP. It only
 # resolves if the network maps it; the reliable name is the per-device mDNS
@@ -385,6 +390,10 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         The existing token still works for the same gateway at a new address; if
         it points at a different gateway, the next refresh triggers reauth.
+
+        The new address is probed before it is stored (connect-then-commit): a
+        typo used to be accepted silently and only surfaced later as a confusing
+        connect/reauth failure, with nothing tying it back to this edit.
         """
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
@@ -397,6 +406,10 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for other in self._async_current_entries()
             ):
                 return self.async_abort(reason="already_configured")
+            elif probe_error := await self._async_probe_host(
+                host, entry.data.get(CONF_TOKEN, "")
+            ):
+                errors["base"] = probe_error
             else:
                 # Update the stored host and let the `add_update_listener` reload
                 # the entry exactly once (the host change makes its guard pass).
@@ -446,6 +459,35 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             menu_options=["app_approval", "password"],
             description_placeholders={"host": self._host or ""},
         )
+
+    async def _async_probe_host(self, host: str, token: str) -> str | None:
+        """Check that a Jung Home gateway answers at ``host``.
+
+        Returns an error key to show, or None when the address is usable.
+
+        This deliberately tests **reachability only**: any HTTP reply proves a
+        gateway is listening and the address is typed correctly, so a 401/403 is
+        accepted here. A rejected token means the address now points at a
+        different gateway (or the token was revoked), which the reauth flow
+        already handles on the next refresh — failing the form for it would just
+        strand the user on a screen that cannot fix it.
+        """
+        # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
+        # cert without building an SSL context on the event loop.
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/functions"
+        headers = {"token": token, "Content-Type": "application/json"}
+        try:
+            async with (
+                asyncio.timeout(PROBE_TIMEOUT),
+                session.get(url, headers=headers),
+            ):
+                # No raise_for_status(): a status-based failure still means the
+                # host is reachable, which is all this probe asserts.
+                return None
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("Jung Home gateway probe failed for %s: %s", host, err)
+            return "cannot_connect"
 
     async def _async_register(self) -> str:
         """POST the registration request and return the issued token.
