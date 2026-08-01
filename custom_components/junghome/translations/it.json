@@ -92,6 +92,17 @@
       "no_covers": "Non è stata trovata alcuna tapparella su questo gateway, quindi non c'è nulla da configurare."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Pulsante su {subtype}",
+      "down": "Pulsante giù {subtype}",
+      "press": "Pulsante {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "premuto",
+      "depressed": "rilasciato"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Connessione" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "La scena Jung Home {label} non è più disponibile sul gateway."
+    },
+    "invalid_trigger": {
+      "message": "Il dispositivo Jung Home non supporta il trigger {trigger}."
     }
   },
   "issues": {

@@ -92,6 +92,17 @@
       "no_covers": "Ezen az átjárón nem található árnyékoló, így nincs mit beállítani."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Felső gomb {subtype}",
+      "down": "Alsó gomb {subtype}",
+      "press": "Gomb {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "megnyomva",
+      "depressed": "elengedve"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Kapcsolat" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "A(z) {label} Jung Home jelenet már nem érhető el az átjárón."
+    },
+    "invalid_trigger": {
+      "message": "A Jung Home eszköz nem támogatja a(z) {trigger} eseményindítót."
     }
   },
   "issues": {

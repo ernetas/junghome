@@ -92,6 +92,17 @@
       "no_covers": "Auf diesem Gateway wurden keine Rollos gefunden, es gibt also nichts zu konfigurieren."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Taste oben {subtype}",
+      "down": "Taste unten {subtype}",
+      "press": "Taste {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "gedrückt",
+      "depressed": "losgelassen"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Verbindung" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Die Jung Home Szene {label} ist auf dem Gateway nicht mehr verfügbar."
+    },
+    "invalid_trigger": {
+      "message": "Das Jung Home-Gerät unterstützt den Auslöser {trigger} nicht."
     }
   },
   "issues": {

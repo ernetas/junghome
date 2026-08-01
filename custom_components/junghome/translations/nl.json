@@ -92,6 +92,17 @@
       "no_covers": "Er is geen zonwering gevonden op deze gateway, dus er valt niets te configureren."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Knop omhoog {subtype}",
+      "down": "Knop omlaag {subtype}",
+      "press": "Knop {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "ingedrukt",
+      "depressed": "losgelaten"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Verbinding" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "De Jung Home-scène {label} is niet meer beschikbaar op de gateway."
+    },
+    "invalid_trigger": {
+      "message": "Het Jung Home-apparaat ondersteunt de trigger {trigger} niet."
     }
   },
   "issues": {

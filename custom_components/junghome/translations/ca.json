@@ -92,6 +92,17 @@
       "no_covers": "No s'ha trobat cap persiana en aquesta passarel·la, així que no hi ha res a configurar."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Botó amunt {subtype}",
+      "down": "Botó avall {subtype}",
+      "press": "Botó {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "premut",
+      "depressed": "alliberat"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Connexió" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "L'escena {label} de Jung Home ja no està disponible a la passarel·la."
+    },
+    "invalid_trigger": {
+      "message": "El dispositiu Jung Home no admet l'activador {trigger}."
     }
   },
   "issues": {

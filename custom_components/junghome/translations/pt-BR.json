@@ -92,6 +92,17 @@
       "no_covers": "Nenhuma persiana foi encontrada neste gateway, então não há nada para configurar."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Botão para cima {subtype}",
+      "down": "Botão para baixo {subtype}",
+      "press": "Botão {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "pressionado",
+      "depressed": "solto"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Conexão" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "A cena {label} do Jung Home não está mais disponível no gateway."
+    },
+    "invalid_trigger": {
+      "message": "O dispositivo Jung Home não oferece suporte ao gatilho {trigger}."
     }
   },
   "issues": {

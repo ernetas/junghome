@@ -92,6 +92,17 @@
       "no_covers": "此网关上未找到窗帘，因此无需配置。"
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "上按钮{subtype}",
+      "down": "下按钮{subtype}",
+      "press": "按钮{subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "已按下",
+      "depressed": "已松开"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "连接" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Jung Home 场景 {label} 在网关上已不再可用。"
+    },
+    "invalid_trigger": {
+      "message": "Jung Home 设备不支持触发器 {trigger}。"
     }
   },
   "issues": {

@@ -92,6 +92,17 @@
       "no_covers": "Δεν βρέθηκαν ρολά σε αυτή την πύλη, επομένως δεν υπάρχει τίποτα για διαμόρφωση."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Επάνω κουμπί {subtype}",
+      "down": "Κάτω κουμπί {subtype}",
+      "press": "Κουμπί {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "πατήθηκε",
+      "depressed": "αφέθηκε"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Σύνδεση" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Η σκηνή {label} του Jung Home δεν είναι πλέον διαθέσιμη στην πύλη."
+    },
+    "invalid_trigger": {
+      "message": "Η συσκευή Jung Home δεν υποστηρίζει την ενεργοποίηση {trigger}."
     }
   },
   "issues": {

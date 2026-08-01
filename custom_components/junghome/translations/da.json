@@ -92,6 +92,17 @@
       "no_covers": "Der blev ikke fundet nogen gardiner på denne gateway, så der er intet at konfigurere."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Op-knap {subtype}",
+      "down": "Ned-knap {subtype}",
+      "press": "Knap {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "trykket",
+      "depressed": "sluppet"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Forbindelse" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Jung Home-scenen {label} er ikke længere tilgængelig på gatewayen."
+    },
+    "invalid_trigger": {
+      "message": "Jung Home-enheden understøtter ikke udløseren {trigger}."
     }
   },
   "issues": {

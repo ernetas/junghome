@@ -92,6 +92,17 @@
       "no_covers": "Na této bráně nebyly nalezeny žádné žaluzie, není tedy co nastavovat."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Horní tlačítko {subtype}",
+      "down": "Dolní tlačítko {subtype}",
+      "press": "Tlačítko {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "stisknuto",
+      "depressed": "uvolněno"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Připojení" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Scéna Jung Home {label} již není na bráně dostupná."
+    },
+    "invalid_trigger": {
+      "message": "Zařízení Jung Home nepodporuje spouštěč {trigger}."
     }
   },
   "issues": {

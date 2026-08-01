@@ -92,6 +92,17 @@
       "no_covers": "Na tej bramce nie znaleziono żadnych rolet, więc nie ma nic do skonfigurowania."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Górny przycisk {subtype}",
+      "down": "Dolny przycisk {subtype}",
+      "press": "Przycisk {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "naciśnięty",
+      "depressed": "zwolniony"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Połączenie" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Scena Jung Home {label} nie jest już dostępna na bramce."
+    },
+    "invalid_trigger": {
+      "message": "Urządzenie Jung Home nie obsługuje wyzwalacza {trigger}."
     }
   },
   "issues": {
