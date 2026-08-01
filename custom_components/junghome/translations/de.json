@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home Gateway gefunden",
+        "description": "Unter {host} wurde ein Jung Home Gateway gefunden. Wähle aus, wie die Verbindung hergestellt werden soll.",
+        "menu_options": {
+          "app_approval": "Verbindung in der Jung Home App bestätigen",
+          "password": "Netzwerkschlüssel-Passwort des Gateways eingeben (verbindet sofort)"
+        }
+      },
+      "user": {
+        "title": "Mit Jung Home verbinden",
+        "description": "Dein Gateway wird normalerweise automatisch gefunden und auf der Seite Integrationen angezeigt. Falls nicht, wähle unten aus, wie die Verbindung hergestellt werden soll.",
+        "menu_options": {
+          "app_approval": "Verbindung in der Jung Home App bestätigen",
+          "password": "Netzwerkschlüssel-Passwort des Gateways eingeben (verbindet sofort)"
+        }
+      },
+      "app_approval": {
+        "title": "Mit Jung Home verbinden",
+        "description": "Bestätige die Adresse deines Jung Home Gateways oder gib sie ein. Nachdem du fortgefahren bist, bestätige die Zugriffsanfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls funktioniert die Vorgabe junghome.local in vielen Netzwerken, oder verwende die IP-Adresse (zum Beispiel 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Mit Jung Home verbinden",
+        "description": "Bestätige die Gateway-Adresse und gib das zugehörige Netzwerkschlüssel-Passwort ein, um dich sofort zu verbinden, ohne eine Anfrage in der App zu bestätigen. Das Passwort findest du in der Jung Home App.",
+        "data": {
+          "host": "Host",
+          "password": "Netzwerkschlüssel-Passwort"
+        },
+        "data_description": {
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls funktioniert die Vorgabe junghome.local in vielen Netzwerken, oder verwende die IP-Adresse (zum Beispiel 192.168.1.50).",
+          "password": "Das Netzwerkschlüssel-Passwort des Jung Home Gateways."
+        }
+      },
+      "register_failed": {
+        "title": "Registrierung fehlgeschlagen",
+        "description": "Die Zugriffsanfrage wurde nicht rechtzeitig bestätigt oder das Gateway war nicht erreichbar. Sende das Formular erneut ab, um es noch einmal zu versuchen, und bestätige dann die Anfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen."
+      },
+      "reauth_confirm": {
+        "title": "Jung Home neu autorisieren",
+        "description": "Das Gateway akzeptiert das gespeicherte Zugriffstoken nicht mehr. Bestätige die neue Zugriffsanfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen."
+      },
+      "reauth_failed": {
+        "title": "Neuautorisierung fehlgeschlagen",
+        "description": "Die Zugriffsanfrage wurde nicht rechtzeitig bestätigt oder das Gateway war nicht erreichbar. Sende das Formular erneut ab, um es noch einmal zu versuchen, und bestätige dann die Anfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen."
+      },
+      "reconfigure": {
+        "title": "Jung Home neu konfigurieren",
+        "description": "Aktualisiere die Adresse deines Jung Home Gateways, zum Beispiel nachdem sich seine IP-Adresse geändert hat.",
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways (zum Beispiel 192.168.1.50 oder junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Bestätige die Zugriffsanfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen."
+    },
+    "error": {
+      "invalid_host": "Der Host ist ungültig.",
+      "cannot_connect": "Verbindung zum Gateway fehlgeschlagen.",
+      "invalid_auth": "Das Gateway hat das Netzwerkschlüssel-Passwort abgelehnt.",
+      "register_failed": "Die Registrierung wurde nicht abgeschlossen. Stelle sicher, dass du die Anfrage in der App bestätigst."
+    },
+    "abort": {
+      "already_configured": "Dieses Jung Home Gateway ist bereits konfiguriert.",
+      "reauth_successful": "Die erneute Authentifizierung war erfolgreich.",
+      "reconfigure_successful": "Die Gateway-Adresse wurde aktualisiert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home Rollo-Optionen",
+        "description": "Wähle alle Rollos aus, deren Position invertiert gemeldet wird, zum Beispiel Markisen. Ihre Position wird umgekehrt, sodass vollständig geschlossen als 0 Prozent (geschlossen) und vollständig geöffnet als 100 Prozent (geöffnet) angezeigt wird. Lasse Rollläden und Jalousien nicht ausgewählt.",
+        "data": {
+          "inverted_covers": "Invertierte Rollos (Markisen)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Auf diesem Gateway wurden keine Rollos gefunden, es gibt also nichts zu konfigurieren."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Verbindung" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Frostschutz"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Auf" },
+      "down": { "name": "Ab" },
+      "press": { "name": "Tastendruck" }
+    },
+    "switch": {
+      "status_led": { "name": "Status-LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Das Jung Home Gateway hat das Zugriffstoken abgelehnt."
+    },
+    "cannot_connect": {
+      "message": "Fehler bei der Kommunikation mit dem Jung Home Gateway: {error}"
+    },
+    "cannot_send": {
+      "message": "Das Jung Home Gateway war nicht erreichbar, um den Befehl zu senden; es stellt die Verbindung gerade wieder her. Versuche es in einem Moment erneut."
+    },
+    "invalid_response": {
+      "message": "Das Jung Home Gateway hat eine unerwartete Antwort zurückgegeben."
+    },
+    "scene_not_found": {
+      "message": "Die Jung Home Szene {label} ist auf dem Gateway nicht mehr verfügbar."
+    }
+  }
+}
