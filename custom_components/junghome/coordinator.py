@@ -234,7 +234,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             self.groups = await self._fetch_groups_from_api(
                 self.config["host"], self.config["token"]
             )
-        except Exception as err:  # best-effort, never fatal
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # Best-effort, never fatal: the gateway being unreachable, slow, or
+            # answering with a non-JSON body (ValueError covers
+            # json.JSONDecodeError) just leaves the room list empty until the
+            # WebSocket handshake delivers it. Any other exception is a bug here
+            # rather than a gateway problem, so it is left to propagate.
             _LOGGER.debug("Could not fetch Jung Home groups: %s", err)
 
     def area_for_device(self, device: Device) -> str | None:
