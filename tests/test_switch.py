@@ -1,6 +1,6 @@
 """Switch / socket platform tests for Jung Home."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
@@ -113,3 +113,65 @@ async def test_all_switch_entities(
     """
     entry = await init_platform(Platform.SWITCH)
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+async def test_unrelated_push_does_not_revert_optimistic_socket_state(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """An unrelated device's push must not flip a just-commanded socket back.
+
+    Every push notifies every entity. The socket used to re-read its own stored
+    datapoint — still the pre-command value until the gateway echoes — and
+    reverted the optimistic state, so the switch visibly flipped off and then on
+    again.
+    """
+    coordinator = init_integration.runtime_data
+    assert hass.states.get("switch.boiler").state == "on"
+
+    # Command it off. The gateway has not echoed yet, so the stored value is
+    # still "1"; only the optimistic write says otherwise.
+    with patch.object(coordinator, "send_websocket_message", AsyncMock()):
+        await hass.services.async_call(
+            "switch",
+            "turn_off",
+            {"entity_id": "switch.boiler"},
+            blocking=True,
+        )
+    assert hass.states.get("switch.boiler").state == "off"
+
+    # A push for a completely different device arrives before the echo.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state == "off", (
+        "an unrelated push reverted the optimistic socket state"
+    )
+
+
+async def test_the_gateway_echo_still_updates_the_socket(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The guard must not stop the real echo landing."""
+    coordinator = init_integration.runtime_data
+    socket_dp = next(
+        dp["id"]
+        for d in coordinator.data
+        if d["label"] == "Boiler"
+        for dp in d["datapoints"]
+        if dp["type"] == "switch"
+    )
+
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": socket_dp, "values": [{"key": "switch", "value": "0"}]},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state == "off"
