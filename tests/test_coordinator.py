@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -491,3 +492,37 @@ async def test_rest_poll_still_runs_under_a_continuous_push_stream(
     assert poll.call_count >= 2, (
         f"pushes starved the REST poll (ran {poll.call_count} times in 3 minutes)"
     )
+
+
+async def test_repeated_reconnect_failures_warn_only_once(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unreachable gateway warns once, then drops to DEBUG.
+
+    The loop retries forever, so warning on every attempt meant a gateway that
+    stayed down produced a warning roughly once a minute indefinitely — the
+    noise `log-when-unavailable` exists to prevent.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    with caplog.at_level(logging.WARNING):
+        await _run_failing_loop(coordinator, 5)
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "disconnected" in r.message
+    ]
+    assert len(warnings) == 1, f"expected one warning, got {len(warnings)}"
+
+
+async def test_recovery_warns_once_and_rearms(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A stable reconnect logs the matching recovery and re-arms the warning."""
+    coordinator = _coordinator(hass)
+    coordinator._unavailable_logged = True
+
+    coordinator._mark_session_stable(None)
+
+    assert coordinator._unavailable_logged is False
