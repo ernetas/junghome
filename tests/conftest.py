@@ -265,7 +265,7 @@ async def init_platform(
     snapshot pins never depend on what an earlier test pushed.
     """
     entries: list[MockConfigEntry] = []
-    fetch_devices = AsyncMock(return_value=PRISTINE_DEVICES)
+    fetch_devices = AsyncMock(return_value=deepcopy(PRISTINE_DEVICES))
     with (
         patch.object(
             JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch_devices
@@ -313,7 +313,7 @@ async def init_integration(hass: HomeAssistant) -> AsyncGenerator[MockConfigEntr
         patch.object(
             JungHomeDataUpdateCoordinator,
             "_fetch_devices_from_api",
-            AsyncMock(return_value=DEVICES),
+            AsyncMock(return_value=deepcopy(PRISTINE_DEVICES)),
         ),
         patch.object(
             JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
