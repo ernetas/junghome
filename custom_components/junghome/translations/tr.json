@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home ağ geçidi bulundu",
+        "description": "{host} adresinde bir Jung Home ağ geçidi bulundu. Nasıl bağlanmak istediğinizi seçin.",
+        "menu_options": {
+          "app_approval": "Bağlantıyı Jung Home uygulamasında onaylayın",
+          "password": "Ağ geçidinin ağ anahtarı parolasını girin (anında bağlanır)"
+        }
+      },
+      "user": {
+        "title": "Jung Home'a bağlan",
+        "description": "Ağ geçidiniz genellikle otomatik olarak bulunur ve Entegrasyonlar sayfasında gösterilir. Bulunmadıysa, aşağıdan nasıl bağlanmak istediğinizi seçin.",
+        "menu_options": {
+          "app_approval": "Bağlantıyı Jung Home uygulamasında onaylayın",
+          "password": "Ağ geçidinin ağ anahtarı parolasını girin (anında bağlanır)"
+        }
+      },
+      "app_approval": {
+        "title": "Jung Home'a bağlan",
+        "description": "Jung Home ağ geçidinizin adresini onaylayın veya girin. Devam ettikten sonra erişim isteğini Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın.",
+        "data": {
+          "host": "Sunucu"
+        },
+        "data_description": {
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde varsayılan junghome.local birçok ağda çalışır ya da IP adresini kullanın (örneğin 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Jung Home'a bağlan",
+        "description": "Ağ geçidinin adresini onaylayın ve uygulamada bir isteği onaylamadan hemen bağlanmak için ağ anahtarı parolasını girin. Parolayı Jung Home uygulamasında bulabilirsiniz.",
+        "data": {
+          "host": "Sunucu",
+          "password": "Ağ anahtarı parolası"
+        },
+        "data_description": {
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde varsayılan junghome.local birçok ağda çalışır ya da IP adresini kullanın (örneğin 192.168.1.50).",
+          "password": "Jung Home ağ geçidinin ağ anahtarı parolası."
+        }
+      },
+      "register_failed": {
+        "title": "Kayıt başarısız",
+        "description": "Erişim isteği zamanında onaylanmadı veya ağ geçidine ulaşılamadı. Yeniden denemek için gönderin, ardından isteği Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın."
+      },
+      "reauth_confirm": {
+        "title": "Jung Home'u yeniden yetkilendir",
+        "description": "Ağ geçidi kayıtlı erişim belirtecini artık kabul etmiyor. Yeni erişim isteğini Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın."
+      },
+      "reauth_failed": {
+        "title": "Yeniden yetkilendirme başarısız",
+        "description": "Erişim isteği zamanında onaylanmadı veya ağ geçidine ulaşılamadı. Yeniden denemek için gönderin, ardından isteği Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın."
+      },
+      "reconfigure": {
+        "title": "Jung Home'u yeniden yapılandır",
+        "description": "Jung Home ağ geçidinizin adresini güncelleyin, örneğin IP adresi değiştikten sonra.",
+        "data": {
+          "host": "Sunucu"
+        },
+        "data_description": {
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı (örneğin 192.168.1.50 veya junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Erişim isteğini Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın."
+    },
+    "error": {
+      "invalid_host": "Sunucu geçerli değil.",
+      "cannot_connect": "Ağ geçidine bağlanılamadı.",
+      "invalid_auth": "Ağ geçidi, ağ anahtarı parolasını reddetti.",
+      "register_failed": "Kayıt tamamlanmadı. İsteği uygulamada onayladığınızdan emin olun."
+    },
+    "abort": {
+      "already_configured": "Bu Jung Home ağ geçidi zaten yapılandırılmış.",
+      "reauth_successful": "Yeniden kimlik doğrulama başarılı oldu.",
+      "reconfigure_successful": "Ağ geçidinin adresi güncellendi."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home panjur seçenekleri",
+        "description": "Konumu ters bildirilen panjurları seçin, örneğin tenteler. Konumları ters çevrilir; böylece tamamen kapalı yüzde 0 (kapalı), tamamen açık ise yüzde 100 (açık) olarak görünür. Stor perdeleri ve jaluzileri seçili bırakmayın.",
+        "data": {
+          "inverted_covers": "Ters panjurlar (tenteler)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Bu ağ geçidinde panjur bulunamadı, dolayısıyla yapılandırılacak bir şey yok."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Bağlantı" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Donma koruması"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Yukarı" },
+      "down": { "name": "Aşağı" },
+      "press": { "name": "Basma" }
+    },
+    "switch": {
+      "status_led": { "name": "Durum LED'i" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home ağ geçidi erişim belirtecini reddetti."
+    },
+    "cannot_connect": {
+      "message": "Jung Home ağ geçidiyle iletişim kurulurken hata oluştu: {error}"
+    },
+    "cannot_send": {
+      "message": "Komutu göndermek için Jung Home ağ geçidine ulaşılamadı; yeniden bağlanıyor. Birazdan tekrar deneyin."
+    },
+    "invalid_response": {
+      "message": "Jung Home ağ geçidi beklenmeyen bir yanıt döndürdü."
+    },
+    "scene_not_found": {
+      "message": "{label} adlı Jung Home sahnesi ağ geçidinde artık kullanılamıyor."
+    }
+  }
+}

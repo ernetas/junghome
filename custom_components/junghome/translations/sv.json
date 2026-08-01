@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home-gateway hittad",
+        "description": "En Jung Home-gateway hittades på {host}. Välj hur du vill ansluta.",
+        "menu_options": {
+          "app_approval": "Godkänn anslutningen i Jung Home-appen",
+          "password": "Ange gatewayens lösenord för nätverksnyckeln (ansluter direkt)"
+        }
+      },
+      "user": {
+        "title": "Anslut till Jung Home",
+        "description": "Din gateway hittas normalt automatiskt och visas på sidan Integrationer. Om den inte gjorde det väljer du nedan hur du vill ansluta.",
+        "menu_options": {
+          "app_approval": "Godkänn anslutningen i Jung Home-appen",
+          "password": "Ange gatewayens lösenord för nätverksnyckeln (ansluter direkt)"
+        }
+      },
+      "app_approval": {
+        "title": "Anslut till Jung Home",
+        "description": "Bekräfta eller ange adressen till din Jung Home-gateway. När du fortsätter godkänner du åtkomstbegäran i Jung Home-appen under Inställningar, Gateway, Åtkomstbehörigheter, Öppna begäranden.",
+        "data": {
+          "host": "Värd"
+        },
+        "data_description": {
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars fungerar standardvärdet junghome.local i många nätverk, eller använd IP-adressen (till exempel 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Anslut till Jung Home",
+        "description": "Bekräfta gatewayens adress och ange lösenordet för dess nätverksnyckel för att ansluta direkt, utan att godkänna en begäran i appen. Du hittar lösenordet i Jung Home-appen.",
+        "data": {
+          "host": "Värd",
+          "password": "Lösenord för nätverksnyckel"
+        },
+        "data_description": {
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars fungerar standardvärdet junghome.local i många nätverk, eller använd IP-adressen (till exempel 192.168.1.50).",
+          "password": "Jung Home-gatewayens lösenord för nätverksnyckeln."
+        }
+      },
+      "register_failed": {
+        "title": "Registreringen misslyckades",
+        "description": "Åtkomstbegäran godkändes inte i tid eller gatewayen kunde inte nås. Skicka igen för att göra ett nytt försök och godkänn sedan begäran i Jung Home-appen under Inställningar, Gateway, Åtkomstbehörigheter, Öppna begäranden."
+      },
+      "reauth_confirm": {
+        "title": "Auktorisera Jung Home på nytt",
+        "description": "Gatewayen accepterar inte längre den sparade åtkomsttoken. Godkänn den nya åtkomstbegäran i Jung Home-appen under Inställningar, Gateway, Åtkomstbehörigheter, Öppna begäranden."
+      },
+      "reauth_failed": {
+        "title": "Den nya auktoriseringen misslyckades",
+        "description": "Åtkomstbegäran godkändes inte i tid eller gatewayen kunde inte nås. Skicka igen för att göra ett nytt försök och godkänn sedan begäran i Jung Home-appen under Inställningar, Gateway, Åtkomstbehörigheter, Öppna begäranden."
+      },
+      "reconfigure": {
+        "title": "Konfigurera om Jung Home",
+        "description": "Uppdatera adressen till din Jung Home-gateway, till exempel efter att dess IP-adress har ändrats.",
+        "data": {
+          "host": "Värd"
+        },
+        "data_description": {
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn (till exempel 192.168.1.50 eller junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Godkänn åtkomstbegäran i Jung Home-appen under Inställningar, Gateway, Åtkomstbehörigheter, Öppna begäranden."
+    },
+    "error": {
+      "invalid_host": "Värden är ogiltig.",
+      "cannot_connect": "Det gick inte att ansluta till gatewayen.",
+      "invalid_auth": "Gatewayen avvisade lösenordet för nätverksnyckeln.",
+      "register_failed": "Registreringen slutfördes inte. Se till att du godkänner begäran i appen."
+    },
+    "abort": {
+      "already_configured": "Den här Jung Home-gatewayen är redan konfigurerad.",
+      "reauth_successful": "Den nya autentiseringen lyckades.",
+      "reconfigure_successful": "Gatewayens adress uppdaterades."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Alternativ för Jung Home-persienner",
+        "description": "Välj de persienner vars position rapporteras omvänt, till exempel markiser. Deras position vänds så att helt stängd visas som 0 procent (stängd) och helt öppen som 100 procent (öppen). Lämna rullgardiner och persienner omarkerade.",
+        "data": {
+          "inverted_covers": "Omvända persienner (markiser)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Inga persienner hittades på den här gatewayen, så det finns inget att konfigurera."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Anslutning" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Frostskydd"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Upp" },
+      "down": { "name": "Ner" },
+      "press": { "name": "Tryck" }
+    },
+    "switch": {
+      "status_led": { "name": "Status-LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home-gatewayen avvisade åtkomsttoken."
+    },
+    "cannot_connect": {
+      "message": "Fel vid kommunikation med Jung Home-gatewayen: {error}"
+    },
+    "cannot_send": {
+      "message": "Det gick inte att nå Jung Home-gatewayen för att skicka kommandot; den återansluter. Försök igen om en stund."
+    },
+    "invalid_response": {
+      "message": "Jung Home-gatewayen returnerade ett oväntat svar."
+    },
+    "scene_not_found": {
+      "message": "Jung Home-scenen {label} är inte längre tillgänglig på gatewayen."
+    }
+  }
+}

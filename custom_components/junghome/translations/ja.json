@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home ゲートウェイを検出しました",
+        "description": "{host} で Jung Home ゲートウェイが見つかりました。接続方法を選択してください。",
+        "menu_options": {
+          "app_approval": "Jung Home アプリで接続を承認する",
+          "password": "ゲートウェイのネットワークキーのパスワードを入力する（すぐに接続します）"
+        }
+      },
+      "user": {
+        "title": "Jung Home に接続",
+        "description": "通常、ゲートウェイは自動的に検出され、統合ページに表示されます。表示されなかった場合は、以下で接続方法を選択してください。",
+        "menu_options": {
+          "app_approval": "Jung Home アプリで接続を承認する",
+          "password": "ゲートウェイのネットワークキーのパスワードを入力する（すぐに接続します）"
+        }
+      },
+      "app_approval": {
+        "title": "Jung Home に接続",
+        "description": "Jung Home ゲートウェイのアドレスを確認するか入力してください。続行したら、Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」でアクセスリクエストを承認してください。",
+        "data": {
+          "host": "ホスト"
+        },
+        "data_description": {
+          "host": "Jung Home ゲートウェイの IP アドレスまたはホスト名。ゲートウェイが検出されると自動的に入力されます。検出されない場合は、既定値の junghome.local が多くのネットワークで利用できます。または IP アドレス（例: 192.168.1.50）を使用してください。"
+        }
+      },
+      "password": {
+        "title": "Jung Home に接続",
+        "description": "ゲートウェイのアドレスを確認し、そのネットワークキーのパスワードを入力すると、アプリでリクエストを承認せずにすぐに接続できます。パスワードは Jung Home アプリで確認できます。",
+        "data": {
+          "host": "ホスト",
+          "password": "ネットワークキーのパスワード"
+        },
+        "data_description": {
+          "host": "Jung Home ゲートウェイの IP アドレスまたはホスト名。ゲートウェイが検出されると自動的に入力されます。検出されない場合は、既定値の junghome.local が多くのネットワークで利用できます。または IP アドレス（例: 192.168.1.50）を使用してください。",
+          "password": "Jung Home ゲートウェイのネットワークキーのパスワード。"
+        }
+      },
+      "register_failed": {
+        "title": "登録に失敗しました",
+        "description": "アクセスリクエストが時間内に承認されなかったか、ゲートウェイに接続できませんでした。送信して再試行し、Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」でリクエストを承認してください。"
+      },
+      "reauth_confirm": {
+        "title": "Jung Home を再認可",
+        "description": "ゲートウェイは保存されたアクセストークンを受け付けなくなりました。Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」で新しいアクセスリクエストを承認してください。"
+      },
+      "reauth_failed": {
+        "title": "再認可に失敗しました",
+        "description": "アクセスリクエストが時間内に承認されなかったか、ゲートウェイに接続できませんでした。送信して再試行し、Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」でリクエストを承認してください。"
+      },
+      "reconfigure": {
+        "title": "Jung Home を再設定",
+        "description": "Jung Home ゲートウェイのアドレスを更新します（IP アドレスが変わった場合など）。",
+        "data": {
+          "host": "ホスト"
+        },
+        "data_description": {
+          "host": "Jung Home ゲートウェイの IP アドレスまたはホスト名（例: 192.168.1.50 または junghome.local）。"
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」でアクセスリクエストを承認してください。"
+    },
+    "error": {
+      "invalid_host": "ホストが無効です。",
+      "cannot_connect": "ゲートウェイに接続できませんでした。",
+      "invalid_auth": "ゲートウェイがネットワークキーのパスワードを拒否しました。",
+      "register_failed": "登録が完了しませんでした。アプリでリクエストを承認してください。"
+    },
+    "abort": {
+      "already_configured": "この Jung Home ゲートウェイはすでに設定されています。",
+      "reauth_successful": "再認証に成功しました。",
+      "reconfigure_successful": "ゲートウェイのアドレスを更新しました。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home カバーのオプション",
+        "description": "位置が反転して報告されるカバー（オーニングなど）を選択してください。位置が反転され、全閉が 0 パーセント（閉）、全開が 100 パーセント（開）として表示されます。ローラーシャッターやブラインドは選択しないでください。",
+        "data": {
+          "inverted_covers": "反転したカバー（オーニング）"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "このゲートウェイにはカバーが見つからなかったため、設定する項目はありません。"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "接続" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "凍結防止"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "上" },
+      "down": { "name": "下" },
+      "press": { "name": "押下" }
+    },
+    "switch": {
+      "status_led": { "name": "ステータス LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home ゲートウェイがアクセストークンを拒否しました。"
+    },
+    "cannot_connect": {
+      "message": "Jung Home ゲートウェイとの通信エラー: {error}"
+    },
+    "cannot_send": {
+      "message": "コマンドを送信するために Jung Home ゲートウェイに接続できませんでした。再接続中です。しばらくしてからもう一度お試しください。"
+    },
+    "invalid_response": {
+      "message": "Jung Home ゲートウェイが予期しない応答を返しました。"
+    },
+    "scene_not_found": {
+      "message": "Jung Home のシーン {label} はゲートウェイで利用できなくなりました。"
+    }
+  }
+}

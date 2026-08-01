@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Nájdená brána Jung Home",
+        "description": "Na adrese {host} sa našla brána Jung Home. Vyberte spôsob pripojenia.",
+        "menu_options": {
+          "app_approval": "Schváliť pripojenie v aplikácii Jung Home",
+          "password": "Zadať heslo sieťového kľúča brány (pripojí sa okamžite)"
+        }
+      },
+      "user": {
+        "title": "Pripojiť k Jung Home",
+        "description": "Bránu sa zvyčajne podarí nájsť automaticky a zobrazí sa na stránke Integrácie. Ak sa tak nestalo, vyberte nižšie spôsob pripojenia.",
+        "menu_options": {
+          "app_approval": "Schváliť pripojenie v aplikácii Jung Home",
+          "password": "Zadať heslo sieťového kľúča brány (pripojí sa okamžite)"
+        }
+      },
+      "app_approval": {
+        "title": "Pripojiť k Jung Home",
+        "description": "Potvrďte alebo zadajte adresu svojej brány Jung Home. Keď budete pokračovať, schváľte žiadosť o prístup v aplikácii Jung Home v časti Nastavenia, Brána, Prístupové oprávnenia, Otvorené žiadosti.",
+        "data": {
+          "host": "Hostiteľ"
+        },
+        "data_description": {
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak predvolená hodnota junghome.local funguje v mnohých sieťach, prípadne použite IP adresu (napríklad 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Pripojiť k Jung Home",
+        "description": "Potvrďte adresu brány a zadajte heslo jej sieťového kľúča, aby ste sa pripojili okamžite, bez schvaľovania žiadosti v aplikácii. Heslo nájdete v aplikácii Jung Home.",
+        "data": {
+          "host": "Hostiteľ",
+          "password": "Heslo sieťového kľúča"
+        },
+        "data_description": {
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak predvolená hodnota junghome.local funguje v mnohých sieťach, prípadne použite IP adresu (napríklad 192.168.1.50).",
+          "password": "Heslo sieťového kľúča brány Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Registrácia zlyhala",
+        "description": "Žiadosť o prístup nebola včas schválená alebo sa nepodarilo bránu kontaktovať. Odoslaním to skúste znova a potom schváľte žiadosť v aplikácii Jung Home v časti Nastavenia, Brána, Prístupové oprávnenia, Otvorené žiadosti."
+      },
+      "reauth_confirm": {
+        "title": "Znova autorizovať Jung Home",
+        "description": "Brána už neakceptuje uložený prístupový token. Schváľte novú žiadosť o prístup v aplikácii Jung Home v časti Nastavenia, Brána, Prístupové oprávnenia, Otvorené žiadosti."
+      },
+      "reauth_failed": {
+        "title": "Opätovná autorizácia zlyhala",
+        "description": "Žiadosť o prístup nebola včas schválená alebo sa nepodarilo bránu kontaktovať. Odoslaním to skúste znova a potom schváľte žiadosť v aplikácii Jung Home v časti Nastavenia, Brána, Prístupové oprávnenia, Otvorené žiadosti."
+      },
+      "reconfigure": {
+        "title": "Zmeniť nastavenie Jung Home",
+        "description": "Aktualizujte adresu svojej brány Jung Home, napríklad po tom, čo sa zmenila jej IP adresa.",
+        "data": {
+          "host": "Hostiteľ"
+        },
+        "data_description": {
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home (napríklad 192.168.1.50 alebo junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Schváľte žiadosť o prístup v aplikácii Jung Home v časti Nastavenia, Brána, Prístupové oprávnenia, Otvorené žiadosti."
+    },
+    "error": {
+      "invalid_host": "Hostiteľ nie je platný.",
+      "cannot_connect": "Pripojenie k bráne zlyhalo.",
+      "invalid_auth": "Brána odmietla heslo sieťového kľúča.",
+      "register_failed": "Registrácia nebola dokončená. Nezabudnite žiadosť v aplikácii schváliť."
+    },
+    "abort": {
+      "already_configured": "Táto brána Jung Home je už nakonfigurovaná.",
+      "reauth_successful": "Opätovné overenie bolo úspešné.",
+      "reconfigure_successful": "Adresa brány bola aktualizovaná."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti žalúzií Jung Home",
+        "description": "Vyberte všetky žalúzie, ktorých poloha sa hlási obrátene, napríklad markízy. Ich poloha sa prevráti, takže úplne zatvorené sa zobrazí ako 0 percent (zatvorené) a úplne otvorené ako 100 percent (otvorené). Rolety a žalúzie nechajte nevybrané.",
+        "data": {
+          "inverted_covers": "Obrátené žalúzie (markízy)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Na tejto bráne sa nenašli žiadne žalúzie, takže nie je čo nastavovať."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Pripojenie" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Ochrana proti mrazu"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Nahor" },
+      "down": { "name": "Nadol" },
+      "press": { "name": "Stlačenie" }
+    },
+    "switch": {
+      "status_led": { "name": "Stavová LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Brána Jung Home odmietla prístupový token."
+    },
+    "cannot_connect": {
+      "message": "Chyba pri komunikácii s bránou Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "Bránu Jung Home sa nepodarilo kontaktovať na odoslanie príkazu; prebieha opätovné pripájanie. Skúste to o chvíľu znova."
+    },
+    "invalid_response": {
+      "message": "Brána Jung Home vrátila neočakávanú odpoveď."
+    },
+    "scene_not_found": {
+      "message": "Scéna Jung Home {label} už na bráne nie je dostupná."
+    }
+  }
+}

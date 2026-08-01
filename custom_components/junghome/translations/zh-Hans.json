@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "已发现 Jung Home 网关",
+        "description": "在 {host} 发现了一个 Jung Home 网关。请选择连接方式。",
+        "menu_options": {
+          "app_approval": "在 Jung Home 应用中批准连接",
+          "password": "输入网关的网络密钥密码（立即连接）"
+        }
+      },
+      "user": {
+        "title": "连接到 Jung Home",
+        "description": "通常系统会自动发现网关并显示在“集成”页面上。如果没有，请在下方选择连接方式。",
+        "menu_options": {
+          "app_approval": "在 Jung Home 应用中批准连接",
+          "password": "输入网关的网络密钥密码（立即连接）"
+        }
+      },
+      "app_approval": {
+        "title": "连接到 Jung Home",
+        "description": "确认或输入 Jung Home 网关的地址。继续之后，请在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准访问请求。",
+        "data": {
+          "host": "主机"
+        },
+        "data_description": {
+          "host": "Jung Home 网关的 IP 地址或主机名。发现网关时会自动填写；否则默认值 junghome.local 在许多网络中都可用，也可以使用 IP 地址（例如 192.168.1.50）。"
+        }
+      },
+      "password": {
+        "title": "连接到 Jung Home",
+        "description": "确认网关地址并输入其网络密钥密码，即可立即连接，无需在应用中批准请求。密码可在 Jung Home 应用中找到。",
+        "data": {
+          "host": "主机",
+          "password": "网络密钥密码"
+        },
+        "data_description": {
+          "host": "Jung Home 网关的 IP 地址或主机名。发现网关时会自动填写；否则默认值 junghome.local 在许多网络中都可用，也可以使用 IP 地址（例如 192.168.1.50）。",
+          "password": "Jung Home 网关的网络密钥密码。"
+        }
+      },
+      "register_failed": {
+        "title": "注册失败",
+        "description": "访问请求未及时获得批准，或者无法连接到网关。请提交以重试，然后在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准该请求。"
+      },
+      "reauth_confirm": {
+        "title": "重新授权 Jung Home",
+        "description": "网关不再接受已保存的访问令牌。请在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准新的访问请求。"
+      },
+      "reauth_failed": {
+        "title": "重新授权失败",
+        "description": "访问请求未及时获得批准，或者无法连接到网关。请提交以重试，然后在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准该请求。"
+      },
+      "reconfigure": {
+        "title": "重新配置 Jung Home",
+        "description": "更新 Jung Home 网关的地址，例如在其 IP 地址发生变化之后。",
+        "data": {
+          "host": "主机"
+        },
+        "data_description": {
+          "host": "Jung Home 网关的 IP 地址或主机名（例如 192.168.1.50 或 junghome.local）。"
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "请在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准访问请求。"
+    },
+    "error": {
+      "invalid_host": "主机无效。",
+      "cannot_connect": "无法连接到网关。",
+      "invalid_auth": "网关拒绝了网络密钥密码。",
+      "register_failed": "注册未完成。请确保在应用中批准该请求。"
+    },
+    "abort": {
+      "already_configured": "此 Jung Home 网关已配置。",
+      "reauth_successful": "重新认证成功。",
+      "reconfigure_successful": "网关地址已更新。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home 窗帘选项",
+        "description": "选择位置报告相反的窗帘，例如遮阳篷。它们的位置会被翻转，因此完全关闭显示为 0%（关闭），完全打开显示为 100%（打开）。卷帘和百叶帘请不要选择。",
+        "data": {
+          "inverted_covers": "反向窗帘（遮阳篷）"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "此网关上未找到窗帘，因此无需配置。"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "连接" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "防冻保护"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "上" },
+      "down": { "name": "下" },
+      "press": { "name": "按下" }
+    },
+    "switch": {
+      "status_led": { "name": "状态指示灯" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home 网关拒绝了访问令牌。"
+    },
+    "cannot_connect": {
+      "message": "与 Jung Home 网关通信时出错：{error}"
+    },
+    "cannot_send": {
+      "message": "无法连接到 Jung Home 网关以发送命令；正在重新连接。请稍后重试。"
+    },
+    "invalid_response": {
+      "message": "Jung Home 网关返回了意外的响应。"
+    },
+    "scene_not_found": {
+      "message": "Jung Home 场景 {label} 在网关上已不再可用。"
+    }
+  }
+}

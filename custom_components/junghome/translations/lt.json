@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Aptiktas „Jung Home“ tinklų sietuvas",
+        "description": "Adresu {host} rastas „Jung Home“ tinklų sietuvas. Pasirinkite, kaip prisijungti.",
+        "menu_options": {
+          "app_approval": "Patvirtinti ryšį „Jung Home“ programėlėje",
+          "password": "Įvesti sietuvo tinklo rakto slaptažodį (prisijungiama iš karto)"
+        }
+      },
+      "user": {
+        "title": "Prisijungti prie „Jung Home“",
+        "description": "Sietuvas paprastai aptinkamas automatiškai ir rodomas puslapyje „Integracijos“. Jei taip neįvyko, toliau pasirinkite, kaip prisijungti.",
+        "menu_options": {
+          "app_approval": "Patvirtinti ryšį „Jung Home“ programėlėje",
+          "password": "Įvesti sietuvo tinklo rakto slaptažodį (prisijungiama iš karto)"
+        }
+      },
+      "app_approval": {
+        "title": "Prisijungti prie „Jung Home“",
+        "description": "Patvirtinkite arba įveskite savo „Jung Home“ sietuvo adresą. Kai tęsite, patvirtinkite prieigos užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos.",
+        "data": {
+          "host": "Serveris"
+        },
+        "data_description": {
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Prisijungti prie „Jung Home“",
+        "description": "Patvirtinkite sietuvo adresą ir įveskite jo tinklo rakto slaptažodį, kad prisijungtumėte iš karto, netvirtindami užklausos programėlėje. Slaptažodį rasite „Jung Home“ programėlėje.",
+        "data": {
+          "host": "Serveris",
+          "password": "Tinklo rakto slaptažodis"
+        },
+        "data_description": {
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50).",
+          "password": "„Jung Home“ sietuvo tinklo rakto slaptažodis."
+        }
+      },
+      "register_failed": {
+        "title": "Registracija nepavyko",
+        "description": "Prieigos užklausa nebuvo patvirtinta laiku arba nepavyko pasiekti sietuvo. Pateikite dar kartą, kad bandytumėte iš naujo, tada patvirtinkite užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
+      },
+      "reauth_confirm": {
+        "title": "Iš naujo autorizuoti „Jung Home“",
+        "description": "Sietuvas nebepriima įrašyto prieigos rakto. Patvirtinkite naują prieigos užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
+      },
+      "reauth_failed": {
+        "title": "Pakartotinė autorizacija nepavyko",
+        "description": "Prieigos užklausa nebuvo patvirtinta laiku arba nepavyko pasiekti sietuvo. Pateikite dar kartą, kad bandytumėte iš naujo, tada patvirtinkite užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
+      },
+      "reconfigure": {
+        "title": "Perkonfigūruoti „Jung Home“",
+        "description": "Atnaujinkite savo „Jung Home“ sietuvo adresą, pavyzdžiui, pasikeitus jo IP adresui.",
+        "data": {
+          "host": "Serveris"
+        },
+        "data_description": {
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50 arba junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Patvirtinkite prieigos užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
+    },
+    "error": {
+      "invalid_host": "Serveris netinkamas.",
+      "cannot_connect": "Nepavyko prisijungti prie sietuvo.",
+      "invalid_auth": "Sietuvas atmetė tinklo rakto slaptažodį.",
+      "register_failed": "Registracija nebuvo užbaigta. Įsitikinkite, kad patvirtinote užklausą programėlėje."
+    },
+    "abort": {
+      "already_configured": "Šis „Jung Home“ sietuvas jau sukonfigūruotas.",
+      "reauth_successful": "Pakartotinis tapatybės nustatymas pavyko.",
+      "reconfigure_successful": "Sietuvo adresas atnaujintas."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "„Jung Home“ žaliuzių parinktys",
+        "description": "Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
+        "data": {
+          "inverted_covers": "Apverstos žaliuzės (markizės)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Šiame sietuve žaliuzių nerasta, todėl nėra ko konfigūruoti."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Ryšys" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Apsauga nuo užšalimo"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Aukštyn" },
+      "down": { "name": "Žemyn" },
+      "press": { "name": "Paspaudimas" }
+    },
+    "switch": {
+      "status_led": { "name": "Būsenos LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "„Jung Home“ sietuvas atmetė prieigos raktą."
+    },
+    "cannot_connect": {
+      "message": "Ryšio su „Jung Home“ sietuvu klaida: {error}"
+    },
+    "cannot_send": {
+      "message": "Nepavyko pasiekti „Jung Home“ sietuvo komandai išsiųsti; jis jungiasi iš naujo. Pabandykite dar kartą po akimirkos."
+    },
+    "invalid_response": {
+      "message": "„Jung Home“ sietuvas grąžino netikėtą atsakymą."
+    },
+    "scene_not_found": {
+      "message": "„Jung Home“ scena {label} sietuve nebepasiekiama."
+    }
+  }
+}

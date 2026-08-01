@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Odkrit prehod Jung Home",
+        "description": "Na naslovu {host} je bil najden prehod Jung Home. Izberite način povezave.",
+        "menu_options": {
+          "app_approval": "Odobri povezavo v aplikaciji Jung Home",
+          "password": "Vnesi geslo omrežnega ključa prehoda (poveže se takoj)"
+        }
+      },
+      "user": {
+        "title": "Povezava z Jung Home",
+        "description": "Prehod je običajno samodejno najden in prikazan na strani Integracije. Če se to ni zgodilo, spodaj izberite način povezave.",
+        "menu_options": {
+          "app_approval": "Odobri povezavo v aplikaciji Jung Home",
+          "password": "Vnesi geslo omrežnega ključa prehoda (poveže se takoj)"
+        }
+      },
+      "app_approval": {
+        "title": "Povezava z Jung Home",
+        "description": "Potrdite ali vnesite naslov svojega prehoda Jung Home. Ko nadaljujete, odobrite zahtevo za dostop v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve.",
+        "data": {
+          "host": "Gostitelj"
+        },
+        "data_description": {
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Povezava z Jung Home",
+        "description": "Potrdite naslov prehoda in vnesite geslo njegovega omrežnega ključa, da se povežete takoj, brez odobritve zahteve v aplikaciji. Geslo najdete v aplikaciji Jung Home.",
+        "data": {
+          "host": "Gostitelj",
+          "password": "Geslo omrežnega ključa"
+        },
+        "data_description": {
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50).",
+          "password": "Geslo omrežnega ključa prehoda Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "Registracija ni uspela",
+        "description": "Zahteva za dostop ni bila pravočasno odobrena ali prehod ni bil dosegljiv. Pošljite znova za nov poskus, nato odobrite zahtevo v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve."
+      },
+      "reauth_confirm": {
+        "title": "Ponovna avtorizacija Jung Home",
+        "description": "Prehod ne sprejema več shranjenega žetona za dostop. Odobrite novo zahtevo za dostop v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve."
+      },
+      "reauth_failed": {
+        "title": "Ponovna avtorizacija ni uspela",
+        "description": "Zahteva za dostop ni bila pravočasno odobrena ali prehod ni bil dosegljiv. Pošljite znova za nov poskus, nato odobrite zahtevo v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve."
+      },
+      "reconfigure": {
+        "title": "Ponovna konfiguracija Jung Home",
+        "description": "Posodobite naslov svojega prehoda Jung Home, na primer potem ko se je spremenil njegov naslov IP.",
+        "data": {
+          "host": "Gostitelj"
+        },
+        "data_description": {
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50 ali junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Odobrite zahtevo za dostop v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve."
+    },
+    "error": {
+      "invalid_host": "Gostitelj ni veljaven.",
+      "cannot_connect": "Povezava s prehodom ni uspela.",
+      "invalid_auth": "Prehod je zavrnil geslo omrežnega ključa.",
+      "register_failed": "Registracija ni bila dokončana. Poskrbite, da zahtevo odobrite v aplikaciji."
+    },
+    "abort": {
+      "already_configured": "Ta prehod Jung Home je že konfiguriran.",
+      "reauth_successful": "Ponovno preverjanje pristnosti je uspelo.",
+      "reconfigure_successful": "Naslov prehoda je bil posodobljen."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti senčil Jung Home",
+        "description": "Izberite senčila, katerih položaj se sporoča obrnjeno, na primer tende. Njihov položaj se obrne, tako da se popolnoma zaprto prikaže kot 0 odstotkov (zaprto), popolnoma odprto pa kot 100 odstotkov (odprto). Rolete in žaluzije pustite neizbrane.",
+        "data": {
+          "inverted_covers": "Obrnjena senčila (tende)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Na tem prehodu ni bilo najdenih senčil, zato ni ničesar za nastaviti."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Povezava" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Zaščita pred zmrzaljo"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Gor" },
+      "down": { "name": "Dol" },
+      "press": { "name": "Pritisk" }
+    },
+    "switch": {
+      "status_led": { "name": "LED stanja" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Prehod Jung Home je zavrnil žeton za dostop."
+    },
+    "cannot_connect": {
+      "message": "Napaka pri komunikaciji s prehodom Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "Prehoda Jung Home ni bilo mogoče doseči za pošiljanje ukaza; ponovno se povezuje. Poskusite znova čez trenutek."
+    },
+    "invalid_response": {
+      "message": "Prehod Jung Home je vrnil nepričakovan odgovor."
+    },
+    "scene_not_found": {
+      "message": "Scena Jung Home {label} na prehodu ni več na voljo."
+    }
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home-gateway oppdaget",
+        "description": "Det ble funnet en Jung Home-gateway på {host}. Velg hvordan du vil koble til.",
+        "menu_options": {
+          "app_approval": "Godkjenn tilkoblingen i Jung Home-appen",
+          "password": "Skriv inn gatewayens passord for nettverksnøkkelen (kobler til umiddelbart)"
+        }
+      },
+      "user": {
+        "title": "Koble til Jung Home",
+        "description": "Gatewayen blir vanligvis funnet automatisk og vises på siden Integrasjoner. Hvis den ikke ble det, velger du nedenfor hvordan du vil koble til.",
+        "menu_options": {
+          "app_approval": "Godkjenn tilkoblingen i Jung Home-appen",
+          "password": "Skriv inn gatewayens passord for nettverksnøkkelen (kobler til umiddelbart)"
+        }
+      },
+      "app_approval": {
+        "title": "Koble til Jung Home",
+        "description": "Bekreft eller skriv inn adressen til Jung Home-gatewayen din. Når du går videre, godkjenner du tilgangsforespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler.",
+        "data": {
+          "host": "Vert"
+        },
+        "data_description": {
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Koble til Jung Home",
+        "description": "Bekreft gatewayens adresse og skriv inn passordet for nettverksnøkkelen for å koble til umiddelbart, uten å godkjenne en forespørsel i appen. Du finner passordet i Jung Home-appen.",
+        "data": {
+          "host": "Vert",
+          "password": "Passord for nettverksnøkkel"
+        },
+        "data_description": {
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50).",
+          "password": "Passordet for nettverksnøkkelen til Jung Home-gatewayen."
+        }
+      },
+      "register_failed": {
+        "title": "Registreringen mislyktes",
+        "description": "Tilgangsforespørselen ble ikke godkjent i tide, eller gatewayen kunne ikke nås. Send inn for å prøve på nytt, og godkjenn deretter forespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler."
+      },
+      "reauth_confirm": {
+        "title": "Autoriser Jung Home på nytt",
+        "description": "Gatewayen godtar ikke lenger det lagrede tilgangstokenet. Godkjenn den nye tilgangsforespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler."
+      },
+      "reauth_failed": {
+        "title": "Ny autorisering mislyktes",
+        "description": "Tilgangsforespørselen ble ikke godkjent i tide, eller gatewayen kunne ikke nås. Send inn for å prøve på nytt, og godkjenn deretter forespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler."
+      },
+      "reconfigure": {
+        "title": "Konfigurer Jung Home på nytt",
+        "description": "Oppdater adressen til Jung Home-gatewayen din, for eksempel etter at IP-adressen har endret seg.",
+        "data": {
+          "host": "Vert"
+        },
+        "data_description": {
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50 eller junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Godkjenn tilgangsforespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler."
+    },
+    "error": {
+      "invalid_host": "Verten er ikke gyldig.",
+      "cannot_connect": "Kunne ikke koble til gatewayen.",
+      "invalid_auth": "Gatewayen avviste passordet for nettverksnøkkelen.",
+      "register_failed": "Registreringen ble ikke fullført. Sørg for å godkjenne forespørselen i appen."
+    },
+    "abort": {
+      "already_configured": "Denne Jung Home-gatewayen er allerede konfigurert.",
+      "reauth_successful": "Ny autentisering var vellykket.",
+      "reconfigure_successful": "Gatewayens adresse ble oppdatert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Alternativer for Jung Home-persienner",
+        "description": "Velg persiennene som rapporterer posisjonen omvendt, for eksempel markiser. Posisjonen deres snus slik at helt lukket vises som 0 prosent (lukket) og helt åpen som 100 prosent (åpen). La rullegardiner og persienner stå uvalgt.",
+        "data": {
+          "inverted_covers": "Omvendte persienner (markiser)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Det ble ikke funnet noen persienner på denne gatewayen, så det er ingenting å konfigurere."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Tilkobling" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Frostsikring"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Opp" },
+      "down": { "name": "Ned" },
+      "press": { "name": "Trykk" }
+    },
+    "switch": {
+      "status_led": { "name": "Status-LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Jung Home-gatewayen avviste tilgangstokenet."
+    },
+    "cannot_connect": {
+      "message": "Feil ved kommunikasjon med Jung Home-gatewayen: {error}"
+    },
+    "cannot_send": {
+      "message": "Kunne ikke nå Jung Home-gatewayen for å sende kommandoen; den kobler til på nytt. Prøv igjen om et øyeblikk."
+    },
+    "invalid_response": {
+      "message": "Jung Home-gatewayen returnerte et uventet svar."
+    },
+    "scene_not_found": {
+      "message": "Jung Home-scenen {label} er ikke lenger tilgjengelig på gatewayen."
+    }
+  }
+}

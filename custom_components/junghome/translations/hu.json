@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "Jung Home átjáró található",
+        "description": "A(z) {host} címen Jung Home átjáró található. Válaszd ki, hogyan szeretnél csatlakozni.",
+        "menu_options": {
+          "app_approval": "A kapcsolat jóváhagyása a Jung Home alkalmazásban",
+          "password": "Az átjáró hálózatikulcs-jelszavának megadása (azonnal csatlakozik)"
+        }
+      },
+      "user": {
+        "title": "Csatlakozás a Jung Home-hoz",
+        "description": "Az átjárót általában automatikusan megtalálja a rendszer, és megjeleníti az Integrációk oldalon. Ha ez nem történt meg, alább válaszd ki, hogyan szeretnél csatlakozni.",
+        "menu_options": {
+          "app_approval": "A kapcsolat jóváhagyása a Jung Home alkalmazásban",
+          "password": "Az átjáró hálózatikulcs-jelszavának megadása (azonnal csatlakozik)"
+        }
+      },
+      "app_approval": {
+        "title": "Csatlakozás a Jung Home-hoz",
+        "description": "Erősítsd meg vagy add meg a Jung Home átjáród címét. A folytatás után hagyd jóvá a hozzáférési kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban.",
+        "data": {
+          "host": "Kiszolgáló"
+        },
+        "data_description": {
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Csatlakozás a Jung Home-hoz",
+        "description": "Erősítsd meg az átjáró címét, és add meg a hálózati kulcsához tartozó jelszót, hogy azonnal csatlakozz, az alkalmazásban való jóváhagyás nélkül. A jelszót a Jung Home alkalmazásban találod.",
+        "data": {
+          "host": "Kiszolgáló",
+          "password": "Hálózatikulcs-jelszó"
+        },
+        "data_description": {
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50).",
+          "password": "A Jung Home átjáró hálózatikulcs-jelszava."
+        }
+      },
+      "register_failed": {
+        "title": "A regisztráció sikertelen",
+        "description": "A hozzáférési kérelem nem lett időben jóváhagyva, vagy az átjáró nem volt elérhető. Küldd be újra az űrlapot az ismételt próbálkozáshoz, majd hagyd jóvá a kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban."
+      },
+      "reauth_confirm": {
+        "title": "Jung Home újbóli engedélyezése",
+        "description": "Az átjáró már nem fogadja el a tárolt hozzáférési tokent. Hagyd jóvá az új hozzáférési kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban."
+      },
+      "reauth_failed": {
+        "title": "Az újbóli engedélyezés sikertelen",
+        "description": "A hozzáférési kérelem nem lett időben jóváhagyva, vagy az átjáró nem volt elérhető. Küldd be újra az űrlapot az ismételt próbálkozáshoz, majd hagyd jóvá a kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban."
+      },
+      "reconfigure": {
+        "title": "Jung Home újrakonfigurálása",
+        "description": "Frissítsd a Jung Home átjáród címét, például miután megváltozott az IP-címe.",
+        "data": {
+          "host": "Kiszolgáló"
+        },
+        "data_description": {
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50 vagy junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Hagyd jóvá a hozzáférési kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban."
+    },
+    "error": {
+      "invalid_host": "A kiszolgáló érvénytelen.",
+      "cannot_connect": "Nem sikerült csatlakozni az átjáróhoz.",
+      "invalid_auth": "Az átjáró elutasította a hálózatikulcs-jelszót.",
+      "register_failed": "A regisztráció nem fejeződött be. Ügyelj rá, hogy jóváhagyd a kérelmet az alkalmazásban."
+    },
+    "abort": {
+      "already_configured": "Ez a Jung Home átjáró már konfigurálva van.",
+      "reauth_successful": "Az ismételt hitelesítés sikeres volt.",
+      "reconfigure_successful": "Az átjáró címe frissítve lett."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jung Home árnyékolók beállításai",
+        "description": "Válaszd ki azokat az árnyékolókat, amelyek a pozíciójukat fordítva jelentik, például a napellenzőket. A pozíciójuk megfordul, így a teljesen zárt állapot 0 százalékként (zárva), a teljesen nyitott pedig 100 százalékként (nyitva) jelenik meg. A redőnyöket és a zsalukat hagyd kijelöletlenül.",
+        "data": {
+          "inverted_covers": "Fordított árnyékolók (napellenzők)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "Ezen az átjárón nem található árnyékoló, így nincs mit beállítani."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Kapcsolat" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Fagyvédelem"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Fel" },
+      "down": { "name": "Le" },
+      "press": { "name": "Megnyomás" }
+    },
+    "switch": {
+      "status_led": { "name": "Állapotjelző LED" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "A Jung Home átjáró elutasította a hozzáférési tokent."
+    },
+    "cannot_connect": {
+      "message": "Hiba a Jung Home átjáróval való kommunikáció során: {error}"
+    },
+    "cannot_send": {
+      "message": "A Jung Home átjáró nem volt elérhető a parancs elküldéséhez; éppen újracsatlakozik. Próbáld újra egy pillanat múlva."
+    },
+    "invalid_response": {
+      "message": "A Jung Home átjáró váratlan választ adott."
+    },
+    "scene_not_found": {
+      "message": "A(z) {label} Jung Home jelenet már nem érhető el az átjárón."
+    }
+  }
+}

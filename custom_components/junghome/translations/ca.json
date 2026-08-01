@@ -1,0 +1,136 @@
+{
+  "config": {
+    "flow_title": "{host}",
+    "step": {
+      "zeroconf_confirm": {
+        "title": "S'ha detectat una passarel·la Jung Home",
+        "description": "S'ha trobat una passarel·la Jung Home a {host}. Tria com vols connectar-t'hi.",
+        "menu_options": {
+          "app_approval": "Aprova la connexió a l'aplicació Jung Home",
+          "password": "Introdueix la contrasenya de la clau de xarxa de la passarel·la (es connecta a l'instant)"
+        }
+      },
+      "user": {
+        "title": "Connecta't a Jung Home",
+        "description": "Normalment la passarel·la es detecta automàticament i es mostra a la pàgina Integracions. Si no ha estat així, tria a continuació com vols connectar-t'hi.",
+        "menu_options": {
+          "app_approval": "Aprova la connexió a l'aplicació Jung Home",
+          "password": "Introdueix la contrasenya de la clau de xarxa de la passarel·la (es connecta a l'instant)"
+        }
+      },
+      "app_approval": {
+        "title": "Connecta't a Jung Home",
+        "description": "Confirma o introdueix l'adreça de la teva passarel·la Jung Home. Quan continuïs, aprova la sol·licitud d'accés a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes.",
+        "data": {
+          "host": "Amfitrió"
+        },
+        "data_description": {
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, el valor predeterminat junghome.local funciona en moltes xarxes, o bé utilitza l'adreça IP (per exemple 192.168.1.50)."
+        }
+      },
+      "password": {
+        "title": "Connecta't a Jung Home",
+        "description": "Confirma l'adreça de la passarel·la i introdueix la contrasenya de la seva clau de xarxa per connectar-t'hi immediatament, sense aprovar cap sol·licitud a l'aplicació. Pots trobar la contrasenya a l'aplicació Jung Home.",
+        "data": {
+          "host": "Amfitrió",
+          "password": "Contrasenya de la clau de xarxa"
+        },
+        "data_description": {
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, el valor predeterminat junghome.local funciona en moltes xarxes, o bé utilitza l'adreça IP (per exemple 192.168.1.50).",
+          "password": "La contrasenya de la clau de xarxa de la passarel·la Jung Home."
+        }
+      },
+      "register_failed": {
+        "title": "El registre ha fallat",
+        "description": "La sol·licitud d'accés no s'ha aprovat a temps o no s'ha pogut contactar amb la passarel·la. Envia-ho per tornar-ho a provar i després aprova la sol·licitud a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes."
+      },
+      "reauth_confirm": {
+        "title": "Torna a autoritzar Jung Home",
+        "description": "La passarel·la ja no accepta el testimoni d'accés desat. Aprova la nova sol·licitud d'accés a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes."
+      },
+      "reauth_failed": {
+        "title": "La reautorització ha fallat",
+        "description": "La sol·licitud d'accés no s'ha aprovat a temps o no s'ha pogut contactar amb la passarel·la. Envia-ho per tornar-ho a provar i després aprova la sol·licitud a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes."
+      },
+      "reconfigure": {
+        "title": "Reconfigura Jung Home",
+        "description": "Actualitza l'adreça de la teva passarel·la Jung Home, per exemple després que n'hagi canviat l'adreça IP.",
+        "data": {
+          "host": "Amfitrió"
+        },
+        "data_description": {
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home (per exemple 192.168.1.50 o junghome.local)."
+        }
+      }
+    },
+    "progress": {
+      "waiting_for_approval": "Aprova la sol·licitud d'accés a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes."
+    },
+    "error": {
+      "invalid_host": "L'amfitrió no és vàlid.",
+      "cannot_connect": "No s'ha pogut connectar amb la passarel·la.",
+      "invalid_auth": "La passarel·la ha rebutjat la contrasenya de la clau de xarxa.",
+      "register_failed": "El registre no s'ha completat. Assegura't d'aprovar la sol·licitud a l'aplicació."
+    },
+    "abort": {
+      "already_configured": "Aquesta passarel·la Jung Home ja està configurada.",
+      "reauth_successful": "La reautenticació s'ha fet correctament.",
+      "reconfigure_successful": "S'ha actualitzat l'adreça de la passarel·la."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcions de persianes de Jung Home",
+        "description": "Selecciona les persianes la posició de les quals s'informa invertida, com ara els tendals. La seva posició s'inverteix perquè totalment tancada es mostri com a 0 per cent (tancada) i totalment oberta com a 100 per cent (oberta). Deixa les persianes enrotllables i les venecianes sense seleccionar.",
+        "data": {
+          "inverted_covers": "Persianes invertides (tendals)"
+        }
+      }
+    },
+    "abort": {
+      "no_covers": "No s'ha trobat cap persiana en aquesta passarel·la, així que no hi ha res a configurar."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "gateway_connectivity": { "name": "Connexió" }
+    },
+    "climate": {
+      "thermostat": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost": "Protecció antigelada"
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "up": { "name": "Amunt" },
+      "down": { "name": "Avall" },
+      "press": { "name": "Pulsació" }
+    },
+    "switch": {
+      "status_led": { "name": "LED d'estat" }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "La passarel·la Jung Home ha rebutjat el testimoni d'accés."
+    },
+    "cannot_connect": {
+      "message": "Error en comunicar amb la passarel·la Jung Home: {error}"
+    },
+    "cannot_send": {
+      "message": "No s'ha pogut contactar amb la passarel·la Jung Home per enviar l'ordre; s'està tornant a connectar. Torna-ho a provar d'aquí a un moment."
+    },
+    "invalid_response": {
+      "message": "La passarel·la Jung Home ha retornat una resposta inesperada."
+    },
+    "scene_not_found": {
+      "message": "L'escena {label} de Jung Home ja no està disponible a la passarel·la."
+    }
+  }
+}
