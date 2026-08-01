@@ -774,21 +774,44 @@ async def test_migration_removes_colliding_stable_id(hass: HomeAssistant) -> Non
 async def test_migration_per_item_error_leaves_flag_unset(
     hass: HomeAssistant,
 ) -> None:
-    """A per-entity migration failure is isolated but still blocks the done flag."""
+    """A per-entity migration failure is isolated but still blocks the done flag.
+
+    The failure must be one of `_MIGRATION_ERRORS` — anything else is a defect
+    and is deliberately left to propagate — so this raises the realistic registry
+    error (`ValueError`, the unique_id already being taken) for exactly one
+    entity and asserts the *rest* of the batch still migrated.
+    """
     ent_reg = er.async_get(hass)
 
     def prepare(entry: MockConfigEntry) -> None:
+        # Two entities under old volatile ids; only the first one's rename fails.
         ent_reg.async_get_or_create(
             Platform.LIGHT, DOMAIN, "idlight1_idlight1-001", config_entry=entry
         )
+        ent_reg.async_get_or_create(
+            Platform.LIGHT, DOMAIN, "iddim1_iddim1-001", config_entry=entry
+        )
 
-    with patch(
-        "homeassistant.helpers.entity_registry.EntityRegistry.async_update_entity",
-        side_effect=RuntimeError("boom"),
-    ):
+    original = er.EntityRegistry.async_update_entity
+
+    def boom(self, entity_id: str, **kwargs: object) -> object:
+        if kwargs.get("new_unique_id") == "hall_light_001":
+            raise ValueError("unique_id already registered")
+        return original(self, entity_id, **kwargs)
+
+    with patch.object(er.EntityRegistry, "async_update_entity", boom):
         entry = await _setup_with_registry(hass, prepare)
 
-    # Setup succeeds, but the per-item error means the migration isn't marked done.
+    # The error is isolated: setup still completes...
+    assert entry.state is ConfigEntryState.LOADED
+    # ...the failing entity keeps its old id...
+    assert (
+        ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "idlight1_idlight1-001")
+        is not None
+    )
+    # ...the rest of the batch still migrated...
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "dimmer_001") is not None
+    # ...and the one-shot flag stays unset so the next setup retries.
     assert entry.data.get("stable_ids_migrated") is not True
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -823,28 +846,43 @@ async def test_malformed_cover_and_thermostat_skipped(hass: HomeAssistant) -> No
 
 
 async def test_migration_device_repoint_error_isolated(hass: HomeAssistant) -> None:
-    """A failure re-pointing a device identifier is isolated and blocks the done flag."""
+    """A failure re-pointing a device identifier is isolated and blocks the done flag.
+
+    Raises `ValueError` — the realistic registry failure, and one of
+    `_MIGRATION_ERRORS` — for a single device, and asserts the other device in
+    the same batch was still re-pointed.
+    """
     dev_reg = dr.async_get(hass)
+    holder: dict[str, str] = {}
 
     def prepare(entry: MockConfigEntry) -> None:
-        # A device under the old volatile gateway id, so the migration tries to
-        # re-point it (the only path that calls async_update_device with
-        # new_identifiers).
+        # Two devices under old volatile gateway ids, so the migration tries to
+        # re-point both (the only path that calls async_update_device with
+        # new_identifiers). Only the first one fails.
         dev_reg.async_get_or_create(
             config_entry_id=entry.entry_id, identifiers={(DOMAIN, "idlight1")}
         )
+        holder["other"] = dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, "iddim1")}
+        ).id
 
     orig = dr.DeviceRegistry.async_update_device
 
     def boom(self, device_id, **kwargs):
-        if "new_identifiers" in kwargs:
-            raise RuntimeError("boom")  # only the migration re-point fails
+        if (DOMAIN, "hall_light") in kwargs.get("new_identifiers", ()):
+            raise ValueError("identifier already claimed")
         return orig(self, device_id, **kwargs)
 
     with patch.object(dr.DeviceRegistry, "async_update_device", boom):
         entry = await _setup_with_registry(hass, prepare)
 
-    # Setup succeeds, but the per-device error means migration isn't marked done.
+    # The error is isolated: setup still completes...
+    assert entry.state is ConfigEntryState.LOADED
+    # ...the other device in the same batch was still re-pointed to its slug...
+    other = dev_reg.async_get(holder["other"])
+    assert other is not None
+    assert (DOMAIN, "dimmer") in other.identifiers
+    # ...and the one-shot flag stays unset so the next setup retries.
     assert entry.data.get("stable_ids_migrated") is not True
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
