@@ -79,6 +79,16 @@ When working on anything that touches the gateway protocol, consult
   updates, so entity `unique_id`s and device identifiers are derived from the
   device **label** + datapoint **suffix** (`stable_unique_id`), never the raw id.
   Don't reintroduce id-based identifiers.
+- **Slugs can collide, so never key per-device state by slug without guarding.**
+  Two devices whose labels slug identically (`"Lamp 1"` / `"Lamp-1"`) share one
+  `device_slug`, and `device_slug` deliberately does not disambiguate them —
+  per-poll disambiguation would make `unique_id`s depend on poll order. Identity
+  survives that (the second device just loses), but any *map keyed by slug* does
+  not: the second device overwrites the first within a single pass and looks like
+  a device that changed. That is exactly how the capability watcher used to
+  schedule a reload on every refresh, forever, from nothing but two devices
+  sharing a name. Use `duplicate_slugs()` (in `const.py`) to skip colliding slugs
+  — `_register_capability_reload` and the device-identifier migration both do.
 - **Entity naming.** Entities set `_attr_has_entity_name = True` and a short
   `_attr_name` (or `None` for a device's main feature, e.g. light/socket). The
   **device** carries the label; never bake the label into the entity name — doing

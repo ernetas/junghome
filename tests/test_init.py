@@ -24,6 +24,7 @@ from custom_components.junghome.const import (
     DATA_AREA_ASSIGNED,
     DOMAIN,
     device_slug,
+    duplicate_slugs,
 )
 from custom_components.junghome.coordinator import (
     JungHomeDataUpdateCoordinator,
@@ -1519,3 +1520,116 @@ def test_scrub_masks_secrets_but_ignores_tiny_ones() -> None:
 
     # Nothing to do on empty input.
     assert _scrub(None, secrets) is None
+
+
+def _duplicate_label_devices() -> list[dict]:
+    """Two devices whose labels slug to the same value."""
+    devices = copy.deepcopy(DEVICES)[:2]
+    devices[0]["label"] = "Hall Light"
+    devices[1]["label"] = "Hall-Light"  # slugify -> hall_light as well
+    return devices
+
+
+async def test_duplicate_labels_do_not_cause_a_reload_loop(
+    hass: HomeAssistant,
+) -> None:
+    """Two devices sharing a slug must not schedule any capability reload.
+
+    The capability watcher keys its fingerprints by slug, so the second device
+    used to overwrite the first's entry inside a single pass; the comparison then
+    saw a change on every refresh and scheduled a reload, and each reload rebuilt
+    the watcher with an empty map — an endless loop from two devices called
+    "Lamp".
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        # Skip the migration path so this isolates the capability watcher.
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
+    )
+    entry.add_to_hass(hass)
+    reloads = 0
+
+    def _count(entry_id: str) -> None:
+        nonlocal reloads
+        reloads += 1
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=_duplicate_label_devices()),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+        patch.object(hass.config_entries, "async_schedule_reload", _count),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        # A second refresh must stay quiet too.
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+
+    assert reloads == 0, f"duplicate labels scheduled {reloads} reload(s)"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_duplicate_labels_still_complete_the_migration(
+    hass: HomeAssistant,
+) -> None:
+    """A colliding device identifier is skipped, not left retrying forever.
+
+    `DeviceIdentifierCollisionError` is a HomeAssistantError, so it was caught as
+    a per-item failure and withheld the one-shot flag — meaning the migration
+    re-ran and re-logged a full traceback on every setup, indefinitely.
+    """
+    devices = _duplicate_label_devices()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    for device in devices:
+        dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, identifiers={(DOMAIN, device["id"])}
+        )
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=devices),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    # The collision no longer blocks completion, so the migration stops re-running.
+    assert entry.data.get("stable_ids_migrated") is True
+    # Exactly one device holds the shared slug; the other kept its old identifier.
+    holders = [
+        d
+        for d in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+        if (DOMAIN, "hall_light") in d.identifiers
+    ]
+    assert len(holders) == 1
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+def test_duplicate_slugs_reports_only_collisions() -> None:
+    """`duplicate_slugs` returns the colliding slugs with their labels."""
+    assert duplicate_slugs(_duplicate_label_devices()) == {
+        "hall_light": ["Hall Light", "Hall-Light"]
+    }
+    # Distinct labels collide with nothing.
+    assert duplicate_slugs(copy.deepcopy(DEVICES)) == {}
+    assert duplicate_slugs([]) == {}

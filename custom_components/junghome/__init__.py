@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
     datapoint_suffix,
     device_slug,
+    duplicate_slugs,
     gateway_device_id,
     gateway_device_info,
 )
@@ -104,6 +105,7 @@ def _register_capability_reload(
     their values, so a routine value push never triggers a reload).
     """
     capability_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
+    warned_collisions: set[str] = set()
     reload_scheduled = False
 
     @callback
@@ -111,9 +113,34 @@ def _register_capability_reload(
         nonlocal reload_scheduled
         if reload_scheduled or not coordinator.data:
             return
+        # Two devices whose labels slug identically share ONE key in the map
+        # below. Without this guard the second overwrote the first's signature
+        # within a single pass, so the comparison always saw a "change" and
+        # scheduled a reload — and since each reload rebuilds this closure with an
+        # empty map, it did so again immediately: an endless reload loop from
+        # nothing worse than two devices called "Lamp".
+        #
+        # A colliding slug cannot be fingerprinted meaningfully (which of the two
+        # devices does it describe?), so drop any stale entry and skip it. If the
+        # user renames one, the slug stops colliding and re-seeds cleanly.
+        collisions = duplicate_slugs(coordinator.data)
+        for slug, labels in collisions.items():
+            capability_signatures.pop(slug, None)
+            if slug not in warned_collisions:
+                warned_collisions.add(slug)
+                _LOGGER.warning(
+                    "Jung Home: %s devices share the label(s) %s, which resolve to "
+                    "the same identity (%s). Only one of them gets entities. Give "
+                    "them distinct labels in the JUNG HOME app",
+                    len(labels),
+                    ", ".join(sorted(labels)),
+                    slug,
+                )
         changed = False
         for device in coordinator.data:
             slug = device_slug(device)
+            if slug in collisions:
+                continue
             signature = _capability_signature(device)
             previous = capability_signatures.get(slug)
             capability_signatures[slug] = signature
@@ -399,35 +426,68 @@ def _migrate_to_stable_ids(
                     entity.entity_id,
                 )
 
-        dev_reg = dr.async_get(hass)
-        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-            try:
-                new_identifiers = set()
-                changed = False
-                for domain, identifier in device_entry.identifiers:
-                    if domain == DOMAIN and identifier in by_device:
-                        new_identifiers.add(
-                            (DOMAIN, device_slug(by_device[identifier]))
-                        )
-                        changed = True
-                    else:
-                        new_identifiers.add((domain, identifier))
-                if changed:
-                    dev_reg.async_update_device(
-                        device_entry.id, new_identifiers=new_identifiers
-                    )
-            except _MIGRATION_ERRORS:
-                had_error = True
-                _LOGGER.exception(
-                    "Jung Home: failed to migrate device %s to a stable id",
-                    device_entry.id,
-                )
+        had_error |= _migrate_device_identifiers(hass, entry, by_device)
 
         _LOGGER.info("Jung Home: migrated %s entities to firmware-stable ids", migrated)
     except _MIGRATION_ERRORS:
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
         return False
     return not had_error
+
+
+def _migrate_device_identifiers(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    by_device: dict[str, Device],
+) -> bool:
+    """Re-point device-registry identifiers from volatile ids to stable slugs.
+
+    Split out of ``_migrate_to_stable_ids`` (which does the entity half) purely
+    for length. Returns True if any device failed, so the caller can withhold the
+    one-shot "migrated" flag and retry next setup.
+    """
+    had_error = False
+    dev_reg = dr.async_get(hass)
+    for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        try:
+            new_identifiers = set()
+            changed = False
+            for domain, identifier in device_entry.identifiers:
+                if domain == DOMAIN and identifier in by_device:
+                    new_identifiers.add((DOMAIN, device_slug(by_device[identifier])))
+                    changed = True
+                else:
+                    new_identifiers.add((domain, identifier))
+            if not changed:
+                continue
+            # Two devices whose labels slug identically both want the same
+            # identifier. Writing it raises DeviceIdentifierCollisionError, a
+            # HomeAssistantError, which lands in the handler below as `had_error` —
+            # leaving the one-shot flag unset, so the migration re-ran and
+            # re-logged a full traceback on every single setup, forever. Skip the
+            # loser instead: the same "second device loses" outcome `device_slug`
+            # documents, but reported once and without blocking the migration.
+            clash = dev_reg.async_get_device(identifiers=new_identifiers)
+            if clash is not None and clash.id != device_entry.id:
+                _LOGGER.warning(
+                    "Jung Home: cannot migrate device %s to %s — already claimed "
+                    "by device %s, because two devices share a label. Give them "
+                    "distinct labels in the JUNG HOME app",
+                    device_entry.id,
+                    sorted(new_identifiers),
+                    clash.id,
+                )
+                continue
+            dev_reg.async_update_device(
+                device_entry.id, new_identifiers=new_identifiers
+            )
+        except _MIGRATION_ERRORS:
+            had_error = True
+            _LOGGER.exception(
+                "Jung Home: failed to migrate device %s to a stable id",
+                device_entry.id,
+            )
+    return had_error
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
