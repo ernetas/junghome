@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "A cena {label} do Jung Home não está mais disponível no gateway."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "As atualizações em tempo real do Jung Home pararam",
+      "description": "O Home Assistant não conseguiu se reconectar ao gateway Jung Home em {host} {failures} vezes seguidas. Os estados dos dispositivos não são mais enviados instantaneamente e agora são atualizados apenas uma vez por minuto. Verifique se o gateway está ligado e acessível na sua rede. Este problema desaparece sozinho assim que a conexão for restabelecida."
+    }
   }
 }

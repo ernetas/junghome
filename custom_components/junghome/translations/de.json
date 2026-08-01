@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Die Jung Home Szene {label} ist auf dem Gateway nicht mehr verfügbar."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Live-Aktualisierungen von Jung Home sind ausgefallen",
+      "description": "Home Assistant konnte sich {failures}-mal in Folge nicht wieder mit dem Jung Home Gateway unter {host} verbinden. Gerätezustände werden nicht mehr sofort übertragen und nur noch einmal pro Minute aktualisiert. Prüfe, ob das Gateway eingeschaltet und im Netzwerk erreichbar ist. Dieses Problem verschwindet von selbst, sobald die Verbindung wiederhergestellt ist."
+    }
   }
 }
