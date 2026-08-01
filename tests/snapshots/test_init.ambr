@@ -1,0 +1,200 @@
+# serializer version: 1
+# name: test_device_registry_entries
+  list([
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'bedroom_blind',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'PositionAndAngle',
+      'name': 'Bedroom Blind',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'boiler',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'Socket',
+      'name': 'Boiler',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'button_a',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'RockerSwitch',
+      'name': 'Button A',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'dimmer',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'DimmerLight',
+      'name': 'Dimmer',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'Gateway',
+      'name': 'JUNG HOME Gateway',
+      'sw_version': None,
+      'via_device': None,
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'hall_light',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'OnOff',
+      'name': 'Hall Light',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'hallway_sensor',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'Measurement',
+      'name': 'Hallway Sensor',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'kitchen_shade',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'Position',
+      'name': 'Kitchen Shade',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'living_room',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'Thermostat',
+      'name': 'Living Room',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+    dict({
+      'area_id': None,
+      'entry_type': None,
+      'identifiers': list([
+        tuple(
+          'junghome',
+          'strip',
+        ),
+      ]),
+      'manufacturer': 'Jung',
+      'model': 'ColorLight',
+      'name': 'Strip',
+      'sw_version': 'Unknown Version',
+      'via_device': list([
+        tuple(
+          'junghome',
+          'gateway_1.2.3.4',
+        ),
+      ]),
+    }),
+  ])
+# ---
