@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -41,6 +42,24 @@ PLATFORMS: list[Platform] = [
 # re-create them under whatever label the next poll reports, losing the user's
 # entity_id/customisations. Requiring persistence rides out a transient blip.
 STALE_DEVICE_PRUNE_MISSES = 3
+
+# Failures the stable-id migration can realistically hit, and therefore the only
+# ones it treats as "this item didn't migrate, carry on":
+#   * malformed gateway JSON — a device without an ``id``, or a value of an
+#     unexpected type, reaching the slug/prefix construction (KeyError,
+#     TypeError, AttributeError);
+#   * Home Assistant refusing a registry write because the target unique_id or
+#     identifier is already claimed (ValueError, HomeAssistantError).
+# Anything else is a bug in the migration itself. Catching it here would record
+# it as a routine skipped item and hide it behind a log line, so it is left to
+# propagate and fail setup loudly instead.
+_MIGRATION_ERRORS = (
+    KeyError,
+    TypeError,
+    AttributeError,
+    ValueError,
+    HomeAssistantError,
+)
 
 
 def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
@@ -373,7 +392,7 @@ def _migrate_to_stable_ids(
                 else:
                     ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_uid)
                 migrated += 1
-            except Exception:
+            except _MIGRATION_ERRORS:
                 had_error = True
                 _LOGGER.exception(
                     "Jung Home: failed to migrate entity %s to a stable id",
@@ -397,7 +416,7 @@ def _migrate_to_stable_ids(
                     dev_reg.async_update_device(
                         device_entry.id, new_identifiers=new_identifiers
                     )
-            except Exception:
+            except _MIGRATION_ERRORS:
                 had_error = True
                 _LOGGER.exception(
                     "Jung Home: failed to migrate device %s to a stable id",
@@ -405,7 +424,7 @@ def _migrate_to_stable_ids(
                 )
 
         _LOGGER.info("Jung Home: migrated %s entities to firmware-stable ids", migrated)
-    except Exception:
+    except _MIGRATION_ERRORS:
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
         return False
     return not had_error
