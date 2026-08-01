@@ -92,6 +92,17 @@
       "no_covers": "Nu au fost găsite jaluzele pe acest gateway, așadar nu este nimic de configurat."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Buton sus {subtype}",
+      "down": "Buton jos {subtype}",
+      "press": "Buton {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "apăsat",
+      "depressed": "eliberat"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Conexiune" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Scena Jung Home {label} nu mai este disponibilă pe gateway."
+    },
+    "invalid_trigger": {
+      "message": "Dispozitivul Jung Home nu acceptă declanșatorul {trigger}."
     }
   },
   "issues": {

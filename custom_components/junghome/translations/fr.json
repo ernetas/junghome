@@ -92,6 +92,17 @@
       "no_covers": "Aucun volet n'a été trouvé sur cette passerelle, il n'y a donc rien à configurer."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Bouton haut {subtype}",
+      "down": "Bouton bas {subtype}",
+      "press": "Bouton {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "appuyé",
+      "depressed": "relâché"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Connexion" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "La scène Jung Home {label} n'est plus disponible sur la passerelle."
+    },
+    "invalid_trigger": {
+      "message": "L'appareil Jung Home ne prend pas en charge le déclencheur {trigger}."
     }
   },
   "issues": {

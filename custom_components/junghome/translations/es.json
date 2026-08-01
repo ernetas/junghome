@@ -92,6 +92,17 @@
       "no_covers": "No se encontraron persianas en esta pasarela, así que no hay nada que configurar."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Botón arriba {subtype}",
+      "down": "Botón abajo {subtype}",
+      "press": "Botón {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "pulsado",
+      "depressed": "soltado"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Conexión" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "La escena {label} de Jung Home ya no está disponible en la pasarela."
+    },
+    "invalid_trigger": {
+      "message": "El dispositivo Jung Home no admite el activador {trigger}."
     }
   },
   "issues": {

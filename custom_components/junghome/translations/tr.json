@@ -92,6 +92,17 @@
       "no_covers": "Bu ağ geçidinde panjur bulunamadı, dolayısıyla yapılandırılacak bir şey yok."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Yukarı düğmesi {subtype}",
+      "down": "Aşağı düğmesi {subtype}",
+      "press": "Düğme {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "basıldı",
+      "depressed": "bırakıldı"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Bağlantı" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "{label} adlı Jung Home sahnesi ağ geçidinde artık kullanılamıyor."
+    },
+    "invalid_trigger": {
+      "message": "Jung Home cihazı {trigger} tetikleyicisini desteklemiyor."
     }
   },
   "issues": {

@@ -92,6 +92,17 @@
       "no_covers": "Šiame sietuve žaliuzių nerasta, todėl nėra ko konfigūruoti."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Viršutinis mygtukas {subtype}",
+      "down": "Apatinis mygtukas {subtype}",
+      "press": "Mygtukas {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "paspaustas",
+      "depressed": "atleistas"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Ryšys" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "„Jung Home“ scena {label} sietuve nebepasiekiama."
+    },
+    "invalid_trigger": {
+      "message": "Jung Home įrenginys nepalaiko aktyviklio {trigger}."
     }
   },
   "issues": {

@@ -92,6 +92,17 @@
       "no_covers": "このゲートウェイにはカバーが見つからなかったため、設定する項目はありません。"
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "上ボタンが{subtype}",
+      "down": "下ボタンが{subtype}",
+      "press": "ボタンが{subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "押されました",
+      "depressed": "離されました"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "接続" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Jung Home のシーン {label} はゲートウェイで利用できなくなりました。"
+    },
+    "invalid_trigger": {
+      "message": "Jung Home デバイスはトリガー {trigger} をサポートしていません。"
     }
   },
   "issues": {

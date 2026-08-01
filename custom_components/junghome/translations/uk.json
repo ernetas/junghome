@@ -92,6 +92,17 @@
       "no_covers": "На цьому шлюзі жалюзі не знайдено, тому налаштовувати нічого."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Верхня кнопка {subtype}",
+      "down": "Нижня кнопка {subtype}",
+      "press": "Кнопка {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "натиснута",
+      "depressed": "відпущена"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Підключення" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Сцена Jung Home {label} більше недоступна на шлюзі."
+    },
+    "invalid_trigger": {
+      "message": "Пристрій Jung Home не підтримує тригер {trigger}."
     }
   },
   "issues": {

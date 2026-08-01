@@ -92,6 +92,17 @@
       "no_covers": "Na tem prehodu ni bilo najdenih senčil, zato ni ničesar za nastaviti."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Zgornji gumb {subtype}",
+      "down": "Spodnji gumb {subtype}",
+      "press": "Gumb {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "pritisnjen",
+      "depressed": "sproščen"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Povezava" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Scena Jung Home {label} na prehodu ni več na voljo."
+    },
+    "invalid_trigger": {
+      "message": "Naprava Jung Home ne podpira sprožilca {trigger}."
     }
   },
   "issues": {

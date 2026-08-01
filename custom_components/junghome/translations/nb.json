@@ -92,6 +92,17 @@
       "no_covers": "Det ble ikke funnet noen persienner på denne gatewayen, så det er ingenting å konfigurere."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "Opp-knapp {subtype}",
+      "down": "Ned-knapp {subtype}",
+      "press": "Knapp {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "trykket",
+      "depressed": "sluppet"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "Tilkobling" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Jung Home-scenen {label} er ikke lenger tilgjengelig på gatewayen."
+    },
+    "invalid_trigger": {
+      "message": "Jung Home-enheten støtter ikke utløseren {trigger}."
     }
   },
   "issues": {

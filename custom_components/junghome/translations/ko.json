@@ -92,6 +92,17 @@
       "no_covers": "이 게이트웨이에서 커버를 찾지 못했으므로 구성할 항목이 없습니다."
     }
   },
+  "device_automation": {
+    "trigger_type": {
+      "up": "위 버튼 {subtype}",
+      "down": "아래 버튼 {subtype}",
+      "press": "버튼 {subtype}"
+    },
+    "trigger_subtype": {
+      "pressed": "눌림",
+      "depressed": "놓임"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "gateway_connectivity": { "name": "연결" }
@@ -131,6 +142,9 @@
     },
     "scene_not_found": {
       "message": "Jung Home 장면 {label}을(를) 게이트웨이에서 더 이상 사용할 수 없습니다."
+    },
+    "invalid_trigger": {
+      "message": "Jung Home 기기가 {trigger} 트리거를 지원하지 않습니다."
     }
   },
   "issues": {
