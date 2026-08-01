@@ -42,7 +42,19 @@ PLATFORMS: list[Platform] = [
 # entities — and because identity is label-derived, the platform would then
 # re-create them under whatever label the next poll reports, losing the user's
 # entity_id/customisations. Requiring persistence rides out a transient blip.
-STALE_DEVICE_PRUNE_MISSES = 3
+#
+# The threshold is deliberately generous (10 polls ~ 10 minutes). Removal is
+# destructive and irreversible from the user's side — it takes the entity
+# registry entries with it, so custom names, areas and entity_ids are lost and
+# automations referencing them break — while the cost of removing late is only
+# that a device the user deleted in the app lingers for a few extra minutes.
+# Home Assistant core integrations that prune do so on the *first* miss, but
+# they trust their hub's device list; this gateway is documented above as
+# occasionally returning a partial one, so the same confidence isn't available.
+# It is also not known whether the gateway omits an unreachable BT-Mesh device
+# from `/functions/`; if it does, a device that is merely out of range must not
+# be deleted for it.
+STALE_DEVICE_PRUNE_MISSES = 10
 
 # Failures the stable-id migration can realistically hit, and therefore the only
 # ones it treats as "this item didn't migrate, carry on":
@@ -210,6 +222,17 @@ def _make_stale_device_pruner(
                 missing_polls[device_entry.id] = misses
                 continue
             missing_polls.pop(device_entry.id, None)
+            # Say so. This deletes the device and every entity on it, which the
+            # user otherwise discovers by noticing something has silently gone.
+            _LOGGER.warning(
+                "Jung Home: removing device %s (%s) — the gateway has not "
+                "reported it for %s consecutive polls. If it is still installed, "
+                "check that it is reachable; it will be re-added when the gateway "
+                "reports it again",
+                device_entry.name or device_entry.id,
+                ", ".join(sorted(slugs)),
+                STALE_DEVICE_PRUNE_MISSES,
+            )
             # Forget this device's unique_ids from the platforms' discovery sets
             # BEFORE removing it, so if the gateway reports it again the platforms
             # treat it as new and re-create its entities (otherwise the stale
@@ -488,6 +511,39 @@ def _migrate_device_identifiers(
                 device_entry.id,
             )
     return had_error
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: JungHomeConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Let the user delete a device the gateway no longer reports.
+
+    Without this the automatic pruner is the *only* way a device can leave the
+    registry, so a device the gateway has genuinely stopped reporting — hardware
+    removed, or relabelled in the app, which changes its label-derived identity —
+    sits there with no way to clear it from the UI.
+
+    A device the gateway *is* currently reporting is refused: the next poll would
+    re-create it immediately, so allowing the delete would just look broken.
+    """
+    coordinator = getattr(config_entry, "runtime_data", None)
+    live = {device_slug(d) for d in (coordinator.data or [])} if coordinator else set()
+    # The synthetic hub is not in the device list but is not stale either.
+    live.add(gateway_device_id(config_entry))
+    slugs = {
+        identifier
+        for domain, identifier in device_entry.identifiers
+        if domain == DOMAIN
+    }
+    if slugs & live:
+        return False
+    if coordinator is not None:
+        # Mirror the pruner: drop the ids so the platforms treat the device as new
+        # if the gateway ever reports it again.
+        coordinator.forget_device_unique_ids(device_entry.id)
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:

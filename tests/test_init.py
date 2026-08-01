@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -18,6 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome import (
     STALE_DEVICE_PRUNE_MISSES,
+    async_remove_config_entry_device,
     async_unload_entry,
 )
 from custom_components.junghome.const import (
@@ -25,6 +27,7 @@ from custom_components.junghome.const import (
     DOMAIN,
     device_slug,
     duplicate_slugs,
+    gateway_device_id,
 )
 from custom_components.junghome.coordinator import (
     JungHomeDataUpdateCoordinator,
@@ -1633,3 +1636,68 @@ def test_duplicate_slugs_reports_only_collisions() -> None:
     # Distinct labels collide with nothing.
     assert duplicate_slugs(copy.deepcopy(DEVICES)) == {}
     assert duplicate_slugs([]) == {}
+
+
+async def test_user_can_delete_a_device_the_gateway_dropped(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """An orphaned device can be removed from the UI.
+
+    The automatic pruner is deliberately slow and conservative, so without a
+    manual path a device the gateway has genuinely stopped reporting sits in the
+    registry with no way to clear it.
+    """
+    dev_reg = dr.async_get(hass)
+    ghost = dev_reg.async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={(DOMAIN, "ghost_device")},
+    )
+
+    assert await async_remove_config_entry_device(hass, init_integration, ghost) is True
+
+
+async def test_user_cannot_delete_a_live_device(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Deleting a device the gateway still reports is refused.
+
+    The next poll would re-create it immediately, so allowing it would just look
+    broken to the user.
+    """
+    dev_reg = dr.async_get(hass)
+    live = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    assert live is not None
+
+    assert await async_remove_config_entry_device(hass, init_integration, live) is False
+
+
+async def test_the_gateway_hub_cannot_be_deleted(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The synthetic hub is never in the device list but is not stale either."""
+    dev_reg = dr.async_get(hass)
+    hub = dev_reg.async_get_device(
+        identifiers={(DOMAIN, gateway_device_id(init_integration))}
+    )
+    assert hub is not None
+
+    assert await async_remove_config_entry_device(hass, init_integration, hub) is False
+
+
+async def test_pruning_a_device_is_logged(
+    hass: HomeAssistant, init_integration, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Removal must not be silent — it deletes every entity on the device."""
+    coordinator = init_integration.runtime_data
+    dev_reg = dr.async_get(hass)
+    dev_reg.async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={(DOMAIN, "ghost_device")},
+    )
+    with caplog.at_level(logging.WARNING):
+        for _ in range(STALE_DEVICE_PRUNE_MISSES):
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+
+    assert "removing device" in caplog.text
+    assert "ghost_device" in caplog.text
