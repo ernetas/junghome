@@ -185,8 +185,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task: asyncio.Task[None] | None = None
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
-        # Consecutive failed reconnects; reset to 0 by every successful connect.
+        # Consecutive failed reconnects; reset once a session proves stable (see
+        # ``_mark_session_stable``), not merely on a successful handshake.
         self._reconnect_failures = 0
+        # Whether the current outage has already produced its one WARNING, so the
+        # retry loop degrades to DEBUG instead of warning once a minute forever.
+        self._unavailable_logged = False
         # Repair-issue id, scoped to this entry so two gateways each report
         # their own outage instead of overwriting one shared issue.
         self._push_failure_issue_id = f"{ISSUE_PUSH_FAILURE}_{config_entry.entry_id}"
@@ -480,11 +484,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                         self.config_entry.async_start_reauth(self.hass)
                     return
                 self._record_error(err)
-                _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
+                self._log_disconnected(err)
                 self._note_reconnect_failure()
             except Exception as err:
                 self._record_error(err)
-                _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
+                self._log_disconnected(err)
                 self._note_reconnect_failure()
             if self._closing:
                 break
@@ -495,6 +499,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 self._reconnect_delay + random.uniform(0, RECONNECT_JITTER)  # noqa: S311
             )
             self._reconnect_delay = min(self._reconnect_delay * 2, MAX_RECONNECT_DELAY)
+
+    def _log_disconnected(self, err: BaseException) -> None:
+        """Log a dropped WebSocket once at WARNING, then at DEBUG.
+
+        The reconnect loop retries forever, so warning on every attempt turned an
+        unreachable gateway into a warning a minute for as long as it stayed down
+        — exactly the noise the `log-when-unavailable` rule exists to prevent.
+        The first drop is the newsworthy one; the rest repeat the same fact.
+        ``_mark_session_stable`` clears the flag, so a genuine recovery followed
+        by a genuine outage warns again.
+        """
+        if self._unavailable_logged:
+            _LOGGER.debug("Jung Home WebSocket still disconnected: %s", err)
+            return
+        self._unavailable_logged = True
+        _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
 
     def _note_reconnect_failure(self) -> None:
         """Count a failed reconnect and, past the threshold, tell the user.
@@ -625,6 +645,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         self._reconnect_failures = 0
+        if self._unavailable_logged:
+            # Pair the single WARNING above with a matching recovery line, so an
+            # outage has a visible end without trawling debug logs.
+            _LOGGER.warning("Jung Home WebSocket reconnected")
+            self._unavailable_logged = False
         ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
 
     def _notify_websocket_closed(self) -> None:
