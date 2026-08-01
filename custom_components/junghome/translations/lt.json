@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "„Jung Home“ scena {label} sietuve nebepasiekiama."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "„Jung Home“ tiesioginiai atnaujinimai sustojo",
+      "description": "„Home Assistant“ {failures} kartus iš eilės nepavyko iš naujo prisijungti prie „Jung Home“ sietuvo adresu {host}. Įrenginių būsenos nebesiunčiamos akimirksniu ir dabar atnaujinamos tik kartą per minutę. Patikrinkite, ar sietuvas įjungtas ir pasiekiamas jūsų tinkle. Ši problema išnyks savaime, kai ryšys bus atkurtas."
+    }
   }
 }

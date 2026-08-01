@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Scena Jung Home {label} na prehodu ni več na voljo."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Posodobitve Jung Home v živo so se ustavile",
+      "description": "Home Assistant se {failures}-krat zapored ni uspel znova povezati s prehodom Jung Home na naslovu {host}. Stanja naprav se ne pošiljajo več takoj in se zdaj osvežijo le enkrat na minuto. Preverite, ali je prehod vklopljen in dosegljiv v vašem omrežju. Ta težava bo izginila sama, ko bo povezava obnovljena."
+    }
   }
 }

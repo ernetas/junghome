@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -30,6 +31,14 @@ MAX_RECONNECT_DELAY = 60
 # Small random addition to each reconnect wait, so multiple gateways/entries on
 # the same network don't all retry in lockstep after a shared network blip.
 RECONNECT_JITTER = 0.5
+# Consecutive failed reconnects before raising a repair issue, mirroring Shelly's
+# MAX_PUSH_UPDATE_FAILURES. Below this the exponential backoff has waited well
+# under a minute in total, which an ordinary blip (gateway reboot, Wi-Fi hiccup)
+# rides out silently; past it the gateway has been unreachable long enough that
+# the user is unknowingly running on the 60 s REST poll and deserves to be told.
+MAX_RECONNECT_FAILURES = 5
+# Repair-issue translation key for that "live push is dead" state.
+ISSUE_PUSH_FAILURE = "websocket_push_failure"
 
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
@@ -97,6 +106,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task: asyncio.Task[None] | None = None
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
+        # Consecutive failed reconnects; reset to 0 by every successful connect.
+        self._reconnect_failures = 0
+        # Repair-issue id, scoped to this entry so two gateways each report
+        # their own outage instead of overwriting one shared issue.
+        self._push_failure_issue_id = f"{ISSUE_PUSH_FAILURE}_{config_entry.entry_id}"
         super().__init__(
             hass,
             _LOGGER,
@@ -330,9 +344,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     return
                 self._record_error(err)
                 _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
+                self._note_reconnect_failure()
             except Exception as err:
                 self._record_error(err)
                 _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
+                self._note_reconnect_failure()
             if self._closing:
                 break
             _LOGGER.debug(
@@ -342,6 +358,35 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 self._reconnect_delay + random.uniform(0, RECONNECT_JITTER)  # noqa: S311
             )
             self._reconnect_delay = min(self._reconnect_delay * 2, MAX_RECONNECT_DELAY)
+
+    def _note_reconnect_failure(self) -> None:
+        """Count a failed reconnect and, past the threshold, tell the user.
+
+        A dropped WebSocket degrades the integration to the 60 s REST poll: state
+        still updates, so nothing looks broken, it just stops being live. Below
+        ``MAX_RECONNECT_FAILURES`` that is an ordinary blip the backoff rides out
+        silently. Past it, raise a repair issue so the degradation is visible
+        rather than buried in a log warning. It is deliberately not fixable from
+        the UI — only the gateway or the network coming back fixes it, and
+        ``_run_websocket`` deletes the issue on the next successful connect.
+        """
+        self._reconnect_failures += 1
+        if self._reconnect_failures < MAX_RECONNECT_FAILURES:
+            return
+        # Re-created on every further failure so the attempt count stays current
+        # (and so a manually deleted issue comes back while the outage lasts).
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._push_failure_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_PUSH_FAILURE,
+            translation_placeholders={
+                "host": str(self.config["host"]),
+                "failures": str(self._reconnect_failures),
+            },
+        )
 
     async def _run_websocket(self) -> None:
         """Open one WebSocket session and pump messages until it closes."""
@@ -355,6 +400,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # disconnect) so the drop/recover story is visible without enabling
             # debug logging during a long soak.
             self._reconnect_delay = INITIAL_RECONNECT_DELAY
+            # Live push is back, so clear the counter and the degraded-mode
+            # repair issue (a no-op when it was never raised).
+            self._reconnect_failures = 0
+            ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
             _LOGGER.info("Jung Home WebSocket connected")
             self.ws_connected = True
             self.ws_last_connected = dt_util.utcnow()

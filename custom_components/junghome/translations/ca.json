@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "L'escena {label} de Jung Home ja no està disponible a la passarel·la."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Les actualitzacions en directe de Jung Home s'han aturat",
+      "description": "Home Assistant no ha pogut tornar a connectar-se a la passarel·la Jung Home a {host} {failures} vegades seguides. Els estats dels dispositius ja no s'envien a l'instant i ara només s'actualitzen un cop per minut. Comprova que la passarel·la estigui engegada i sigui accessible a la teva xarxa. Aquest problema desapareixerà tot sol quan es restableixi la connexió."
+    }
   }
 }

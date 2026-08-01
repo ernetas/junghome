@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Jung Home -skene {label} ei ole enää käytettävissä yhdyskäytävässä."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Jung Homen reaaliaikaiset päivitykset ovat pysähtyneet",
+      "description": "Home Assistant ei onnistunut muodostamaan yhteyttä uudelleen Jung Home -yhdyskäytävään osoitteessa {host} {failures} kertaa peräkkäin. Laitteiden tiloja ei enää lähetetä välittömästi, vaan ne päivittyvät nyt vain kerran minuutissa. Tarkista, että yhdyskäytävä on käynnissä ja tavoitettavissa verkossasi. Tämä ongelma poistuu itsestään, kun yhteys palautuu."
+    }
   }
 }

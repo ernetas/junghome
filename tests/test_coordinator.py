@@ -9,11 +9,15 @@ import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.const import DOMAIN
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.coordinator import (
+    MAX_RECONNECT_FAILURES,
+    JungHomeDataUpdateCoordinator,
+)
 
 
 def _coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -183,3 +187,100 @@ async def test_scene_recall_without_id_is_ignored(hass: HomeAssistant) -> None:
     )
     await hass.async_block_till_done()
     assert events == []
+
+
+class _EmptyWS:
+    """A WebSocket that connects successfully and closes without any frames."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> bool:
+        return False
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> object:
+        raise StopAsyncIteration
+
+
+async def _run_failing_loop(
+    coordinator: JungHomeDataUpdateCoordinator, attempts: int
+) -> None:
+    """Drive `_websocket_loop` through exactly `attempts` failed reconnects."""
+    calls: list[int] = []
+
+    async def always_failing(self: JungHomeDataUpdateCoordinator) -> None:
+        calls.append(1)
+        if len(calls) >= attempts:
+            self._closing = True  # exit the loop once we've failed enough
+        raise ConnectionError("drop")
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", always_failing),
+        patch("custom_components.junghome.coordinator.asyncio.sleep", AsyncMock()),
+    ):
+        await coordinator._websocket_loop()
+
+    assert len(calls) == attempts
+
+
+async def test_repair_issue_raised_after_repeated_reconnect_failures(
+    hass: HomeAssistant,
+) -> None:
+    """Sustained reconnect failure surfaces the silent REST-only degradation."""
+    coordinator = _coordinator(hass)
+    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+
+    issue = ir.async_get(hass).async_get_issue(
+        DOMAIN, coordinator._push_failure_issue_id
+    )
+    assert issue is not None
+    assert issue.is_fixable is False
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "websocket_push_failure"
+    assert issue.translation_placeholders == {
+        "host": "h",
+        "failures": str(MAX_RECONNECT_FAILURES),
+    }
+
+
+async def test_no_repair_issue_below_failure_threshold(hass: HomeAssistant) -> None:
+    """An ordinary blip the backoff rides out must not nag the user."""
+    coordinator = _coordinator(hass)
+    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES - 1)
+
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+        is None
+    )
+
+
+async def test_repair_issue_cleared_on_successful_reconnect(
+    hass: HomeAssistant,
+) -> None:
+    """Getting the WebSocket back deletes the issue and resets the counter."""
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+
+    coordinator._closing = False
+    session = Mock()
+    session.ws_connect = Mock(return_value=_EmptyWS())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+    ):
+        await coordinator._run_websocket()
+
+    assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id) is None
+    assert coordinator._reconnect_failures == 0

@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "Jung Home-scenen {label} er ikke længere tilgængelig på gatewayen."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Live-opdateringer fra Jung Home er stoppet",
+      "description": "Home Assistant kunne ikke oprette forbindelse til Jung Home-gatewayen på {host} {failures} gange i træk. Enhedstilstande sendes ikke længere med det samme og opdateres nu kun én gang i minuttet. Kontrollér, at gatewayen er tændt og kan nås på dit netværk. Dette problem forsvinder af sig selv, når forbindelsen er genoprettet."
+    }
   }
 }

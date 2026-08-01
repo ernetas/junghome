@@ -132,5 +132,11 @@
     "scene_not_found": {
       "message": "{label} adlı Jung Home sahnesi ağ geçidinde artık kullanılamıyor."
     }
+  },
+  "issues": {
+    "websocket_push_failure": {
+      "title": "Jung Home canlı güncellemeleri durdu",
+      "description": "Home Assistant, {host} adresindeki Jung Home ağ geçidine art arda {failures} kez yeniden bağlanamadı. Cihaz durumları artık anında gönderilmiyor ve yalnızca dakikada bir yenileniyor. Ağ geçidinin açık ve ağınızda erişilebilir olduğundan emin olun. Bağlantı yeniden kurulduğunda bu sorun kendiliğinden ortadan kalkar."
+    }
   }
 }
