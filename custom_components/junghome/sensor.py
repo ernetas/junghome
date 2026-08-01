@@ -90,7 +90,15 @@ async def async_setup_entry(
                         if is_presence_quantity(raw_label, unit):
                             continue
                         label = raw_label.strip() if raw_label else None
-                        if label and unit:
+                        # A unit is NOT required. An unrecognised unit already
+                        # becomes a unitless measurement sensor below, so refusing
+                        # a datapoint that simply has no unit was inconsistent —
+                        # and it fell through binary_sensor too (that platform
+                        # only claims presence-ish labels), so a labelled
+                        # unit-less quantity such as a counter or an index got no
+                        # entity at all and no log line. A label is still required:
+                        # it is the entity's name and part of its unique_id.
+                        if label:
                             uid = stable_unique_id(
                                 device, datapoint, label.replace(" ", "_").lower()
                             )
@@ -120,7 +128,7 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         device: Device,
         datapoint: Datapoint,
         label: str,
-        unit: str,
+        unit: str | None,
     ) -> None:
         """Initialize the quantity."""
         super().__init__(coordinator, device)
@@ -131,15 +139,25 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         self._attr_unique_id = stable_unique_id(
             device, datapoint, label.replace(" ", "_").lower()
         )
-        mapped = _UNIT_MAP.get(unit.strip().lower())
+        cleaned = (unit or "").strip()
+        mapped = _UNIT_MAP.get(cleaned.lower())
         if mapped is not None:
             device_class, state_class, ha_unit = mapped
         else:
-            # Unknown unit: expose a unitless measurement sensor (numeric, with
-            # statistics) rather than a stateless string with an arbitrary unit.
+            # Unknown or absent unit: expose a unitless measurement sensor
+            # (numeric, with statistics) rather than a stateless string with an
+            # arbitrary unit.
             device_class, state_class, ha_unit = None, _MEAS, None
-            if unit not in _warned_units:
-                _warned_units.add(unit)
+            if not cleaned:
+                # A quantity that genuinely carries no unit (a count, an index)
+                # is expected, not a mapping gap — don't warn about it.
+                _LOGGER.debug(
+                    "Jung Home quantity %r has no unit; exposing a unitless "
+                    "measurement sensor",
+                    label,
+                )
+            elif cleaned not in _warned_units:
+                _warned_units.add(cleaned)
                 _LOGGER.warning(
                     "Unmapped Jung Home quantity unit %r; exposing a unitless "
                     "measurement sensor",
