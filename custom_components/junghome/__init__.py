@@ -17,6 +17,7 @@ from .const import (
     datapoint_suffix,
     device_slug,
     duplicate_slugs,
+    entry_scope,
     gateway_device_id,
     gateway_device_info,
 )
@@ -283,6 +284,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
                 entry, data={**entry.data, "stable_ids_migrated": True}
             )
 
+    # One-time re-keying of scene entities onto per-gateway unique_ids. Separate
+    # flag from the stable-id migration above, which existing installs have
+    # already completed and so would never re-run.
+    if not entry.data.get("scene_ids_scoped"):
+        if _migrate_scene_unique_ids(hass, entry):
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, "scene_ids_scoped": True}
+            )
+
     # Register the synthetic gateway (hub) device up front, before the platforms
     # create the per-function devices that link to it via ``via_device``. Creating
     # it here rather than lazily (via the connectivity sensor) guarantees it
@@ -457,6 +467,54 @@ def _migrate_to_stable_ids(
         _LOGGER.info("Jung Home: migrated %s entities to firmware-stable ids", migrated)
     except _MIGRATION_ERRORS:
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
+        return False
+    return not had_error
+
+
+def _migrate_scene_unique_ids(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
+    """Re-key scene entities from the old unscoped unique_id to the scoped one.
+
+    Scene ids used to be the scene label alone (``movie_night_scene``), which is
+    not unique across config entries — two gateways each holding a "Movie night"
+    scene produced the same unique_id and Home Assistant rejected the second
+    entity. They are now prefixed with ``entry_scope``.
+
+    Re-keying rather than letting the platform create fresh entities is what
+    keeps the user's ``entity_id``, name, area and history: a new unique_id would
+    otherwise register a *new* entity and orphan the old one.
+
+    Returns True on clean completion so the caller records the one-shot flag.
+    """
+    had_error = False
+    # Outer guard mirrors `_migrate_to_stable_ids`: enumerating the registry can
+    # itself fail, and a migration must never take setup down with it.
+    try:
+        prefix = f"{entry_scope(entry)}_"
+        ent_reg = er.async_get(hass)
+        for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+            if entity.domain != Platform.SCENE:
+                continue
+            old_uid = entity.unique_id
+            if old_uid.startswith(prefix):
+                continue  # already scoped
+            new_uid = f"{prefix}{old_uid}"
+            try:
+                existing = ent_reg.async_get_entity_id(entity.domain, DOMAIN, new_uid)
+                if existing and existing != entity.entity_id:
+                    # A scoped entity already exists (e.g. a partially-completed
+                    # earlier pass); drop the stale unscoped one rather than
+                    # collide on the new id.
+                    ent_reg.async_remove(entity.entity_id)
+                else:
+                    ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_uid)
+            except _MIGRATION_ERRORS:
+                had_error = True
+                _LOGGER.exception(
+                    "Jung Home: failed to re-key scene entity %s to a scoped id",
+                    entity.entity_id,
+                )
+    except _MIGRATION_ERRORS:
+        _LOGGER.exception("Jung Home: failed to re-key scene unique ids")
         return False
     return not had_error
 

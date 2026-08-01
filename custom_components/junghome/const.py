@@ -118,6 +118,22 @@ def gateway_device_id(entry: "ConfigEntry") -> str:
     return f"gateway_{entry.unique_id or entry.entry_id}"
 
 
+def entry_scope(entry: "ConfigEntry") -> str:
+    """Return a per-gateway prefix for ids that aren't tied to a device.
+
+    Device-backed ids are already unique per gateway, because they carry the
+    device slug. Scenes have no device, so their id was the scene label alone —
+    and Home Assistant requires a unique_id to be unique across *all* config
+    entries of an integration, so two gateways each holding a "Movie night"
+    scene collided and the second entity was rejected.
+
+    Anchored on the entry's ``unique_id`` (the typed host or the mDNS hostname),
+    which survives a reconfigure, and falling back to the entry id. Same anchor
+    as ``gateway_device_id``.
+    """
+    return slugify(entry.unique_id or entry.entry_id)
+
+
 def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceInfo:
     """Return the ``DeviceInfo`` for the synthetic gateway (hub) device.
 
