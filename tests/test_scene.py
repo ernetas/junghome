@@ -247,3 +247,193 @@ async def test_revoked_token_on_recall_starts_reauth(hass: HomeAssistant) -> Non
     ):
         await coordinator.activate_scene("id0001")
     start_reauth.assert_called_once()
+
+
+async def test_scene_migration_preserves_the_entity_id(hass: HomeAssistant) -> None:
+    """Re-keying must keep the user's entity_id, name, area and history.
+
+    Scoping the unique_id without migrating would register a *new* entity and
+    orphan the old one, silently breaking every automation that referenced it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    # An entity created under the old, unscoped scheme, renamed by the user.
+    old = ent_reg.async_get_or_create(
+        Platform.SCENE,
+        DOMAIN,
+        "movie_night_scene",
+        config_entry=entry,
+        suggested_object_id="my_movie_scene",
+    )
+    ent_reg.async_update_entity(old.entity_id, name="My Movie Scene")
+    assert old.entity_id == "scene.my_movie_scene"
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    migrated = ent_reg.async_get("scene.my_movie_scene")
+    assert migrated is not None, "the entity_id changed — history and automations lost"
+    assert migrated.unique_id == "1_2_3_4_movie_night_scene"
+    assert migrated.name == "My Movie Scene"
+    # One-shot: the flag stops it re-running on every setup.
+    assert entry.data.get("scene_ids_scoped") is True
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.real_scenes_fetch
+async def test_two_gateways_can_share_a_scene_name(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The bug being fixed: a same-named scene on two gateways.
+
+    unique_ids must be unique across *all* config entries of an integration, so
+    the unscoped id made Home Assistant reject the second gateway's entity.
+    """
+    for host in ("1.2.3.4", "5.6.7.8"):
+        aioclient_mock.get(
+            f"https://{host}/api/junghome/scenes/",
+            json=[{"id": "id0001", "label": "Movie night"}],
+        )
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id=host,
+            data={CONF_HOST: host, CONF_TOKEN: "tok"},
+        )
+        entry.add_to_hass(hass)
+        with (
+            patch.object(
+                JungHomeDataUpdateCoordinator,
+                "_fetch_devices_from_api",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+            ),
+        ):
+            await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    scenes = [e for e in ent_reg.entities.values() if e.domain == Platform.SCENE]
+    assert len(scenes) == 2, f"expected one scene per gateway, got {len(scenes)}"
+    assert {e.unique_id for e in scenes} == {
+        "1_2_3_4_movie_night_scene",
+        "5_6_7_8_movie_night_scene",
+    }
+
+
+async def test_scene_migration_drops_a_stale_duplicate(hass: HomeAssistant) -> None:
+    """A leftover unscoped entity is removed when the scoped one already exists.
+
+    Reachable after a partially-completed earlier pass; re-keying onto an id
+    that is already taken would raise instead.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    # Already migrated...
+    ent_reg.async_get_or_create(
+        Platform.SCENE, DOMAIN, "1_2_3_4_movie_night_scene", config_entry=entry
+    )
+    # ...and the stale unscoped leftover that would collide with it.
+    stale = ent_reg.async_get_or_create(
+        Platform.SCENE, DOMAIN, "movie_night_scene", config_entry=entry
+    )
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert ent_reg.async_get(stale.entity_id) is None
+    assert (
+        ent_reg.async_get_entity_id(Platform.SCENE, DOMAIN, "1_2_3_4_movie_night_scene")
+        is not None
+    )
+    assert entry.data.get("scene_ids_scoped") is True
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_scene_migration_isolates_a_per_entity_failure(
+    hass: HomeAssistant,
+) -> None:
+    """One bad scene entity must not abort the pass or fail setup."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create(
+        Platform.SCENE, DOMAIN, "movie_night_scene", config_entry=entry
+    )
+    ent_reg.async_get_or_create(
+        Platform.SCENE, DOMAIN, "good_morning_scene", config_entry=entry
+    )
+
+    original = er.EntityRegistry.async_update_entity
+
+    def boom(self, entity_id, **kwargs):
+        if kwargs.get("new_unique_id") == "1_2_3_4_movie_night_scene":
+            raise ValueError("unique_id already registered")
+        return original(self, entity_id, **kwargs)
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+        patch.object(er.EntityRegistry, "async_update_entity", boom),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    # The other scene still migrated...
+    assert (
+        ent_reg.async_get_entity_id(
+            Platform.SCENE, DOMAIN, "1_2_3_4_good_morning_scene"
+        )
+        is not None
+    )
+    # ...and the flag stays unset so the next setup retries the failed one.
+    assert entry.data.get("scene_ids_scoped") is not True
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .const import DOMAIN
+from .const import DOMAIN, entry_scope
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +32,18 @@ def _scene_slug(label: str) -> str:
     if slug and slug != "unknown":
         return slug
     return "scene"
+
+
+def scene_unique_id(entry: JungHomeConfigEntry, label: str) -> str:
+    """Return the firmware-stable, per-gateway unique_id for a scene.
+
+    Scoped by ``entry_scope`` because a scene has no backing device to make it
+    unique: the id used to be the scene label alone, so two gateways each with a
+    "Movie night" scene produced the same unique_id and Home Assistant rejected
+    the second entity. ``_migrate_scene_unique_ids`` in ``__init__`` re-keys
+    entities created under the old unscoped scheme.
+    """
+    return f"{entry_scope(entry)}_{_scene_slug(label)}_scene"
 
 
 async def async_setup_entry(
@@ -70,7 +82,7 @@ async def async_setup_entry(
         for scene in coordinator.scenes or []:
             label = scene.get("label")
             if label:
-                uid = f"{_scene_slug(label)}_scene"
+                uid = scene_unique_id(entry, label)
                 # Two scenes whose labels slug identically collide on one uid, so
                 # only one entity can exist (same accepted limitation as devices —
                 # see const.device_slug). Surface the dropped one rather than
