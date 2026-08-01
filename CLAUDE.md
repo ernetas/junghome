@@ -121,14 +121,14 @@ When working on anything that touches the gateway protocol, consult
   `pytest_homeassistant_custom_component`'s `hass` fixture, `MockConfigEntry`,
   `aioclient_mock`. Needs the pinned `homeassistant`; runs on Python 3.14 like
   the other workflows. Run `pytest`; wired into `.github/workflows/test.yml`.
-  Snapshot tests are still absent — see the Shelly-comparison notes below.
+  Snapshot tests are still absent — see the backlog notes below.
 
-## Ideas from comparing against Shelly (core reference integration)
+## Ideas from comparing against Home Assistant core conventions
 
-Findings from reading `homeassistant/components/shelly` (HA core's most
-mature local-push integration) against this integration, filtered to what's
-genuinely applicable to a single local-gateway integration (Shelly's
-multi-generation/cloud complexity mostly doesn't apply).
+Findings from measuring this integration against the patterns HA core's
+mature local-push integrations follow, filtered to what's genuinely
+applicable to a single local-gateway integration (the multi-generation and
+cloud-fallback complexity some of them carry mostly doesn't apply).
 
 **Most of the original list has since been implemented.** What follows is split
 into what is already done (don't re-do it) and what is still open. The open
@@ -168,7 +168,7 @@ implementing.
 - **No `services.py`/`services.yaml`** — `quality_scale.yaml` marks this
   exempt. Worth reconsidering only if a real use case shows up, e.g. a
   `recall_scene`/`send_datapoint_value` service scoped by device, following
-  Shelly's `ServiceValidationError` translation-key pattern.
+  the core `ServiceValidationError` translation-key pattern.
 
 ### Still open
 
@@ -179,10 +179,10 @@ starting so work isn't duplicated.
   `repair-websocket-degraded`). There is no `repairs.py`. Repeated WebSocket
   reconnect failures in `_websocket_loop` only log a warning, with no
   user-visible signal that the integration has silently fallen back to 60 s
-  REST-only polling (Shelly raises a repair issue after
-  `MAX_PUSH_UPDATE_FAILURES`). A repair issue (`fixable=False` is fine) would
-  cover both this and the device-id-churn reload in
-  `_reload_if_device_ids_changed`, which also only logs today.
+  REST-only polling (the core convention is to raise a repair issue once
+  consecutive push failures pass a bounded threshold). A repair issue
+  (`fixable=False` is fine) would cover both this and the device-id-churn
+  reload in `_reload_if_device_ids_changed`, which also only logs today.
 - **Config-flow host collision** (#131, `fix-manual-host-duplicate`).
   `_async_apply_host` (`config_flow.py:238`) only calls `async_set_unique_id` +
   `_abort_if_unique_id_configured`; unlike `async_step_zeroconf` it never
@@ -192,8 +192,9 @@ starting so work isn't duplicated.
 - **Reconfigure connect-then-commit** (#132, `verify-reconfigure-host`).
   `async_step_reconfigure` (`config_flow.py:381`) checks the new host against
   other entries but never verifies it is reachable or is the *same* gateway
-  (unlike Shelly's MAC re-check + `_abort_if_unique_id_mismatch`). A typo or
-  wrong IP is accepted and only surfaces as a later reauth/connect failure.
+  (the core pattern re-checks the device identity and calls
+  `_abort_if_unique_id_mismatch`). A typo or wrong IP is accepted and only
+  surfaces as a later reauth/connect failure.
 - **Broad `except Exception` handlers** (#133, `narrow-broad-excepts`). The
   best-effort handlers in `__init__.py`'s migration code (376, 400, 408) and in
   `coordinator.py` (237, 333, 399, 624) are broader than the specific
@@ -209,8 +210,9 @@ starting so work isn't duplicated.
   files — snapshots would catch unintended entity-attribute/unique-id
   regressions more cheaply than hand-written assertions, especially now that
   the platform files exist.
-- **Reusable JSON device/API fixtures.** No `tests/fixtures/` (Shelly keeps
-  per-model fixtures there); current tests build device/datapoint dicts inline.
+- **Reusable JSON device/API fixtures.** No `tests/fixtures/` (core
+  integrations keep per-model fixtures there); current tests build
+  device/datapoint dicts inline.
 - **Coverage is not gated.** `.github/workflows/test.yml` collects
   `--cov-report=term-missing` but passes no `--cov-fail-under=`, so coverage
   can silently regress.

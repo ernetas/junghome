@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_TOKEN, Platform
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -251,6 +252,15 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         host = _normalize_host(raw_host)
         if not host:
             return "invalid_host"
+        # unique_id alone does not catch every duplicate: a gateway discovered
+        # over mDNS is keyed by its *hostname*, so typing that same gateway's IP
+        # here would claim a different unique_id and add it a second time. Match
+        # on the stored host too — the same check `async_step_zeroconf` and
+        # `async_step_reconfigure` already apply from the other direction.
+        if any(
+            entry.data.get(CONF_HOST) == host for entry in self._async_current_entries()
+        ):
+            raise AbortFlow("already_configured")
         self._host = host
         # Populate the {host} flow_title placeholder for later steps.
         self.context["title_placeholders"] = {"host": host}

@@ -3,7 +3,10 @@
 import copy
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
+import pytest
 from homeassistant.components.cover import CoverEntityFeature
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
@@ -20,7 +23,10 @@ from custom_components.junghome.const import (
     DOMAIN,
     device_slug,
 )
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.coordinator import (
+    JungHomeDataUpdateCoordinator,
+    _parse_color_temp_range,
+)
 from custom_components.junghome.diagnostics import (
     _support_summary,
     async_get_config_entry_diagnostics,
@@ -379,10 +385,49 @@ async def test_legacy_unique_id_migrated(hass: HomeAssistant) -> None:
 
 
 async def test_migration_not_marked_done_on_failure(hass: HomeAssistant) -> None:
-    """If migration raises at the top level, the entry isn't flagged migrated.
+    """An expected migration failure leaves the entry unflagged but set up.
 
     Leaving ``stable_ids_migrated`` unset means setup retries the migration on the
-    next load instead of silently skipping it forever.
+    next load instead of silently skipping it forever. ValueError stands in for
+    Home Assistant rejecting a registry write (a unique_id already claimed) —
+    one of the failures the migration is designed to absorb.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=DEVICES),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+        patch(
+            "custom_components.junghome.er.async_entries_for_config_entry",
+            side_effect=ValueError("boom"),
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    # Setup still succeeds, but the migration flag must NOT be set (so it retries).
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.data.get("stable_ids_migrated") is not True
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_migration_unexpected_error_fails_setup(hass: HomeAssistant) -> None:
+    """An unanticipated migration error must not be absorbed as a skipped item.
+
+    The migration rewrites the registry, so an unknown fault is a bug worth
+    surfacing rather than folding into the "one bad item, carry on" path where
+    it would be indistinguishable from malformed gateway data.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -407,10 +452,8 @@ async def test_migration_not_marked_done_on_failure(hass: HomeAssistant) -> None
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    # Setup still succeeds, but the migration flag must NOT be set (so it retries).
+    assert entry.state is ConfigEntryState.SETUP_ERROR
     assert entry.data.get("stable_ids_migrated") is not True
-    await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
 
 
 async def test_host_change_triggers_reload(
@@ -823,11 +866,70 @@ async def test_area_for_device_resolves_group_name(hass: HomeAssistant) -> None:
     )
 
 
+async def test_color_temp_range_for_device_reads_group_metadata(
+    hass: HomeAssistant,
+) -> None:
+    """color_temp_range_for_device resolves the group's advertised Kelvin range."""
+    coordinator = _bare_coordinator(hass)
+    device = {"id": "d", "parent_groups": ["g1"]}
+    # Both plausible encodings are accepted, and values may be strings.
+    coordinator.groups = [
+        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 6500}}
+    ]
+    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
+    coordinator.groups = [{"id": "g1", "color_temperature_range": ["2700", "6500"]}]
+    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
+    # No parent groups / an id that doesn't resolve / a group without a range.
+    assert coordinator.color_temp_range_for_device({"id": "d"}) is None
+    assert (
+        coordinator.color_temp_range_for_device({"id": "d", "parent_groups": ["gX"]})
+        is None
+    )
+    coordinator.groups = [{"id": "g1", "name": "Living room"}]
+    assert coordinator.color_temp_range_for_device(device) is None
+    # The first parent group advertising a usable range wins.
+    coordinator.groups = [
+        {"id": "g0", "name": "no range here"},
+        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 4000}},
+    ]
+    assert coordinator.color_temp_range_for_device(
+        {"id": "d", "parent_groups": ["g0", "g1"]}
+    ) == (2200, 4000)
+
+
+def test_parse_color_temp_range_rejects_bad_payloads() -> None:
+    """The range parser only trusts a well-formed, plausible pair of numbers."""
+    assert _parse_color_temp_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
+    assert _parse_color_temp_range([2700, 6500]) == (2700, 6500)
+    for raw in (
+        None,
+        "2700-6500",
+        42,
+        {},  # no keys at all
+        {"min": 2700},  # half a range
+        {"min": "warm", "max": "cool"},  # non-numeric
+        {"min": None, "max": 6500},
+        {"min": {"nested": 1}, "max": 6500},  # not a scalar
+        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
+        {"min": 6500, "max": 2700},  # reversed
+        {"min": 4000, "max": 4000},  # zero-width
+        {"min": 10, "max": 6500},  # implausibly low
+        {"min": 2700, "max": 999999},  # implausibly high
+        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
+        {"min": 2700, "max": float("inf")},  # ...and Infinity
+        [2700],  # wrong arity
+        [2000, 4000, 6500],
+    ):
+        assert _parse_color_temp_range(raw) is None, raw
+
+
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
-    """A groups fetch failure leaves groups empty and never raises."""
+    """A gateway-side groups failure leaves groups empty and never raises."""
     coordinator = _bare_coordinator(hass)
     with patch.object(
-        coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=RuntimeError)
+        coordinator,
+        "_fetch_groups_from_api",
+        AsyncMock(side_effect=aiohttp.ClientError),
     ):
         await coordinator.async_fetch_groups()
     assert coordinator.groups == []
@@ -838,6 +940,24 @@ async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
     ):
         await coordinator.async_fetch_groups()
     assert coordinator.groups == [{"id": "g", "name": "X"}]
+
+
+async def test_async_fetch_groups_lets_unexpected_errors_surface(
+    hass: HomeAssistant,
+) -> None:
+    """Best-effort covers gateway failures, not bugs in our own code.
+
+    A RuntimeError here is not the gateway being unreachable; it is a defect,
+    and swallowing it would hide it behind a debug-level log line forever.
+    """
+    coordinator = _bare_coordinator(hass)
+    with (
+        patch.object(
+            coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=RuntimeError)
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        await coordinator.async_fetch_groups()
 
 
 def _grouped_lamp() -> dict:

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import random
 from collections import deque
 from datetime import datetime, timedelta
@@ -31,8 +32,8 @@ MAX_RECONNECT_DELAY = 60
 # Small random addition to each reconnect wait, so multiple gateways/entries on
 # the same network don't all retry in lockstep after a shared network blip.
 RECONNECT_JITTER = 0.5
-# Consecutive failed reconnects before raising a repair issue, mirroring Shelly's
-# MAX_PUSH_UPDATE_FAILURES. Below this the exponential backoff has waited well
+# Consecutive failed reconnects before raising a repair issue, following the core
+# convention of bounding push failures. Below this the backoff has waited well
 # under a minute in total, which an ordinary blip (gateway reboot, Wi-Fi hiccup)
 # rides out silently; past it the gateway has been unreachable long enough that
 # the user is unknowingly running on the 60 s REST poll and deserves to be told.
@@ -49,8 +50,61 @@ ISSUE_PUSH_FAILURE = "websocket_push_failure"
 WS_FRAME_LOG_SIZE = 60
 WS_FRAME_MAX_CHARS = 2000
 
+# Sanity bounds for a gateway-advertised colour-temperature range. Anything
+# outside this is not a plausible tunable-white range and is treated as an
+# unrecognised payload rather than trusted (a bogus range would otherwise be
+# declared to Home Assistant, which enforces it against the user).
+MIN_PLAUSIBLE_KELVIN = 1000
+MAX_PLAUSIBLE_KELVIN = 20000
+
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
+
+
+def _as_kelvin(raw: Any) -> int | None:
+    """Coerce one end of a gateway range to Kelvin, or None if it isn't a number.
+
+    Gateway numerics arrive as strings as often as numbers, so ``"2700"`` and
+    ``2700`` are both accepted. ``bool`` is rejected explicitly (it is an ``int``
+    subclass, and ``True`` is not a temperature), and so are the non-finite
+    floats: ``json.loads`` accepts the ``NaN`` / ``Infinity`` literals, and both
+    survive naive comparisons (every ``NaN`` comparison is False, so a NaN range
+    would pass the sanity checks below).
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        kelvin = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(kelvin):
+        return None
+    return round(kelvin)
+
+
+def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
+    """Parse a gateway colour-temperature range, or None if unusable.
+
+    Accepts ``{"min": 2700, "max": 6500}`` and ``[2700, 6500]``. Rejects
+    non-numeric, reversed, zero-width and implausible ranges — the caller then
+    falls back to the light platform's defaults.
+    """
+    if isinstance(raw, dict):
+        low, high = raw.get("min"), raw.get("max")
+    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
+        low, high = raw[0], raw[1]
+    else:
+        return None
+    low_k, high_k = _as_kelvin(low), _as_kelvin(high)
+    if low_k is None or high_k is None:
+        return None
+    # Reversed and zero-width ranges are both nonsense; Home Assistant would
+    # reject (or mis-render) a min >= max colour-temperature entity.
+    if low_k >= high_k:
+        return None
+    if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
+        return None
+    return low_k, high_k
 
 
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
@@ -87,8 +141,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
         # Last `groups` broadcast (per-room capability metadata, e.g. which groups
-        # advertise color_temperature_range). Not consumed by any entity; kept for
-        # diagnostics so unimplemented capabilities are visible.
+        # advertise color_temperature_range). Read by `area_for_device` and
+        # `color_temp_range_for_device`, and surfaced in diagnostics so the
+        # capabilities we do not yet implement stay visible.
         self.groups: list[dict[str, Any]] = []
         # Bounded log of recent raw WebSocket frames for diagnostics.
         self.ws_frame_log: deque[str] = deque(maxlen=WS_FRAME_LOG_SIZE)
@@ -248,7 +303,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             self.groups = await self._fetch_groups_from_api(
                 self.config["host"], self.config["token"]
             )
-        except Exception as err:  # best-effort, never fatal
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # Best-effort, never fatal: the gateway being unreachable, slow, or
+            # answering with a non-JSON body (ValueError covers
+            # json.JSONDecodeError) just leaves the room list empty until the
+            # WebSocket handshake delivers it. Any other exception is a bug here
+            # rather than a gateway problem, so it is left to propagate.
             _LOGGER.debug("Could not fetch Jung Home groups: %s", err)
 
     def area_for_device(self, device: Device) -> str | None:
@@ -266,6 +326,34 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             name = by_id.get(parent)
             if name:
                 return str(name)
+        return None
+
+    def color_temp_range_for_device(self, device: Device) -> tuple[int, int] | None:
+        """Return the (min, max) Kelvin range a device's groups advertise.
+
+        The gateway publishes per-group capability metadata in its ``groups``
+        broadcast, including ``color_temperature_range``. Returns None when no
+        parent group advertises a usable range, in which case the light platform
+        keeps its built-in defaults.
+
+        The exact wire shape is not pinned down in the gateway docs, so both
+        plausible encodings are accepted (``{"min": .., "max": ..}`` and a
+        two-element ``[min, max]``) and anything unrecognised or implausible is
+        rejected rather than guessed at. That keeps a surprising payload a no-op
+        — the light falls back to its defaults — instead of declaring a nonsense
+        range that Home Assistant would then enforce against the user.
+        """
+        parents = device.get("parent_groups") or []
+        if not parents:
+            return None
+        by_id = {g.get("id"): g for g in self.groups}
+        for parent in parents:
+            group = by_id.get(parent)
+            if group is None:
+                continue
+            parsed = _parse_color_temp_range(group.get("color_temperature_range"))
+            if parsed is not None:
+                return parsed
         return None
 
     def known_unique_ids(self, domain: str) -> set[str]:
@@ -549,8 +637,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
                 self._handle_scenes_broadcast(msg_type, data)
             elif msg_type == "groups":
-                # Full groups list (on connect and on change). Not consumed by any
-                # entity, but kept for diagnostics (capability metadata).
+                # Full groups list (on connect and on change). Carries per-room
+                # capability metadata (area names, colour-temperature ranges) and
+                # is surfaced in diagnostics.
                 self.groups = [g for g in data if isinstance(g, dict)]
             else:
                 _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
