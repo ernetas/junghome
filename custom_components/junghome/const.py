@@ -19,8 +19,8 @@ EVENT_SCENE_RECALLED = f"{DOMAIN}_scene_recalled"
 
 # Fired on every genuine rocker-button edge the gateway pushes. The event
 # entities already expose those edges, but a device trigger has to attach to
-# something on the *bus* (this is how HA's own button integrations do it — see
-# Shelly and Hue), so the button platform re-emits each edge here and
+# something on the *bus* (this is how HA's own button integrations do it),
+# so the button platform re-emits each edge here and
 # ``device_trigger`` matches on it.
 EVENT_BUTTON_ACTION = f"{DOMAIN}_button_action"
 
