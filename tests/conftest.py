@@ -333,6 +333,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "real_groups_fetch: let the test run the real _fetch_groups_from_api "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_scenes_fetch: let the test run the real _fetch_scenes_from_api "
+        "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -360,6 +365,25 @@ def mock_groups_fetch(request):
     with patch.object(
         JungHomeDataUpdateCoordinator,
         "_fetch_groups_from_api",
+        AsyncMock(return_value=[]),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_scenes_fetch(request):
+    """Keep the setup-time REST scenes fetch off the network.
+
+    The mirror of ``mock_groups_fetch``: ``async_setup_entry`` also fetches the
+    gateway's scenes over REST before the platforms are set up, so that scenes
+    exist even when the WebSocket never connects. Same defaulting, same opt-out.
+    """
+    if request.node.get_closest_marker("real_scenes_fetch") is not None:
+        yield
+        return
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_scenes_from_api",
         AsyncMock(return_value=[]),
     ):
         yield

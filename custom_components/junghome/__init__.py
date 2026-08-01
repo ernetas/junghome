@@ -247,6 +247,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # Fetch room groups before the platforms create entities, so each device can
     # suggest its area at creation time. Best-effort: never blocks setup.
     await coordinator.async_fetch_groups()
+    # Same reasoning for scenes: they otherwise arrive only in the WebSocket
+    # handshake, which happens after the platforms are set up.
+    await coordinator.async_fetch_scenes()
 
     # One-time migration of registry entries from the gateway's volatile device
     # ids to firmware-stable, label-based ids. Must run while the gateway's ids
