@@ -3,3 +3,4 @@ mypy
 pytest
 pytest-cov
 pytest-homeassistant-custom-component
+syrupy==5.3.2

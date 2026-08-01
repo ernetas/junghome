@@ -1,0 +1,103 @@
+# serializer version: 1
+# name: test_all_binary_sensor_entities[binary_sensor.jung_home_gateway_connection-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ANY>,
+    'device_class': None,
+    'device_id': <ANY>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': <EntityCategory.DIAGNOSTIC: 'diagnostic'>,
+    'entity_id': 'binary_sensor.jung_home_gateway_connection',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Connection',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.CONNECTIVITY: 'connectivity'>,
+    'original_icon': None,
+    'original_name': 'Connection',
+    'platform': 'junghome',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': 'gateway_connectivity',
+    'unique_id': 'gateway_1.2.3.4_connectivity',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_all_binary_sensor_entities[binary_sensor.jung_home_gateway_connection-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'connectivity',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'JUNG HOME Gateway Connection',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.jung_home_gateway_connection',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'on',
+  })
+# ---
+# name: test_all_binary_sensor_entities[binary_sensor.office_detector_presence-entry]
+  EntityRegistryEntrySnapshot({
+    'aliases': list([
+      None,
+    ]),
+    'area_id': None,
+    'capabilities': None,
+    'config_entry_id': <ANY>,
+    'config_subentry_id': <ANY>,
+    'device_class': None,
+    'device_id': <ANY>,
+    'disabled_by': None,
+    'domain': 'binary_sensor',
+    'entity_category': None,
+    'entity_id': 'binary_sensor.office_detector_presence',
+    'has_entity_name': True,
+    'hidden_by': None,
+    'icon': None,
+    'id': <ANY>,
+    'labels': set({
+    }),
+    'name': None,
+    'object_id_base': 'Presence',
+    'options': dict({
+    }),
+    'original_device_class': <BinarySensorDeviceClass.OCCUPANCY: 'occupancy'>,
+    'original_icon': None,
+    'original_name': 'Presence',
+    'platform': 'junghome',
+    'previous_unique_id': None,
+    'suggested_object_id': None,
+    'supported_features': 0,
+    'translation_key': None,
+    'unique_id': 'office_detector_010_presence',
+    'unit_of_measurement': None,
+  })
+# ---
+# name: test_all_binary_sensor_entities[binary_sensor.office_detector_presence-state]
+  StateSnapshot({
+    'attributes': ReadOnlyDict({
+      <EntityStateAttribute.DEVICE_CLASS: 'device_class'>: 'occupancy',
+      <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Office Detector Presence',
+    }),
+    'context': <ANY>,
+    'entity_id': 'binary_sensor.office_detector_presence',
+    'last_changed': <ANY>,
+    'last_reported': <ANY>,
+    'last_updated': <ANY>,
+    'state': 'on',
+  })
+# ---

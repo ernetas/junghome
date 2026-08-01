@@ -117,8 +117,20 @@ When working on anything that touches the gateway protocol, consult
   `pytest_homeassistant_custom_component`'s `hass` fixture, `MockConfigEntry`,
   `aioclient_mock`. Needs the pinned `homeassistant`; runs on Python 3.14 like
   the other workflows. Run `pytest`; wired into `.github/workflows/test.yml`.
-  No per-platform test files or snapshot tests yet — see the Shelly-comparison
-  notes below.
+- **Snapshot tests.** Each platform test file ends with a
+  `test_all_<platform>_entities` case that runs
+  `pytest_homeassistant_custom_component.common.snapshot_platform` over a
+  single-platform setup (the `init_platform` fixture in `tests/conftest.py`
+  patches `PLATFORMS` down to one, because `snapshot_platform` refuses a mixed
+  entry). The committed `tests/snapshots/*.ambr` pin every entity's registry
+  entry — `unique_id` included — plus its state and attributes, so a change to
+  `stable_unique_id`/`_scene_slug` or to a platform's published attributes shows
+  up as a diff instead of silently re-keying users' entities. Regenerate with
+  `pytest --snapshot-update` and **review the diff** before committing it.
+  Snapshot setups start from `PRISTINE_DEVICES`, an import-time deep copy of
+  `DEVICES`: the coordinator merges pushes into the device dicts it is handed,
+  so tests that actuate an entity mutate the shared list, and without the copy
+  the snapshots would depend on test execution order.
 
 ## Ideas from comparing against Shelly (core reference integration)
 
@@ -196,9 +208,9 @@ not commitments — evaluate cost/value per item before implementing.
   platform/entity-lifecycle behavior in one file, unlike Shelly's
   one-file-per-platform convention (`test_sensor.py`, `test_switch.py`, etc.).
   Splitting would improve maintainability as the suite grows.
-- No snapshot testing (no `syrupy`, no `.ambr` files) — would catch
-  unintended entity-attribute/unique-id regressions more cheaply than
-  hand-written assertions, especially across the platform files.
+- ~~No snapshot testing~~ — **done**: `syrupy` is pinned in
+  `requirements_test.txt` and every platform has a `snapshot_platform` case
+  backed by a committed `tests/snapshots/*.ambr` (see Conventions above).
 - No reusable JSON device/API fixtures (Shelly keeps per-model fixtures under
   `tests/fixtures/`); current tests build device/datapoint dicts inline.
 - `--cov-report=term-missing` is collected in CI but not gated with

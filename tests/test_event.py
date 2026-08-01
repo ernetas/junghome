@@ -2,9 +2,14 @@
 
 from unittest.mock import patch
 
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    snapshot_platform,
+)
+from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
@@ -97,3 +102,20 @@ async def test_event_handle_update_missing_device_noops(hass: HomeAssistant) -> 
     with patch.object(entity, "async_write_ha_state") as write_state:
         entity._handle_coordinator_update()  # must not raise
     write_state.assert_called_once()
+
+
+async def test_all_event_entities(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    snapshot: SnapshotAssertion,
+    init_platform,
+) -> None:
+    """Snapshot every event entity: its registry entry (unique_id) and state.
+
+    Identity here is label-derived (``stable_unique_id``), so a change to the
+    slugging would silently re-key every entity. The committed ``.ambr`` pins
+    the unique_ids alongside the state and attributes each platform publishes,
+    turning that into a visible diff.
+    """
+    entry = await init_platform(Platform.EVENT)
+    await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
