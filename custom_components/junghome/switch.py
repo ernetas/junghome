@@ -90,11 +90,24 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         _LOGGER.debug("Handling coordinator update for socket %s", self._name)
-        datapoint = self._find_datapoint(self._datapoint["id"])
-        if datapoint:
-            self._is_on = self._get_state_from_datapoint(datapoint)
-            _LOGGER.debug("Updated state for socket %s: %s", self._name, self._is_on)
-            self.async_write_ha_state()
+        # Only re-read on a poll, or on a push for *this* datapoint (see
+        # JungHomeEntity._should_refresh). Every push notifies every entity, so
+        # without this an unrelated device's push re-read this socket's stored
+        # value — which is still the pre-command one until the gateway echoes —
+        # and reverted the optimistic state written by turn_on/turn_off. The
+        # switch visibly flipped back and then on again. light, cover and climate
+        # already guard this way.
+        if self._should_refresh(self._datapoint["id"]):
+            datapoint = self._find_datapoint(self._datapoint["id"])
+            if datapoint:
+                self._is_on = self._get_state_from_datapoint(datapoint)
+                _LOGGER.debug(
+                    "Updated state for socket %s: %s", self._name, self._is_on
+                )
+        # Write unconditionally (even when the datapoint is momentarily absent) so
+        # the entity's availability tracks the gateway on every coordinator update,
+        # matching JungHomeSwitch below.
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the socket on."""
@@ -167,9 +180,12 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         _LOGGER.debug("Updating switch for %s", self._attr_unique_id)
-        datapoint = self._find_datapoint(self._datapoint["id"])
-        if datapoint is not None:
-            self._attr_is_on = self._get_state_from_datapoint(datapoint)
+        # Same guard as the socket above: an unrelated push must not revert the
+        # optimistic state written by turn_on/turn_off.
+        if self._should_refresh(self._datapoint["id"]):
+            datapoint = self._find_datapoint(self._datapoint["id"])
+            if datapoint is not None:
+                self._attr_is_on = self._get_state_from_datapoint(datapoint)
         # Write unconditionally (even when the datapoint is momentarily absent) so
         # the entity's availability tracks the gateway on every coordinator update.
         self.async_write_ha_state()
