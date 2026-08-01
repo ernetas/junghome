@@ -106,112 +106,113 @@ When working on anything that touches the gateway protocol, consult
 
 - Match Home Assistant integration patterns; keep `strings.json` and
   `translations/en.json` in sync (no `<...>` in text — it breaks the translation
-  parser).
+  parser). `translations/` carries 26 locales; a new or changed string means
+  updating the other 25 files too, or they fall back to English key-by-key.
 - Reuse the shared aiohttp session via `async_get_clientsession(hass,
   verify_ssl=False)` (the gateway's cert is self-signed); don't create
   per-request `ClientSession`s or build SSL contexts on the event loop.
 - Validate with hassfest + HACS (see `.github/workflows/validate.yml`).
 - `tests/` covers more than pure helpers: `test_const.py` (stable-ID helpers),
-  `test_config_flow.py`, `test_coordinator.py`, `test_websocket.py`, and
-  `test_init.py` (setup/entity-lifecycle, the largest file). Uses
+  `test_config_flow.py`, `test_coordinator.py`, `test_websocket.py`,
+  `test_init.py` (setup/entity-lifecycle), `test_logbook.py`, and one file per
+  platform (`test_light.py`, `test_switch.py`, `test_sensor.py`,
+  `test_binary_sensor.py`, `test_cover.py`, `test_climate.py`, `test_event.py`,
+  `test_scene.py`). New platform behaviour goes in that platform's file. Uses
   `pytest_homeassistant_custom_component`'s `hass` fixture, `MockConfigEntry`,
   `aioclient_mock`. Needs the pinned `homeassistant`; runs on Python 3.14 like
   the other workflows. Run `pytest`; wired into `.github/workflows/test.yml`.
-- **Snapshot tests.** Each platform test file ends with a
-  `test_all_<platform>_entities` case that runs
-  `pytest_homeassistant_custom_component.common.snapshot_platform` over a
-  single-platform setup (the `init_platform` fixture in `tests/conftest.py`
-  patches `PLATFORMS` down to one, because `snapshot_platform` refuses a mixed
-  entry). The committed `tests/snapshots/*.ambr` pin every entity's registry
-  entry — `unique_id` included — plus its state and attributes, so a change to
-  `stable_unique_id`/`_scene_slug` or to a platform's published attributes shows
-  up as a diff instead of silently re-keying users' entities. Regenerate with
-  `pytest --snapshot-update` and **review the diff** before committing it.
-  Snapshot setups start from `PRISTINE_DEVICES`, an import-time deep copy of
-  `DEVICES`: the coordinator merges pushes into the device dicts it is handed,
-  so tests that actuate an entity mutate the shared list, and without the copy
-  the snapshots would depend on test execution order.
+  Snapshot tests are still absent — see the Shelly-comparison notes below.
 
 ## Ideas from comparing against Shelly (core reference integration)
 
 Findings from reading `homeassistant/components/shelly` (HA core's most
 mature local-push integration) against this integration, filtered to what's
 genuinely applicable to a single local-gateway integration (Shelly's
-multi-generation/cloud complexity mostly doesn't apply). Treat as a backlog,
-not commitments — evaluate cost/value per item before implementing.
+multi-generation/cloud complexity mostly doesn't apply).
 
-**Connection resilience**
-- No `EVENT_HOMEASSISTANT_STOP` listener: `coordinator.stop()` only runs from
-  `async_unload_entry`, so a full HA shutdown (not an entry unload) skips the
-  orderly `ws.close()`/task-cancel. Shelly registers this per-coordinator
-  (`_handle_ha_stop`).
-- Repeated WebSocket reconnect failures in `_websocket_loop` only log a
-  warning; there's no user-visible signal that the integration has silently
-  fallen back to 60 s REST-only polling. Shelly raises a repair issue after
-  `MAX_PUSH_UPDATE_FAILURES`. A repair issue here (fixable=False is fine) would
-  cover both this and the device-id-churn reload path in
-  `_reload_if_device_ids_changed`, which also only logs today.
-- Minor: add jitter to the reconnect backoff (avoids synchronized reconnect
-  storms if multiple gateways share a network blip); surface "last successful
-  WS connection" timestamp in `diagnostics.py` alongside the existing
-  `ws_frame_log`.
+**Most of the original list has since been implemented.** What follows is split
+into what is already done (don't re-do it) and what is still open. The open
+items are a backlog, not commitments — evaluate cost/value per item before
+implementing.
 
-**Config flow**
-- `_async_apply_host` (manual `app_approval`/`password` steps) only calls
-  `async_set_unique_id` + `_abort_if_unique_id_configured`; unlike
-  `async_step_zeroconf`, it never cross-checks `CONF_HOST` against existing
-  entries. A gateway already added via zeroconf (unique_id = mDNS hostname)
-  can be re-added manually by typing its IP. Fix: reuse the same
-  `CONF_HOST`-collision check in both paths.
-- `async_step_reconfigure` updates the stored host without verifying the new
-  host is reachable or is the same gateway (no connect-then-commit, unlike
-  Shelly's MAC re-check + `_abort_if_unique_id_mismatch`). A typo or wrong IP
-  is accepted and only surfaces as a later reauth/connect failure.
-- Minor: `zeroconf_confirm` could show more device identity (model/serial) if
-  the mDNS TXT records carry it, for multi-gateway networks.
+### Already done — do not re-open
 
-**Entity model**
-- `JungHomeSwitch` (the rocker status-LED toggle) has no `entity_category`;
-  it's a device-configuration control, not a primary function, and should be
-  `EntityCategory.CONFIG` (matches Shelly's LED/eco switches). Currently it's
-  the only entity_category gap — diagnostic entities are already tagged
-  correctly.
-- `JungHomeQuantity`/`JungHomePresence` set `_attr_name` directly from the
-  gateway's raw label instead of routing through `translation_key` +
-  `translation_placeholders`. Those entity names bypass HA localization even
-  though the rest of the integration uses `strings.json` translations
-  consistently.
+- **`EVENT_HOMEASSISTANT_STOP` listener.** A full HA shutdown now runs the
+  orderly `ws.close()`/task-cancel, not just entry unload
+  (`__init__.py:238`, `hass.bus.async_listen_once`).
+- **Reconnect-backoff jitter.** `RECONNECT_JITTER` (`coordinator.py:32`) is
+  added to each reconnect wait at `coordinator.py:342`, so gateways sharing a
+  network blip don't reconnect in lockstep.
+- **Failure context in diagnostics.** `diagnostics.py:92-94` reports
+  `ws_last_connected`, `last_error` and `last_error_at`, so a downloaded dump
+  shows how long it has been degraded and why, without cross-referencing logs.
+- **`logbook.py` exists.** `junghome_scene_recalled` renders as a readable
+  logbook line via `async_describe_events`.
+- **Per-platform test files.** `tests/` now has one file per platform plus
+  `test_logbook.py`; `test_init.py` is down to setup/entity-lifecycle.
+- **Status-LED `entity_category`: decided against.** The rocker status LED is
+  deliberately left a primary switch rather than an `EntityCategory.CONFIG`
+  entity so it stays directly controllable — this is a recorded decision, not a
+  gap (`quality_scale.yaml:53-58`).
 
-**Repairs, logbook, services**
-- No `repairs.py`. The two silent-degradation paths above (WS
-  reconnect-failure fallback, device-id-churn reload) are the concrete
-  candidates — turn the existing log warnings into dismissible repair issues.
-- No `logbook.py`. The coordinator already fires a `junghome_scene_recalled`
-  bus event (`coordinator.py`); without `async_describe_events` it shows up
-  raw in the HA logbook instead of "Scene 'Evening' was recalled" — cheap win
-  since the event already exists.
-- No `services.py`/`services.yaml` (`quality_scale.yaml` marks this exempt).
-  Worth reconsidering only if a real use case shows up — e.g. a
+### Deliberate non-goals
+
+- **Raw gateway labels in entity names are not a localization bug.**
+  `JungHomeQuantity` (`sensor.py:128`) and `JungHomePresence`
+  (`binary_sensor.py:103`) assign `_attr_name = label` straight from the
+  gateway, bypassing HA localization, so those names stay in whatever language
+  the gateway serves. That is intentional: the labels are **user-authored data
+  typed into the JUNG HOME app**, not integration strings, so there is nothing
+  correct to translate them *to*. Routing them through `translation_key` would
+  only add indirection. Leave them alone.
+- **No `services.py`/`services.yaml`** — `quality_scale.yaml` marks this
+  exempt. Worth reconsidering only if a real use case shows up, e.g. a
   `recall_scene`/`send_datapoint_value` service scoped by device, following
   Shelly's `ServiceValidationError` translation-key pattern.
-- `diagnostics.py` has no `last_error`/`last_exception` field capturing the
-  most recent coordinator failure (Shelly's `diagnostics.py` includes
-  `repr(device.last_error)`); would help triage a downloaded report without
-  cross-referencing logs.
-- Bare `except Exception` in `__init__.py`'s migration code and
-  `coordinator.async_fetch_groups` is broader than the specific
-  `aiohttp`/`asyncio` exception types used elsewhere in the coordinator; worth
-  narrowing so unexpected bugs aren't swallowed as "best-effort."
 
-**Testing**
-- No per-platform test files — `test_init.py` (2765 lines) covers most
-  platform/entity-lifecycle behavior in one file, unlike Shelly's
-  one-file-per-platform convention (`test_sensor.py`, `test_switch.py`, etc.).
-  Splitting would improve maintainability as the suite grows.
-- ~~No snapshot testing~~ — **done**: `syrupy` is pinned in
-  `requirements_test.txt` and every platform has a `snapshot_platform` case
-  backed by a committed `tests/snapshots/*.ambr` (see Conventions above).
-- No reusable JSON device/API fixtures (Shelly keeps per-model fixtures under
-  `tests/fixtures/`); current tests build device/datapoint dicts inline.
-- `--cov-report=term-missing` is collected in CI but not gated with
-  `--cov-fail-under=`, so coverage can silently regress.
+### Still open
+
+Several of these already have a PR in flight; check the linked issue/PR before
+starting so work isn't duplicated.
+
+- **Repair issues for silent degradation** (PR branch
+  `repair-websocket-degraded`). There is no `repairs.py`. Repeated WebSocket
+  reconnect failures in `_websocket_loop` only log a warning, with no
+  user-visible signal that the integration has silently fallen back to 60 s
+  REST-only polling (Shelly raises a repair issue after
+  `MAX_PUSH_UPDATE_FAILURES`). A repair issue (`fixable=False` is fine) would
+  cover both this and the device-id-churn reload in
+  `_reload_if_device_ids_changed`, which also only logs today.
+- **Config-flow host collision** (#131, `fix-manual-host-duplicate`).
+  `_async_apply_host` (`config_flow.py:238`) only calls `async_set_unique_id` +
+  `_abort_if_unique_id_configured`; unlike `async_step_zeroconf` it never
+  cross-checks `CONF_HOST` against existing entries, so a gateway already added
+  via zeroconf (unique_id = mDNS hostname) can be re-added manually by typing
+  its IP. Fix: reuse the same `CONF_HOST`-collision check in both paths.
+- **Reconfigure connect-then-commit** (#132, `verify-reconfigure-host`).
+  `async_step_reconfigure` (`config_flow.py:381`) checks the new host against
+  other entries but never verifies it is reachable or is the *same* gateway
+  (unlike Shelly's MAC re-check + `_abort_if_unique_id_mismatch`). A typo or
+  wrong IP is accepted and only surfaces as a later reauth/connect failure.
+- **Broad `except Exception` handlers** (#133, `narrow-broad-excepts`). The
+  best-effort handlers in `__init__.py`'s migration code (376, 400, 408) and in
+  `coordinator.py` (237, 333, 399, 624) are broader than the specific
+  `aiohttp`/`asyncio` types used elsewhere; narrowing them stops real bugs being
+  swallowed as "best-effort".
+- **Per-device diagnostics** (#134, `device-diagnostics`).
+  `diagnostics.py` implements only `async_get_config_entry_diagnostics`; adding
+  `async_get_device_diagnostics` would let a user download one device's data.
+- **Device triggers for button gestures** (#125,
+  `it-rec:claude/button-device-triggers`). No `device_trigger.py`; the shipped
+  blueprint is currently the only path from raw edges to single/double/hold.
+- **Snapshot testing** (PR branch `snapshot-tests`). No `syrupy`, no `.ambr`
+  files — snapshots would catch unintended entity-attribute/unique-id
+  regressions more cheaply than hand-written assertions, especially now that
+  the platform files exist.
+- **Reusable JSON device/API fixtures.** No `tests/fixtures/` (Shelly keeps
+  per-model fixtures there); current tests build device/datapoint dicts inline.
+- **Coverage is not gated.** `.github/workflows/test.yml` collects
+  `--cov-report=term-missing` but passes no `--cov-fail-under=`, so coverage
+  can silently regress.
+- **Minor: richer `zeroconf_confirm`.** Could show more device identity
+  (model/serial) if the mDNS TXT records carry it, for multi-gateway networks.
