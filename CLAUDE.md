@@ -22,6 +22,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
+- `tools/ws-capture/capture_ws.py` — read-only WS capture + analysis tool.
+  Records frames **with timestamps** and walks the user through a scripted
+  gesture set (`--script rocker` / `cover`), then `analyze` derives per-gesture
+  edge sequences, channel-echo detection and the timing bounds the button
+  blueprint's defaults rest on. This is how the two evidence-blocked backlog
+  items get unblocked; the old `disk_dump/ws-capture*/` dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
   deriving single/double/hold from raw press/release edges. Imported by URL;
   **not** distributed by HACS (HACS only installs `custom_components/`).
@@ -343,6 +349,13 @@ or "clean — nothing above P3 survived verification."
   from `level` pushes today. Still needed before building it: a capture of a
   blind actually moving, to learn whether intermediate `level` pushes stream
   during travel (drives whether position can track live or only jump).
+  Capture it with `tools/ws-capture/capture_ws.py capture --script cover`.
+- **Rocker timing evidence** — the blueprint's `hold_time` (2 s) and
+  `double_click_window` (0.4 s) defaults and the sibling-channel-echo guidance
+  rest on field reports, not measurement; no capture contains a button press
+  (both ws-captures hold only idle `"0"` values). Capture it with
+  `tools/ws-capture/capture_ws.py capture --script rocker`, then `analyze`
+  prints the measured bounds and whether the defaults hold.
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —
