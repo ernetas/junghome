@@ -161,8 +161,8 @@ Why trigger on *any* state change and filter with a condition, instead of
 `attribute: event_type` / `to: pressed`? An event entity's *state* is just a
 timestamp that changes on **both** press and release, and a `to:`-style trigger
 only fires when the attribute *changes value* — so it silently misses a repeated
-`pressed` (which happens when JUNG reports the same button twice, or alternates
-between `up_request` and `down_request`). Triggering on the state change and
+`pressed` (which happens whenever the same side is pressed twice in a row, and
+within a single tap on doubled-burst firmware). Triggering on the state change and
 checking `event_type == 'pressed'` in a condition fires reliably **once per
 press** and never on release.
 
@@ -233,21 +233,21 @@ automation, with no helper entities**, using `wait_for_trigger`:
   release).
 - **Single** — pressed and released, with no second press.
 
-List the button's event entity under `entity_id:`. If the debug logger (above)
-shows one channel reporting every gesture completely, list **only that one** —
-don't add its sibling, since on some firmware an echoed `pressed` edge on the
-sibling channel gets misread as a second click. Only list both if your debug
-log shows no echoes and presses genuinely alternate channels the older way.
+List the button's event entity (or entities) under `entity_id:`. Before
+relying on the double branch, check the
+[quirk section](#a-hardware-quirk-one-quick-tap-is-reported-twice): on
+firmware that double-reports a tap, double detection cannot work — leave the
+double action empty and add the cooldown from that section.
 
 We trigger on *any* state change and filter with a condition rather than
 `attribute: event_type` / `to: pressed`, because the `to:` form silently misses
-repeated `pressed` events (e.g. from alternating channels on older firmware).
+a repeated `pressed` (consecutive presses on one channel keep the attribute at
+`pressed`, and a doubled burst repeats it within a single tap).
 
-The key detail (confirmed from real device logs): on a double-click JUNG can
-report the **second press before the first release**, e.g.
-`DOWN pressed → UP pressed → DOWN depressed → UP depressed`. So instead of
-assuming "press, then release, then maybe a second press", we just wait for the
-*next event of any kind* and branch on it.
+The key design detail: across firmware generations JUNG has reported a second
+press both **before and after** the first release. So instead of assuming
+"press, then release, then maybe a second press", we just wait for the *next
+event of any kind* and branch on it.
 
 ```yaml
 alias: R1 B - single / double / hold
@@ -378,13 +378,12 @@ button by **filling in a form** instead of editing YAML:
 
 It exposes:
 
-- **Button (event entities)** — the `event.*` entity for one physical button.
-  JUNG sometimes splits a button into separate `up_request` and `down_request`
-  events. Check with the debug logger below first: if one channel reports every
-  gesture completely, select **only that one** — selecting both can make an
-  echoed edge on the sibling channel misread a single press or hold as a
-  double-click on some firmware. Only select both if your debug log shows no
-  echoes and presses genuinely alternate channels.
+- **Button (event entities)** — the `event.*` entity for one physical button
+  side (a rocker exposes `..._up` and `..._down`, one per side). Before
+  relying on the double action, measure your buttons
+  ([quirk section](#a-hardware-quirk-one-quick-tap-is-reported-twice)):
+  firmware that double-reports a tap makes single and double
+  indistinguishable — leave the double action empty there.
 - **Hold time** and **Double-click window** — the two timing thresholds.
 - **Single / Double / Hold action** — what to run for each gesture; leave any of
   them empty to ignore that gesture.
@@ -423,17 +422,19 @@ Either:
   sure your device actually sends a separate `depressed` (release) event — hold
   detection depends on press and release being reported separately, which JUNG
   rockers do.
-- **Single presses or holds register as double-clicks.** This is the firmware
-  echo described [above](#a-firmware-quirk-one-channel-can-echo-the-other) — one
-  channel emits a spurious `pressed` edge that gets read as a second click. Use
-  the debug logger below to find the one channel that reports every gesture
-  completely, and select **only that one** channel in the automation/blueprint.
-- **Double-clicks register as single (or vice-versa), and your debug log shows
-  no echoes.** Make sure you selected **all** of the button's events (both
-  `up_request` and `down_request`) — on that firmware JUNG alternates between
-  them, so with only one selected, every other click is invisible. If genuine
-  double-clicks are still missed, widen the **double-click window**; if singles
-  are seen as doubles, shorten it.
+- **Single presses register as double-clicks, or fire your action twice.**
+  This is the doubled-burst firmware behaviour described
+  [above](#a-hardware-quirk-one-quick-tap-is-reported-twice): one tap arrives
+  as two press/release pairs on the same channel. Add the ≥1.2 s cooldown from
+  that section and leave the double action empty — on this firmware a real
+  double-click is indistinguishable from a single anyway.
+- **One side of the rocker never fires.** Each side is its own event entity —
+  make sure the automation lists the side you are pressing. (A single-action
+  button still exposes both `up` and `down` entities with only one of them
+  live; the dead one never firing is a gateway limitation, not a fault.)
+- **Genuine double-clicks register as singles** (on firmware that does *not*
+  double-report): widen the **double-click window** — the capture tool prints
+  your buttons' real press-to-press gaps to set it from.
 
 ### Debug logger — capture the raw event stream
 
