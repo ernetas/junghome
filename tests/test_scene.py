@@ -19,17 +19,7 @@ from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.const import scene_slug as _scene_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.scene import JungHomeScene
-from tests.conftest import _fake_run_websocket
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import _fake_run_websocket, bare_coordinator
 
 
 def test_scene_slug_fallback() -> None:
@@ -107,7 +97,7 @@ async def test_scene_removed_when_deleted(
 
 async def test_scene_activate_raises_when_missing(hass: HomeAssistant) -> None:
     """Activating a scene absent from the coordinator raises a translated error."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator.scenes = []
     scene = JungHomeScene(coordinator, "Ghost", "ghost_scene")
     with pytest.raises(HomeAssistantError):

@@ -15,17 +15,7 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.sensor import JungHomeQuantity
-from tests.conftest import _fake_run_websocket
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import _fake_run_websocket, bare_coordinator
 
 
 async def test_sensor_native_value_non_numeric_returns_none(
@@ -50,7 +40,7 @@ async def test_sensor_native_value_non_numeric_returns_none(
 
 async def test_sensor_value_extractor_defensive(hass: HomeAssistant) -> None:
     """Sensor helpers return None for a missing value / None state."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "s", "type": "Socket", "label": "S", "datapoints": []}
     dp = {
         "id": "s-1",
@@ -85,7 +75,7 @@ async def test_measurement_sensor_created(
 
 async def test_sensor_native_value_rejects_nan(hass: HomeAssistant) -> None:
     """A NaN reading on a numeric sensor yields None (never pollutes statistics)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "s", "type": "Socket", "label": "S", "datapoints": []}
     dp = {"id": "s-1", "values": [{"key": "quantity", "value": "nan"}]}
     # An unknown unit makes a numeric MEASUREMENT sensor; NaN must read as None.

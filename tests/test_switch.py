@@ -4,29 +4,17 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     snapshot_platform,
 )
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.junghome.const import DOMAIN
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.switch import JungHomeSocket, JungHomeSwitch
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import bare_coordinator
 
 
 async def test_switch_and_socket_commands(
@@ -59,7 +47,7 @@ async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
 
 async def test_socket_state_helper_defaults_off(hass: HomeAssistant) -> None:
     """A socket datapoint without a switch value reads as off (helper fallback)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "d", "type": "Socket", "label": "Sock", "datapoints": []}
     # No "switch" key in values -> _get_state_from_datapoint returns False.
     socket = JungHomeSocket(coordinator, device, {"id": "d-1", "values": []})
@@ -75,7 +63,7 @@ async def test_switch_led_handle_update_missing_device_noops(
     hass: HomeAssistant,
 ) -> None:
     """JungHomeSwitch._handle_coordinator_update returns early when device is gone."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "gone", "type": "RockerSwitch", "label": "G", "datapoints": []}
     datapoint = {"id": "gone-e", "type": "status_led", "values": []}
     entity = JungHomeSwitch(coordinator, device, datapoint)

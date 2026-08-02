@@ -2,28 +2,16 @@
 
 from unittest.mock import patch
 
-from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     snapshot_platform,
 )
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.junghome.const import DOMAIN
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.event import JungHomeEventEntity
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import bare_coordinator
 
 
 async def test_event_pressed_and_depressed(
@@ -84,7 +72,7 @@ async def test_event_fires_on_each_push_not_on_rest_reread(
 
 async def test_event_unknown_datapoint_type_uses_name(hass: HomeAssistant) -> None:
     """A datapoint type with no translation key falls back to a plain name."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "d", "type": "RockerSwitch", "label": "Btn", "datapoints": []}
     datapoint = {"id": "d-x", "type": "weird_request", "values": []}
     entity = JungHomeEventEntity(coordinator, device, datapoint)
@@ -94,7 +82,7 @@ async def test_event_unknown_datapoint_type_uses_name(hass: HomeAssistant) -> No
 
 async def test_event_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
     """_handle_coordinator_update returns early when the device is gone."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "gone", "type": "RockerSwitch", "label": "G", "datapoints": []}
     datapoint = {"id": "gone-c", "type": "up_request", "values": []}
     entity = JungHomeEventEntity(coordinator, device, datapoint)
@@ -112,7 +100,7 @@ async def test_fire_bus_event_skipped_without_device_entry(
     A device trigger is keyed on the registry device id, so an event without
     one would match nothing; the early return must not raise either.
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "d", "type": "RockerSwitch", "label": "Btn", "datapoints": []}
     datapoint = {"id": "d-c", "type": "up_request", "values": []}
     entity = JungHomeEventEntity(coordinator, device, datapoint)
