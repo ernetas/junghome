@@ -73,6 +73,7 @@
       "register_failed": "注册未完成。请确保在应用中批准该请求。"
     },
     "abort": {
+      "already_in_progress": "配置流程已在进行中。",
       "already_configured": "此 Jung Home 网关已配置。",
       "reauth_successful": "重新认证成功。",
       "reconfigure_successful": "网关地址已更新。"

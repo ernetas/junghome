@@ -73,6 +73,7 @@
       "register_failed": "Registracija nebuvo užbaigta. Įsitikinkite, kad patvirtinote užklausą programėlėje."
     },
     "abort": {
+      "already_in_progress": "Konfigūravimas jau vyksta.",
       "already_configured": "Šis „Jung Home“ sietuvas jau sukonfigūruotas.",
       "reauth_successful": "Pakartotinis tapatybės nustatymas pavyko.",
       "reconfigure_successful": "Sietuvo adresas atnaujintas."

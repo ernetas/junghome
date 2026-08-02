@@ -73,6 +73,7 @@
       "register_failed": "Înregistrarea nu a fost finalizată. Asigură-te că aprobi cererea în aplicație."
     },
     "abort": {
+      "already_in_progress": "Configurarea este deja în curs.",
       "already_configured": "Acest gateway Jung Home este deja configurat.",
       "reauth_successful": "Reautentificarea a reușit.",
       "reconfigure_successful": "Adresa gateway-ului a fost actualizată."

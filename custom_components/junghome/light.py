@@ -19,14 +19,19 @@ _LOGGER = logging.getLogger(__name__)
 # Commands are cheap async WebSocket sends; don't serialise them.
 PARALLEL_UPDATES = 0
 
-# Fallback colour-temperature range, used only when the gateway advertises none
-# for the device's group (see JungHomeLight.__init__). Deliberately left wide:
-# the direct BT-Mesh mapping in docs/bt-mesh-direct.md is 2000-6000 K, but that
-# is one JUNG luminaire's Generic Level mapping, not a per-fixture limit, and
-# narrowing the ceiling to 6000 would cap fixtures that genuinely reach further.
-# A real per-device range should come from the gateway, not from this constant.
+# Colour-temperature range. This is the GATEWAY's limit, not a guess: the
+# middleware hard-codes 2000-6000 K for every tunable-white write — all three
+# ColorTemperature state classes declare `range: {min: 2000, max: 6000}` and
+# `publishValue` clamps to it (current firmware, disk_dump sdc2
+# `middleware/dist/models/device_states/ColorTemperatureState.js:94-104`; the
+# older build threw "new value is out of range" instead,
+# `btmesh_set_datapoint_service.js:51-53`). A wider ceiling here (this used to
+# say 6500) only offered users 500 K of slider the device can never reach: the
+# gateway silently capped the write at 6000 while the entity optimistically
+# displayed the requested value. (The `/types/datapoints` catalog advertises
+# 2000-10000, but the firmware enforces 2000-6000 — trust the enforcement.)
 DEFAULT_MIN_KELVIN = 2000
-DEFAULT_MAX_KELVIN = 6500
+DEFAULT_MAX_KELVIN = 6000
 
 
 async def async_setup_entry(
@@ -215,18 +220,24 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on."""
         _LOGGER.debug("Turning on light %s", self._name)
+        was_on = self._is_on
         # Turn on first, then apply brightness/color temperature to avoid
         # device-side overrides (some devices reset brightness on power-on).
         await self.coordinator.turn_on_light(self._datapoint["id"])
         self._is_on = True
         if self._has_brightness and "brightness" in kwargs:
             await self._set_brightness(kwargs["brightness"])
-        elif self._has_brightness:
-            # No explicit brightness: the device restores its own level on
-            # power-on. Don't guess — showing a kept/stale value looked like the
-            # light jumping to 100%. Clear it and let the device's own brightness
-            # report populate the real current value (its WS push, or the periodic
-            # poll as a fallback).
+        elif self._has_brightness and not was_on:
+            # No explicit brightness on a genuine off->on: the device restores
+            # its own level on power-on. Don't guess — showing a kept/stale
+            # value looked like the light jumping to 100%. Clear it and let the
+            # device's own brightness report populate the real current value
+            # (its WS push, or the periodic poll as a fallback).
+            #
+            # Gated on `was_on` because a turn_on against an ALREADY-on dimmer
+            # changes nothing on the device, so no push follows — clearing here
+            # left brightness unknown until the next poll for no reason. The
+            # value being shown is the device's current level; keep it.
             self._brightness = None
         if self._has_color_temp and "color_temp_kelvin" in kwargs:
             await self._set_color_temp(kwargs["color_temp_kelvin"])

@@ -73,6 +73,7 @@
       "register_failed": "Registrace nebyla dokončena. Nezapomeňte žádost v aplikaci schválit."
     },
     "abort": {
+      "already_in_progress": "Konfigurace již probíhá.",
       "already_configured": "Tato brána Jung Home je již nakonfigurována.",
       "reauth_successful": "Opětovné ověření bylo úspěšné.",
       "reconfigure_successful": "Adresa brány byla aktualizována."

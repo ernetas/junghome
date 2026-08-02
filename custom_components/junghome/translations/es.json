@@ -73,6 +73,7 @@
       "register_failed": "El registro no se completó. Asegúrate de aprobar la solicitud en la aplicación."
     },
     "abort": {
+      "already_in_progress": "El flujo de configuración ya está en curso.",
       "already_configured": "Esta pasarela Jung Home ya está configurada.",
       "reauth_successful": "La reautenticación se realizó correctamente.",
       "reconfigure_successful": "Se ha actualizado la dirección de la pasarela."

@@ -10,7 +10,12 @@ import aiohttp
 import pytest
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_TOKEN,
+    EVENT_HOMEASSISTANT_STOP,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -41,7 +46,8 @@ from custom_components.junghome.diagnostics import (
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
 )
-from tests.conftest import DEVICES, _fake_run_websocket
+from custom_components.junghome.event import JungHomeEventEntity
+from tests.conftest import DEVICES, PRISTINE_DEVICES, _fake_run_websocket
 
 
 def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -657,10 +663,123 @@ async def test_websocket_message_guard_without_data(hass: HomeAssistant) -> None
         hass, {"host": "h", "token": "t"}, entry
     )
     coordinator.data = None
-    # Must not raise despite data being None.
-    coordinator._handle_websocket_message(
-        {"type": "datapoint", "data": {"id": "x", "values": []}}
+    # The unmatched push schedules a (real) refresh; keep it off the network.
+    with patch.object(
+        coordinator, "_fetch_devices_from_api", AsyncMock(return_value=[])
+    ):
+        # Must not raise despite data being None.
+        coordinator._handle_websocket_message(
+            {"type": "datapoint", "data": {"id": "x", "values": []}}
+        )
+        await hass.async_block_till_done()
+    # Cancel the refresh debouncer's cooldown timer the unmatched push armed.
+    await coordinator.async_shutdown()
+
+
+async def test_unmatched_push_warns_once_and_requests_one_refresh(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unknown datapoint id warns once and triggers one discovery refresh.
+
+    A device added in the app pushes before the next poll lists it: the first
+    sighting of its id requests a (debounced) refresh so discovery lands in
+    seconds, and warns once — a 1 Hz push used to warn 60 times a minute.
+    Later frames for the same unknown id are DEBUG-only and must not amplify
+    polling.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
+    entry.add_to_hass(hass)
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "h", "token": "t"}, entry
     )
+    coordinator.data = []
+    push = {"type": "datapoint", "data": {"id": "idnew-001", "values": []}}
+    with patch.object(coordinator, "async_request_refresh", AsyncMock()) as refresh:
+        coordinator._handle_websocket_message(push)
+        coordinator._handle_websocket_message(push)
+        coordinator._handle_websocket_message(push)
+        await hass.async_block_till_done()
+    assert refresh.await_count == 1
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "idnew-001" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+
+
+async def test_functions_broadcast_discovers_a_new_device(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A pushed ``functions`` list is adopted like a poll: new devices appear.
+
+    The gateway broadcasts the authoritative device list on change; consuming
+    it makes device add/remove push-driven instead of waiting up to 60 s for
+    the next REST poll.
+    """
+    coordinator = init_integration.runtime_data
+    assert hass.states.get("light.new_lamp") is None
+    devices = [
+        *copy.deepcopy(PRISTINE_DEVICES),
+        {
+            "id": "idnewlamp",
+            "type": "OnOff",
+            "label": "New Lamp",
+            "datapoints": [
+                {
+                    "id": "idnewlamp-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "1"}],
+                }
+            ],
+        },
+    ]
+    coordinator._handle_websocket_message({"type": "functions", "data": devices})
+    await hass.async_block_till_done()
+    state = hass.states.get("light.new_lamp")
+    assert state is not None
+    assert state.state == "on"
+
+
+async def test_functions_broadcast_does_not_fire_button_events(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Adopting a functions broadcast must never read as a button edge.
+
+    The broadcast re-presents every datapoint value (including a rocker's
+    ``up_request``) without the per-push marker, exactly like a REST re-read —
+    an event fired here would be a phantom press.
+    """
+    coordinator = init_integration.runtime_data
+    devices = copy.deepcopy(PRISTINE_DEVICES)
+    for device in devices:
+        if device["id"] == "idrock1":
+            device["datapoints"][0]["values"] = [{"key": "up_request", "value": "1"}]
+    with patch.object(JungHomeEventEntity, "_trigger_event") as trigger:
+        coordinator._handle_websocket_message({"type": "functions", "data": devices})
+        await hass.async_block_till_done()
+    trigger.assert_not_called()
+
+
+async def test_ha_shutdown_stops_the_coordinator(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A full HA shutdown runs the orderly WebSocket teardown, not just unload.
+
+    The `EVENT_HOMEASSISTANT_STOP` listener was registered but its body never
+    ran in any test; this drives it and asserts the coordinator actually
+    stopped (closing flag set, WS task cancelled, socket cleared).
+    """
+    coordinator = init_integration.runtime_data
+    assert coordinator._closing is False
+    assert coordinator._ws_task is not None
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+
+    assert coordinator._closing is True
+    assert coordinator._ws_task is None
+    assert coordinator.websocket is None
 
 
 async def test_failed_platform_unload_still_stops_coordinator(

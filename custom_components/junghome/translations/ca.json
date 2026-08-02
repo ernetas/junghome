@@ -73,6 +73,7 @@
       "register_failed": "El registre no s'ha completat. Assegura't d'aprovar la sol·licitud a l'aplicació."
     },
     "abort": {
+      "already_in_progress": "El flux de configuració ja està en curs.",
       "already_configured": "Aquesta passarel·la Jung Home ja està configurada.",
       "reauth_successful": "La reautenticació s'ha fet correctament.",
       "reconfigure_successful": "S'ha actualitzat l'adreça de la passarel·la."

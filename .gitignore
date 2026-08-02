@@ -2,7 +2,6 @@
 disk_dump
 REVIEW_TASKS.md
 # Local-only platinum review worklist (kept out of the repo on purpose)
-CLAUDE-review.md
 
 # artifacts
 __pycache__

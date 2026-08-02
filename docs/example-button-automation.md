@@ -21,9 +21,14 @@ For every rocker the integration creates one or more **event entities**:
 
 | Entity (example) | Fires when… |
 |------------------|-------------|
-| `event.living_room_r1_b_up_request_event`   | the *up* side is pressed/released |
-| `event.living_room_r1_b_down_request_event` | the *down* side is pressed/released |
-| `event.<button>_trigger_request_event`      | a single-button device is pressed/released |
+| `event.living_room_r1_b_up`   | the *up* side is pressed/released |
+| `event.living_room_r1_b_down` | the *down* side is pressed/released |
+| `event.<button>_press`        | a single-button device is pressed/released |
+
+> Installs created before the entity-naming rework may still have the older
+> `event.<label>_<label>_up_request_event`-style IDs — existing entity IDs are
+> sticky across upgrades. The recipes work the same either way; just use the
+> IDs you find below.
 
 Each entity reports exactly two **event types**:
 
@@ -77,7 +82,7 @@ alias: R1 B - press toggles lamp
 mode: single
 triggers:
   - trigger: state
-    entity_id: event.living_room_r1_b_up_request_event
+    entity_id: event.living_room_r1_b_up
 conditions:
   - condition: template
     value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
@@ -115,7 +120,7 @@ alias: R1 B - press toggles blind
 mode: single
 triggers:
   - trigger: state
-    entity_id: event.living_room_r1_b_up_request_event
+    entity_id: event.living_room_r1_b_up
 conditions:
   - condition: template
     value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
@@ -171,8 +176,8 @@ mode: single  # important: ignore re-triggers while we're measuring a gesture
 triggers:
   - trigger: state
     entity_id:
-      - event.living_room_r1_b_up_request_event
-      - event.living_room_r1_b_down_request_event
+      - event.living_room_r1_b_up
+      - event.living_room_r1_b_down
 conditions:
   # Only start on a press edge; ignore release ('depressed') state changes.
   - condition: template
@@ -185,8 +190,8 @@ actions:
   - wait_for_trigger:
       - trigger: state
         entity_id:
-          - event.living_room_r1_b_up_request_event
-          - event.living_room_r1_b_down_request_event
+          - event.living_room_r1_b_up
+          - event.living_room_r1_b_down
     timeout: "00:00:02"
     continue_on_timeout: true
   - variables:
@@ -217,8 +222,8 @@ actions:
       - wait_for_trigger:
           - trigger: state
             entity_id:
-              - event.living_room_r1_b_up_request_event
-              - event.living_room_r1_b_down_request_event
+              - event.living_room_r1_b_up
+              - event.living_room_r1_b_down
         timeout: "00:00:00.4"
         continue_on_timeout: true
       - choose:
@@ -337,8 +342,8 @@ max: 100
 triggers:
   - trigger: state
     entity_id:
-      - event.living_room_r1_b_up_request_event
-      - event.living_room_r1_b_down_request_event
+      - event.living_room_r1_b_up
+      - event.living_room_r1_b_down
 actions:
   - action: system_log.write
     data:

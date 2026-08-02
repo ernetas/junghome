@@ -6,7 +6,13 @@ rules:
   appropriate-polling: done
   brands: done
   common-modules: done
-  config-flow-test-coverage: done
+  config-flow-test-coverage:
+    status: done
+    comment: >-
+      Includes the async_show_progress branch (the waiting-for-app-approval
+      screen), driven by a register mock blocked on an asyncio.Event — an
+      immediately-resolving mock is already done() at the eager task's first
+      check and silently skips that path.
   config-flow: done
   dependency-transparency: done
   docs-actions:
@@ -43,11 +49,29 @@ rules:
   reauthentication-flow: done
   test-coverage: done
 
+  # Bronze rules added after this file was first written
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no device conditions.
+  docs-triggers:
+    status: done
+    comment: >-
+      Device triggers (button pressed/released) are documented in the README's
+      "Button automations" section and docs/example-button-automation.md.
+
   # Gold
   devices: done
   diagnostics: done
   discovery: done
-  discovery-update-info: done
+  discovery-update-info:
+    status: done
+    comment: >-
+      Honoured for zeroconf-keyed entries (unique_id = mDNS hostname; an IP
+      change updates the stored host). A manually added entry is keyed by the
+      typed host, so an IP change there surfaces as a new discovery instead of
+      an update — fixing that means re-keying entries on the gateway serial
+      from the mDNS TXT record (confirmed present: serial=/mac=/version=),
+      which is tracked as backlog in CLAUDE.md.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

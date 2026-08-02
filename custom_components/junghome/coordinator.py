@@ -22,7 +22,13 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, EVENT_SCENE_RECALLED, device_slug
+from .const import (
+    DOMAIN,
+    EVENT_SCENE_RECALLED,
+    device_slug,
+    duplicate_slugs,
+    scene_unique_id,
+)
 from .models import Device, Scene
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,7 +171,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # The datapoint id whose WebSocket push is being dispatched right now, or
         # None for REST-poll-driven updates. Event entities read this to fire on
         # a genuine push edge rather than diffing snapshots (see event.py). It is
-        # set only for the duration of one synchronous `async_set_updated_data`
+        # set only for the duration of one synchronous `async_update_listeners`
         # dispatch, so REST re-reads (which leave it None) never fire events.
         self.pushed_datapoint_id: str | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
@@ -180,6 +186,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # `color_temp_range_for_device`, and surfaced in diagnostics so the
         # capabilities we do not yet implement stay visible.
         self.groups: list[dict[str, Any]] = []
+        # Unmapped quantity units the sensor platform has already warned about,
+        # once per unit per entry (kept here so it resets on reload and is not
+        # shared between two gateways' entries, unlike a module global).
+        self.warned_quantity_units: set[str] = set()
+        # Datapoint ids seen in pushes with no matching stored datapoint. Each
+        # gets one WARNING and one refresh request (see the unmatched-push
+        # branch); repeats log at DEBUG so a phantom id can't spam the log or
+        # amplify polling.
+        self._unmatched_push_ids: set[str] = set()
         # Bounded log of recent raw WebSocket frames for diagnostics.
         self.ws_frame_log: deque[str] = deque(maxlen=WS_FRAME_LOG_SIZE)
         # Latest raw frame of each type, so the connect-time handshake
@@ -252,9 +267,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_placeholders={"error": str(err)},
             ) from err
 
-        if response is None:
-            _LOGGER.error("Received None response from API")
-            return []  # Returning empty list ensures entities don't break
         _LOGGER.debug("API Response: %s", response)
         self._reload_if_device_ids_changed(response)
         # `async_set_updated_data` is automatically called with this.
@@ -267,8 +279,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         update; entities cache those ids, so without a reload they can no longer
         find their datapoint (state stops updating, commands target dead ids).
         unique_ids are label-based and survive the reload.
+
+        Colliding slugs are skipped (see ``duplicate_slugs``): two devices whose
+        labels slug identically would share ONE key in the map below, with the
+        gateway's list order deciding which device's id it holds — so a mere
+        order change between polls read as "the id changed" and scheduled a
+        reload, every time, forever. Skipping them trades id-change detection
+        for those (already-degraded) devices against that reload loop.
         """
-        new_ids = {device_slug(d): d["id"] for d in devices if d.get("id")}
+        colliding = duplicate_slugs(devices)
+        new_ids = {
+            device_slug(d): d["id"]
+            for d in devices
+            if d.get("id") and device_slug(d) not in colliding
+        }
         changed = any(
             self._device_ids.get(slug) not in (None, dev_id)
             for slug, dev_id in new_ids.items()
@@ -620,8 +644,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._log_ws_frame(raw)
         try:
             data = json.loads(raw)
-            if isinstance(data, list):
-                _LOGGER.error("Received WebSocket message is a list: %s", data)
+            # Every frame is `{"type": ..., "data": ...}`; a bare list or JSON
+            # scalar ("hello", 42) is not a frame. Rejecting it here keeps it
+            # a clean log line instead of an AttributeError in the catch-all.
+            if not isinstance(data, dict):
+                _LOGGER.error("Received non-object WebSocket message: %s", data)
                 return
             if data.get("type") == "version":
                 self.gateway_version = data.get("data")
@@ -822,8 +849,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     self.async_update_listeners()
                 finally:
                     self.pushed_datapoint_id = None
+            elif datapoint_id not in self._unmatched_push_ids:
+                # An unmatched push usually means a device was just added in
+                # the app and is pushing before the next poll has discovered
+                # it. Request a (debounced) refresh on the FIRST sighting of an
+                # unknown id — discovery then lands in seconds instead of up
+                # to a minute — and warn once per id rather than per frame (a
+                # new device pushing at 1 Hz used to warn 60 times before the
+                # poll caught up).
+                self._unmatched_push_ids.add(datapoint_id)
+                _LOGGER.warning(
+                    "No matching datapoint found for id %s; requesting a "
+                    "refresh (a device may have just been added)",
+                    datapoint_id,
+                )
+                self.hass.async_create_task(self.async_request_refresh())
             else:
-                _LOGGER.warning("No matching datapoint found for id %s", datapoint_id)
+                _LOGGER.debug("No matching datapoint found for id %s", datapoint_id)
         elif isinstance(data, list):
             if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
                 self._handle_scenes_broadcast(msg_type, data)
@@ -832,12 +874,39 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # capability metadata (area names, colour-temperature ranges) and
                 # is surfaced in diagnostics.
                 self.groups = [g for g in data if isinstance(g, dict)]
+            elif msg_type == "functions":
+                self._handle_functions_broadcast(data)
             else:
                 _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
         else:
             _LOGGER.warning(
                 "Received WebSocket message with unknown data type: %s", message
             )
+
+    def _handle_functions_broadcast(self, data: list[Any]) -> None:
+        """Adopt a pushed ``functions`` list as if a REST poll had returned it.
+
+        The gateway broadcasts the full, authoritative device list on connect
+        and whenever it changes (captured frames match ``GET /functions/``
+        exactly). Treating it as a poll result makes device add/remove
+        push-driven — discovery, pruning, area assignment and the capability
+        watcher all run on it via their coordinator listeners — instead of
+        waiting up to a minute for the next poll.
+
+        ``async_set_updated_data`` is correct HERE (and deliberately avoided in
+        the per-datapoint push path above): this frame carries data as fresh
+        and complete as a poll, so re-arming the poll timer a full interval out
+        loses nothing — and the frame only arrives on membership change, so it
+        cannot starve the poll the way per-value pushes did. No push marker is
+        set, so event entities never read a broadcast as a button edge, and the
+        unmatched-id memory resets because the authoritative list may have just
+        added those devices.
+        """
+        devices = cast("list[Device]", [d for d in data if isinstance(d, dict)])
+        _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
+        self._unmatched_push_ids.clear()
+        self._reload_if_device_ids_changed(devices)
+        self.async_set_updated_data(devices)
 
     def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:
         """Update the cached scene list from a WebSocket scenes broadcast.
@@ -856,7 +925,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             by_id = {s.get("id"): s for s in self.scenes}
             for scene in items:
                 by_id[scene.get("id")] = scene
-            self.scenes = list(by_id.values())
+            # De-duplicate by label, newest wins. Scene identity is the label
+            # (ids regenerate on firmware updates), so a delta that assigned a
+            # scene a new id would otherwise leave the old and new entries side
+            # by side — and activation resolves the FIRST label match, which
+            # could be the dead id. Scenes without a label can't back an entity
+            # but are kept for diagnostics.
+            by_label: dict[str, Scene] = {}
+            unlabeled: list[Scene] = []
+            for scene in by_id.values():
+                label = scene.get("label")
+                if label:
+                    by_label[label] = scene
+                else:
+                    unlabeled.append(scene)
+            self.scenes = [*by_label.values(), *unlabeled]
         else:  # scenes-deleted
             removed = {s.get("id") for s in items}
             self.scenes = [s for s in self.scenes if s.get("id") not in removed]
@@ -879,6 +962,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         event_data: dict[str, Any] = {"scene_id": scene_id, "label": label}
         if self.config_entry is not None:
             event_data["entry_id"] = self.config_entry.entry_id
+            if isinstance(label, str) and label:
+                # Resolve the scene entity backing this label, so the logbook
+                # line links to it and automations can match on entity_id.
+                # Best-effort: a scene not (yet) registered simply omits it.
+                entity_id = er.async_get(self.hass).async_get_entity_id(
+                    "scene", DOMAIN, scene_unique_id(self.config_entry, label)
+                )
+                if entity_id is not None:
+                    event_data["entity_id"] = entity_id
         self.hass.bus.async_fire(EVENT_SCENE_RECALLED, event_data)
 
     def _apply_gateway_version(self) -> None:

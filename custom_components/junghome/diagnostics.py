@@ -137,7 +137,10 @@ async def async_get_config_entry_diagnostics(
         # thing to check when matching real hardware against our support.
         "support_summary": _support_summary(devices),
         "device_count": len(devices),
-        "devices": devices,
+        # Same redaction rule as the per-device dump: today's device payloads
+        # carry no host/token keys so this is a no-op, but the two endpoints
+        # must not disagree about the rule.
+        "devices": async_redact_data(devices, TO_REDACT),
         # Scenes and groups are separate coordinator data categories (not backed by
         # a device). Groups carry per-room capability metadata; both are kept so a
         # dump is complete for debugging discovery/recall and spotting capabilities

@@ -104,6 +104,27 @@ async def test_event_handle_update_missing_device_noops(hass: HomeAssistant) -> 
     write_state.assert_called_once()
 
 
+async def test_fire_bus_event_skipped_without_device_entry(
+    hass: HomeAssistant,
+) -> None:
+    """No bus event is emitted for an entity not yet in the device registry.
+
+    A device trigger is keyed on the registry device id, so an event without
+    one would match nothing; the early return must not raise either.
+    """
+    coordinator = _bare_coordinator(hass)
+    device = {"id": "d", "type": "RockerSwitch", "label": "Btn", "datapoints": []}
+    datapoint = {"id": "d-c", "type": "up_request", "values": []}
+    entity = JungHomeEventEntity(coordinator, device, datapoint)
+    entity.hass = hass
+    fired: list[object] = []
+    hass.bus.async_listen("junghome_button_action", fired.append)
+
+    entity._fire_bus_event("pressed")  # device_entry is None: must no-op
+    await hass.async_block_till_done()
+    assert fired == []
+
+
 async def test_all_event_entities(
     hass: HomeAssistant,
     entity_registry: er.EntityRegistry,

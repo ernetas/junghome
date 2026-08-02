@@ -368,8 +368,95 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
 
+async def test_register_shows_progress_while_pending(hass: HomeAssistant) -> None:
+    """A registration still waiting on app approval shows the progress screen.
+
+    Every real user sits in this state for up to 180 s, but a stubbed
+    ``AsyncMock`` register resolves before the eager task's first ``done()``
+    check, so the ``async_show_progress`` branch was never executed by the
+    suite. Block the register on an event to force the pending path.
+    """
+    gate = asyncio.Event()
+
+    async def _blocked_register(self: JungHomeConfigFlow) -> str:
+        await gate.wait()
+        return "tok-waited"
+
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, _blocked_register), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        # The task is parked on the gate: the flow must show progress.
+        assert result["type"] == FlowResultType.SHOW_PROGRESS
+        assert result["progress_action"] == "waiting_for_approval"
+
+        # Approval arrives; the flow advances to the entry.
+        gate.set()
+        await hass.async_block_till_done()
+        result = await hass.config_entries.flow.async_configure(result["flow_id"])
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-waited"}
+        await hass.async_block_till_done()
+
+
+async def test_register_failed_form_allows_retry(hass: HomeAssistant) -> None:
+    """The register-failed form's submit re-runs registration.
+
+    Covers the resubmit branch of ``async_step_register_failed`` (a timed-out
+    approval retried from the failure screen), which no test drove.
+    """
+    attempts = 0
+
+    async def _flaky_register(self: JungHomeConfigFlow) -> str:
+        # Yield once so the eager task parks, as a real HTTP register always
+        # does at its first await. A mock that raises synchronously is done at
+        # the flow's first check, and the manager's SHOW_PROGRESS_DONE
+        # auto-advance then re-passes the ORIGINAL user_input into
+        # register_failed — silently retrying without ever showing the form
+        # (impossible with a real aiohttp call, so not worth handling).
+        await asyncio.sleep(0)
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CannotRegister("not approved in time")
+        return "tok-retry"
+
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, _flaky_register), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "register_failed"
+
+        # Submitting the failure form retries; the second attempt succeeds.
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-retry"}
+        assert attempts == 2
+        await hass.async_block_till_done()
+
+
 async def test_reauth_flow(hass: HomeAssistant) -> None:
-    """Reauth re-registers and updates the stored token."""
+    """Reauth shows a confirm form first, then re-registers and stores the token.
+
+    The confirm form matters: a reauth flow is created programmatically before
+    the user has seen the notification, and registration opens the gateway's
+    one 180 s approval window the moment it runs — starting it unattended
+    burned that window before the user could approve.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="1.2.3.4",
@@ -377,13 +464,85 @@ async def test_reauth_flow(hass: HomeAssistant) -> None:
     )
     entry.add_to_hass(hass)
     fetch, run_ws = _no_network()
-    with patch(_REGISTER, AsyncMock(return_value="new-tok")), fetch, run_ws:
+    with patch(_REGISTER, AsyncMock(return_value="new-tok")) as register, fetch, run_ws:
         result = await entry.start_reauth_flow(hass)
+        # No registration yet: the flow waits for the user on a confirm form.
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        register.assert_not_called()
+
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         result = await _advance_progress(hass, result)
         await hass.async_block_till_done()
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_TOKEN] == "new-tok"
+
+
+async def test_reauth_shows_progress_while_pending(hass: HomeAssistant) -> None:
+    """A reauth registration still waiting on app approval shows progress."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "old"},
+    )
+    entry.add_to_hass(hass)
+    gate = asyncio.Event()
+
+    async def _blocked_register(self: JungHomeConfigFlow) -> str:
+        await gate.wait()
+        return "tok-reauth"
+
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, _blocked_register), fetch, run_ws:
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        assert result["type"] == FlowResultType.SHOW_PROGRESS
+        assert result["progress_action"] == "waiting_for_approval"
+
+        gate.set()
+        await hass.async_block_till_done()
+        result = await hass.config_entries.flow.async_configure(result["flow_id"])
+        result = await _advance_progress(hass, result)
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_TOKEN] == "tok-reauth"
+
+
+async def test_reauth_failed_form_allows_retry(hass: HomeAssistant) -> None:
+    """The reauth-failed form's submit retries immediately, with no re-confirm."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "old"},
+    )
+    entry.add_to_hass(hass)
+    attempts = 0
+
+    async def _flaky_register(self: JungHomeConfigFlow) -> str:
+        await asyncio.sleep(0)  # park once, as a real HTTP register does
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CannotRegister("not approved in time")
+        return "tok-reauth-retry"
+
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, _flaky_register), fetch, run_ws:
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_failed"
+
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_TOKEN] == "tok-reauth-retry"
+    assert attempts == 2
 
 
 async def test_reconfigure_flow(hass: HomeAssistant, aioclient_mock) -> None:
@@ -830,6 +989,51 @@ async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
     assert entry.options[CONF_INVERTED_COVERS] == ["ghost_001"]
+
+
+async def test_options_flow_keeps_live_flagged_cover_selected(
+    hass: HomeAssistant,
+) -> None:
+    """A flagged cover the gateway IS reporting stays selected by default."""
+    cover_device = {
+        "id": "idblind9",
+        "type": "Position",
+        "label": "Patio Awning",
+        "datapoints": [
+            {
+                "id": "idblind9-001",
+                "type": "level",
+                "values": [{"key": "level", "value": "0"}],
+            }
+        ],
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="gw",
+        data={CONF_HOST: "gw", CONF_TOKEN: "t"},
+        options={CONF_INVERTED_COVERS: ["patio_awning_001"]},
+    )
+    entry.add_to_hass(hass)
+    _, ws = _no_network()
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[cover_device]),
+        ),
+        ws,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == FlowResultType.FORM
+        # Submitting the form unchanged keeps the pre-selected live flag.
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_INVERTED_COVERS] == ["patio_awning_001"]
 
 
 async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) -> None:

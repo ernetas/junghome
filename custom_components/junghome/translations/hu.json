@@ -73,6 +73,7 @@
       "register_failed": "A regisztráció nem fejeződött be. Ügyelj rá, hogy jóváhagyd a kérelmet az alkalmazásban."
     },
     "abort": {
+      "already_in_progress": "A konfiguráció már folyamatban van.",
       "already_configured": "Ez a Jung Home átjáró már konfigurálva van.",
       "reauth_successful": "Az ismételt hitelesítés sikeres volt.",
       "reconfigure_successful": "Az átjáró címe frissítve lett."

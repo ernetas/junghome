@@ -223,6 +223,21 @@ async def test_cover_extractors_defensive(hass: HomeAssistant) -> None:
         is None
     )
     assert cover._get_position_from_datapoint({"id": "x", "values": []}) is None
+    # An inf-parsing value raises OverflowError from round(), not ValueError —
+    # it must read as unknown, not escape into the listener dispatch.
+    for huge in ("Infinity", "1e999", "-1e999"):
+        assert (
+            cover._get_position_from_datapoint(
+                {"id": "x", "values": [{"key": "level", "value": huge}]}
+            )
+            is None
+        )
+        assert (
+            cover._get_tilt_from_datapoint(
+                {"id": "x", "values": [{"key": "angle", "value": huge}]}
+            )
+            is None
+        )
     # Out-of-range tilt is clamped to 0..100 (mirrors the position clamp).
     assert (
         cover._get_tilt_from_datapoint(

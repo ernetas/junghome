@@ -73,6 +73,7 @@
       "register_failed": "De registratie is niet voltooid. Zorg ervoor dat je het verzoek in de app goedkeurt."
     },
     "abort": {
+      "already_in_progress": "De configuratie is al bezig.",
       "already_configured": "Deze Jung Home-gateway is al geconfigureerd.",
       "reauth_successful": "Opnieuw verifiëren is gelukt.",
       "reconfigure_successful": "Het gateway-adres is bijgewerkt."

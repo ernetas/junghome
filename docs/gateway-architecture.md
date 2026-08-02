@@ -1,9 +1,14 @@
 # JUNG HOME Gateway — internals
 
-Notes reverse-engineered from a microSD disk image of a JUNG HOME Gateway
-(firmware 1.5.0, API 1.5.0). The gateway is a Raspberry Pi Zero–based board
-running Debian (bullseye) with JUNG's services in `/opt`. This document is for
-contributors; it is not needed to use the integration.
+Notes reverse-engineered from a microSD disk image of a JUNG HOME Gateway.
+The image carries **two firmware generations** (A/B rootfs pair, see below):
+the current build is **firmware v2.1.3, API 1.5.0, Raspberry Pi OS 13 Trixie**
+(`sdc2` in the dump) and the previous one is **API 1.1.0 on Debian 11
+bullseye** (`sdc3`). "1.5.0" is the **API/package** version, not the firmware
+version — [gateway-system-analysis.md](gateway-system-analysis.md) documents
+the current build in detail. The gateway is a Raspberry Pi Zero–based board
+with JUNG's services in `/opt`. This document is for contributors; it is not
+needed to use the integration.
 
 ## microSD partition layout
 
@@ -17,9 +22,14 @@ The card has four partitions (seen in the dump as `sdc1`–`sdc4`):
 | **sdc4** | ext4 (data) | Persistent per-service data, shared across rootfs updates. |
 
 **sdc2 and sdc3 are an A/B (dual) root filesystem pair.** One is active while
-the other receives an OTA update, then the bootloader switches over — this makes
-firmware updates power-fail safe. The two are near-identical; the active one in
-the dump was sdc3 (newer mtimes).
+the other receives an OTA update, then the bootloader switches over — this
+makes firmware updates power-fail safe. They are **not** near-identical: they
+hold different firmware generations. In this dump the **active/current one is
+sdc2** (Trixie, api-server 1.5.0, middleware restructured into
+`models/device_states/*State.js`) and sdc3 is the previous build (bullseye,
+api-server 1.1.0). An earlier revision of this doc claimed sdc3 was active
+from mtimes alone — `etc/os-release` and the package versions say otherwise.
+When quoting firmware evidence, cite **sdc2** paths.
 
 **sdc4 is the data partition.** It holds state that must survive a rootfs
 update: API tokens, the BT-Mesh database, Matter commissioning data, logger

@@ -159,6 +159,37 @@ async def test_apply_gateway_version_updates_registry(hass: HomeAssistant) -> No
     assert registry.async_get(device.id).sw_version == "1.5.0"
 
 
+async def test_apply_gateway_version_keeps_per_device_sw_version(
+    hass: HomeAssistant,
+) -> None:
+    """A device reporting its OWN sw_version keeps it; others get the gateway's.
+
+    Writing the gateway version unconditionally used to clobber a per-device
+    version, making the registry disagree with ``device_info`` — this pins the
+    fix (the branch was previously untested).
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [
+        {"id": "d1", "label": "Versioned", "sw_version": "9.9-device"},
+        {"id": "d2", "label": "Unversioned"},
+    ]
+    registry = dr.async_get(hass)
+    versioned = registry.async_get_or_create(
+        config_entry_id=coordinator.config_entry.entry_id,
+        identifiers={(DOMAIN, "versioned")},
+    )
+    unversioned = registry.async_get_or_create(
+        config_entry_id=coordinator.config_entry.entry_id,
+        identifiers={(DOMAIN, "unversioned")},
+    )
+
+    coordinator.gateway_version = "1.5.0"
+    coordinator._apply_gateway_version()
+
+    assert registry.async_get(versioned.id).sw_version == "9.9-device"
+    assert registry.async_get(unversioned.id).sw_version == "1.5.0"
+
+
 async def test_apply_gateway_version_noop_without_version(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     registry = dr.async_get(hass)
@@ -248,12 +279,23 @@ async def test_fetch_groups_from_api_ignores_non_list(
     assert await coordinator._fetch_groups_from_api("gw", "tok") == []
 
 
-async def test_update_data_returns_empty_on_none(hass: HomeAssistant) -> None:
+async def test_update_data_rejects_json_null_body(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A JSON `null` body fails the isinstance(list) check and raises.
+
+    (There used to be a dead `response is None` branch downstream "for" this
+    case — the fetch itself already rejects it, so a None can never reach
+    `_async_update_data`.)
+    """
+    aioclient_mock.get(
+        "https://gw/api/junghome/functions",
+        text="null",
+        headers={"Content-Type": "application/json"},
+    )
     coordinator = _coordinator(hass)
-    with patch.object(
-        coordinator, "_fetch_devices_from_api", AsyncMock(return_value=None)
-    ):
-        assert await coordinator._async_update_data() == []
+    with pytest.raises(UpdateFailed):
+        await coordinator._fetch_devices_from_api("gw", "tok")
 
 
 async def test_all_command_methods_send(hass: HomeAssistant) -> None:

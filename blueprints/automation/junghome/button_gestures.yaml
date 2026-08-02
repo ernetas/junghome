@@ -137,8 +137,22 @@ actions:
                and wait.trigger.from_state is not none
                and wait.trigger.from_state.state not in ('unavailable', 'unknown'))
            else none }}
+      # The entity dropped mid-gesture (WebSocket drop, entry reload): the
+      # press was never released as far as we can see, so any gesture would be
+      # a guess — a drop used to read as a release and fire a phantom SINGLE
+      # after the double-click window, even mid-hold.
+      aborted: >-
+        {{ wait.trigger is not none
+           and (wait.trigger.to_state is none
+                or wait.trigger.to_state.state in ('unavailable', 'unknown')) }}
 
   - choose:
+      # ---- ABORT: the entity went unavailable mid-gesture → do nothing ----
+      - conditions:
+          - "{{ aborted }}"
+        sequence:
+          - stop: Button entity became unavailable mid-gesture
+
       # ---- HOLD: nothing happened within the hold time → still held ----
       - conditions:
           - "{{ wait.trigger is none }}"

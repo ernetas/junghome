@@ -1,0 +1,76 @@
+name: HA floor check
+
+# hacs.json declares the minimum Home Assistant version this integration
+# claims to support, but the test suite only ever runs against the pinned
+# current release — so the floor used to be an untested guess. This job
+# installs exactly the declared floor and imports every module of the
+# integration against it, catching an import of an API that does not exist
+# yet at the floor (the scheduled run also catches the floor aging out of
+# installability). It is deliberately not part of the release gate: a floor
+# break means "raise the floor in hacs.json", not "block the release".
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - "hacs.json"
+      - "custom_components/**"
+      - ".github/workflows/floor.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "hacs.json"
+      - "custom_components/**"
+      - ".github/workflows/floor.yml"
+
+permissions: {}
+
+jobs:
+  floor-import:
+    name: Import against the hacs.json minimum HA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the floor Home Assistant
+        # --only-binary litellm: newer litellm releases ship only an sdist
+        # with a Rust extension; letting pip resolve to the newest wheel-only
+        # release keeps this job free of a Rust toolchain.
+        run: |
+          floor="$(python3 -c "import json;print(json.load(open('hacs.json'))['homeassistant'])")"
+          echo "hacs.json floor: homeassistant==${floor}"
+          python3 -m pip install --only-binary litellm "homeassistant==${floor}"
+
+      - name: Import every integration module
+        run: |
+          python3 - <<'EOF'
+          import importlib
+          import pkgutil
+          import sys
+
+          sys.path.insert(0, ".")
+          package = importlib.import_module("custom_components.junghome")
+          failed = []
+          for module in pkgutil.iter_modules(package.__path__):
+              name = f"custom_components.junghome.{module.name}"
+              try:
+                  importlib.import_module(name)
+              except Exception as err:  # noqa: BLE001 - report all failures
+                  failed.append(f"{name}: {err!r}")
+          if failed:
+              print("Floor import failures:")
+              print("\n".join(failed))
+              raise SystemExit(1)
+          print("All modules import cleanly against the floor.")
+          EOF

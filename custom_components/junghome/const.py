@@ -112,8 +112,10 @@ def gateway_device_id(entry: "ConfigEntry") -> str:
     device. Anchored on the entry's ``unique_id`` (the host/mDNS hostname, which
     survives reconfigure) and falling back to the entry id.
 
-    The ``gateway_`` prefix is what ``__init__._prune_stale_devices`` keys off to
-    avoid pruning this device (it never appears in the gateway's device list).
+    ``__init__._prune_stale_devices`` adds this exact identifier to its live
+    set so the hub is never pruned (it never appears in the gateway's device
+    list). The raw host keeps its dots here (unlike a device slug), so a
+    device label cannot normally collide with it.
     """
     return f"gateway_{entry.unique_id or entry.entry_id}"
 
@@ -132,6 +134,29 @@ def entry_scope(entry: "ConfigEntry") -> str:
     as ``gateway_device_id``.
     """
     return slugify(entry.unique_id or entry.entry_id)
+
+
+def scene_slug(label: str) -> str:
+    """Return a firmware-stable slug for a scene label."""
+    slug = slugify(label or "")
+    if slug and slug != "unknown":
+        return slug
+    return "scene"
+
+
+def scene_unique_id(entry: "ConfigEntry", label: str) -> str:
+    """Return the firmware-stable, per-gateway unique_id for a scene.
+
+    Scoped by ``entry_scope`` because a scene has no backing device to make it
+    unique: the id used to be the scene label alone, so two gateways each with
+    a "Movie night" scene produced the same unique_id and Home Assistant
+    rejected the second entity. ``_migrate_scene_unique_ids`` in ``__init__``
+    re-keys entities created under the old unscoped scheme.
+
+    Lives here (not in scene.py) so the coordinator can resolve a recalled
+    scene's entity at event-fire time without importing the platform module.
+    """
+    return f"{entry_scope(entry)}_{scene_slug(label)}_scene"
 
 
 def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceInfo:

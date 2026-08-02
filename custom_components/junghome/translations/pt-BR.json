@@ -73,6 +73,7 @@
       "register_failed": "O registro não foi concluído. Certifique-se de aprovar a solicitação no aplicativo."
     },
     "abort": {
+      "already_in_progress": "O fluxo de configuração já está em andamento.",
       "already_configured": "Este gateway Jung Home já está configurado.",
       "reauth_successful": "A reautenticação foi bem-sucedida.",
       "reconfigure_successful": "O endereço do gateway foi atualizado."

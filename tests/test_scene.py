@@ -16,8 +16,9 @@ from pytest_homeassistant_custom_component.common import (
 from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import scene_slug as _scene_slug
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from custom_components.junghome.scene import JungHomeScene, _scene_slug
+from custom_components.junghome.scene import JungHomeScene
 from tests.conftest import _fake_run_websocket
 
 
@@ -58,6 +59,32 @@ async def test_scene_created_and_activated(
             "scene", "turn_on", {"entity_id": "scene.movie_night"}, blocking=True
         )
     assert act.call_args.args[0] == "idscene1"
+
+
+async def test_scene_label_collision_creates_one_entity_and_warns_once(
+    hass: HomeAssistant, init_integration, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Colliding scene labels produce one entity and ONE warning, not one per
+    refresh — _discover_scenes runs on every coordinator notification, so an
+    unguarded warning repeated several times a minute indefinitely.
+    """
+    coordinator = init_integration.runtime_data
+    scenes = [
+        {"id": "s1", "label": "Movie Night"},
+        {"id": "s2", "label": "Movie-Night"},  # slugs to movie_night as well
+    ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": scenes})
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night") is not None
+    warnings = [r for r in caplog.records if "map to the same id" in r.getMessage()]
+    assert len(warnings) == 1
+
+    # Further refreshes with the same collision stay quiet.
+    coordinator._handle_websocket_message({"type": "scenes", "data": scenes})
+    coordinator._handle_websocket_message({"type": "scenes", "data": scenes})
+    await hass.async_block_till_done()
+    warnings = [r for r in caplog.records if "map to the same id" in r.getMessage()]
+    assert len(warnings) == 1
 
 
 async def test_scene_removed_when_deleted(
@@ -247,6 +274,44 @@ async def test_revoked_token_on_recall_starts_reauth(hass: HomeAssistant) -> Non
     ):
         await coordinator.activate_scene("id0001")
     start_reauth.assert_called_once()
+
+
+async def test_non_auth_http_error_on_recall_is_cannot_send(
+    hass: HomeAssistant,
+) -> None:
+    """A non-auth HTTP failure (e.g. 500, or 404 for a dead scene id) raises
+    the transient `cannot_send` error and does NOT start reauth."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="h", data={CONF_HOST: "h", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "h", "token": "t"}, entry
+    )
+
+    class _Erroring:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def raise_for_status(self):
+            raise aiohttp.ClientResponseError(Mock(), (), status=500)
+
+    session = Mock()
+    session.post = Mock(return_value=_Erroring())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
+        pytest.raises(HomeAssistantError) as err,
+    ):
+        await coordinator.activate_scene("id0001")
+    start_reauth.assert_not_called()
+    assert err.value.translation_key == "cannot_send"
 
 
 async def test_scene_migration_preserves_the_entity_id(hass: HomeAssistant) -> None:
