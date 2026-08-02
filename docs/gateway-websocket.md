@@ -223,61 +223,56 @@ reaches a client as `1, 1, 0, 0`.
 > re-derive from raw edge timing something the gateway knew and discarded. If
 > JUNG ever surfaced the mode, native hold detection would become trivial.
 
-**2. The device publishes each edge more than once, so a fast tap produces
-two press/release pairs.** BT-Mesh publish retransmissions carry their own
-sequence numbers, so replay protection does not drop them, and they are
-delivered as independent messages. Captured from real hardware (JUNG rocker,
-gateway 2.1.3):
+**2. On current DEVICE firmware, one physical tap is reported as TWO
+press/release pairs** — same channel, no sibling involvement. Measured with a
+labelled capture (`tools/ws-capture/capture_ws.py`, 2026-08-02, one rocker,
+gateway 2.1.3; each gesture group separated by silence so nothing is
+mis-attributed):
+
+| Gesture (labelled) | Pairs emitted | Pulse width (press→release) | Gap within the burst (release→press) |
+|---|---|---|---|
+| single click ×6 | **2** every time | 0.40 – 0.49 s | 0.11 – 0.95 s |
+| double click ×5 | **2** every time | 0.40 – 0.53 s | 0.73 – 1.03 s |
+| hold ~3 s ×5 | **1** every time | 2.44 – 3.11 s | — |
 
 ```jsonc
-// ONE physical quick click on the up side:
+// ONE physical quick click on the up side arrives as:
 {"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
 {"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
-{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
-{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
-
-// ONE physical press-and-hold, then release:
 {"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
 {"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
 ```
 
-The asymmetry identifies the mechanism. During a **hold**, the repeat of
-`"1"` lands while the state is still `1` — no change, so rule 1 suppresses it,
-and the gesture yields exactly one pair. During a **quick tap**, the repeat of
-`"1"` lands *after* the first `"0"` has already been applied, so it reads as a
-brand-new press and is emitted. Same for the release repeat. The duplicate is
-on the **same** datapoint id, not the sibling channel.
+Three facts follow, and they set the design space for any gesture logic:
 
-> **Consequence for gesture logic: a single click and a double click can be
-> byte-identical.** Both produce `1,0,1,0` on one channel. Any rule that treats
-> "a second `pressed` shortly after a release" as a double-click will report a
-> *single* click as a double. The only thing that separates them is the
-> **interval**: retransmission repeats follow the previous edge far faster than
-> a human can tap twice, so a minimum-gap filter is the fix — see the
-> integration note in `docs/example-button-automation.md`.
+- **A single click and a double click are indistinguishable.** Both produce
+  two structurally identical pairs, and their intra-burst gap ranges overlap
+  (0.11–0.95 s vs 0.73–1.03 s). No threshold separates them; nothing recovers
+  the distinction after the fact.
+- **Tap vs hold separates perfectly — on pulse *width*, not gaps.** Tap
+  pulses top out at 0.53 s, hold pulses start at 2.44 s: a five-fold empty
+  band. (The tap pulse is ~0.42 s nearly regardless of physical contact time,
+  so it is the device's reporting granularity, not the finger.) A hold
+  threshold anywhere in ~1–2 s is safe; the shipped blueprint's 2 s is fine.
+- **A duplicate-suppression window must be ~1.2 s** (cover the 1.03 s worst
+  gap plus margin). Anything shorter lets some duplicates through; earlier
+  revisions of this doc suggested 0.15–0.25 s from a mis-segmented unlabelled
+  capture — refuted by the labelled one.
 
-**Measured on real hardware** (JUNG rocker, gateway 2.1.3, timestamped capture
-of ~20 gestures via `tools/ws-capture/capture_ws.py`):
-
-| Quantity | Observed |
-|---|---|
-| press → release, ordinary tap | 0.37 – 0.50 s |
-| press → release, deliberate hold | 2.38 – 2.51 s |
-| release → duplicate press (the artifact) | **0.078 s** |
-| release → next *human* press | ≥ 0.52 s |
-
-Two things follow. First, the duplicate is an order of magnitude closer to the
-preceding release than any human-produced gap, so a cooldown of roughly
-0.15–0.25 s separates them cleanly. Second, **the duplication is
-intermittent** — it appeared once in ~20 gestures in this capture, while an
-earlier hand-recorded sample showed it on every quick tap. That fits the
-retransmission explanation (whether the repeat lands before or after the
-release depends on radio timing and relaying) and means gesture logic cannot
-assume either behaviour: it must tolerate a duplicate that *may* appear.
-
-Note also that an ordinary tap holds for ~0.4 s as the gateway reports it,
-which is far longer than the physical contact time — so a hold threshold must
-sit well above 0.5 s (the shipped blueprint's 2 s is safe).
+**This is a regression, and the gateway's own logs prove it.** The gateway
+middleware logs every button state change, and the 2026-08-01 dump carries an
+archived support snapshot with logs from 2026-06-20 → 2026-07-28 (~900
+events, ~450 press bursts): **1.00 presses per burst** throughout — including
+the very button measured above, clean single pairs on every click. Between
+2026-07-29 and 2026-08-02 something changed it to 2.00. The gateway firmware
+did not change (the June and August dumps are byte-identical builds); the
+JUNG app went 2.1.0 → 2.2.0 in that window, and app 2.2.x is known to update
+*device* firmware / button behaviour (issue #66). The mechanism of the
+doubling is not established — plain BT-Mesh retransmission does not fit
+(gaps up to a second, and rule 1 would have to miss them) — so treat it as
+observed device-firmware behaviour, not an explained one. Gesture logic must
+tolerate BOTH reporting styles: one pair per tap (pre-regression) and two
+(current).
 
 Note also that a rocker's press datapoints are **read-only**
 (`writeable: false`, `UserPermission.ReadOnly` in `PushedUpState.js`) — nothing

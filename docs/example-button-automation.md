@@ -54,83 +54,70 @@ event.<button>_up   depressed
 
 while a press-and-**hold** produces just one `pressed` and one `depressed`.
 
-The reason is in the gateway's pipeline: the button publishes each edge more
-than once over Bluetooth Mesh (retransmissions carry their own sequence
-numbers, so nothing filters them), and the gateway only suppresses a repeat if
-the value has not changed in the meantime. During a hold, the repeated
-"pressed" arrives while the state is still pressed — suppressed. During a fast
-tap, it arrives *after* the release has landed, so it looks like a genuine new
-press and is forwarded. Full firmware evidence is in the rocker section of
-[gateway-websocket.md](gateway-websocket.md).
+This is recent **device-firmware behaviour, not a constant**: the gateway's own
+archived logs show every button reporting a clean single pair per click through
+late July 2026, then the same buttons doubling afterwards — the window in which
+the JUNG app (2.2.x) updates device firmware. Full evidence, including a
+labelled measurement of every gesture type, is in the rocker section of
+[gateway-websocket.md](gateway-websocket.md). If your buttons still emit one
+pair per click, the recipes below work as written; read on anyway, because an
+app update can change that under you.
 
-**What this means for you:**
-
-- A **single click and a double click can look identical** on the wire. Any
-  rule of the form "a second press shortly after a release = double-click"
-  will fire your *double* action for a *single* click. This affects
-  [Recipe 3](#recipe-3--single--double--hold-on-one-button) and the
-  [blueprint](#recipe-4--the-blueprint-recommended-for-more-than-one-button).
-- **Hold is unaffected** — the repeats are suppressed during the hold, so
-  hold detection is reliable.
-- **Recipe 1 and Recipe 2 are unaffected in practice**: acting twice on a
-  `light.toggle` would be visible, but the duplicate press arrives only
-  milliseconds later, and `mode: single` means the automation is still running
-  and the re-trigger is dropped. If you use a non-toggling action and want to
-  be certain, add a cooldown (see below).
-- **Selecting only one channel does not help.** The duplicate is on the same
-  channel as the original. (Earlier revisions of this guide blamed a sibling
-  `up_request`/`down_request` echo and advised picking one channel — measured
-  captures show same-channel duplication instead.)
-
-The distinguishing feature is **timing**, and on measured hardware the two are
-far apart. From a timestamped capture of ~20 gestures on a real JUNG rocker
-(gateway 2.1.3):
+**What the labelled measurements say** (one rocker, 16 taps + 5 holds):
 
 | | Observed |
 |---|---|
-| ordinary tap, press → release | 0.37 – 0.50 s |
-| deliberate hold, press → release | 2.38 – 2.51 s |
-| **duplicate press after a release** | **0.078 s** |
-| next *human* press after a release | ≥ 0.52 s |
+| tap, press → release | 0.40 – 0.53 s — *every* tap, single or double |
+| hold, press → release | 2.44 – 3.11 s |
+| gap inside the doubled burst (release → 2nd press) | 0.11 – 1.03 s |
 
-The duplicate lands ~80 ms after the release; nothing a human does comes within
-half a second. A cooldown of **0.15 – 0.25 s** therefore removes duplicates
-without touching real double-clicks.
+**What this means for you:**
 
-One caveat worth knowing: **the duplication is intermittent.** In that capture
-it appeared once in about twenty gestures, while an earlier hand-recorded
-sample showed it on every quick tap — consistent with it depending on mesh
-radio timing. So an automation that "works fine" for a while can still misfire
-later; don't conclude from a few good presses that your hardware is unaffected.
+- **A single click and a double click are indistinguishable** on affected
+  firmware. Both arrive as two identical press/release pairs, and the burst
+  gaps of singles (0.11–0.95 s) overlap those of doubles (0.73–1.03 s). No
+  window setting recovers the difference — if your buttons double-report,
+  **use click + hold only and leave the double action empty**.
+- **Hold is fully reliable** — it is the one gesture that emits a single pair,
+  and its pulse width (2.4 s+) is five times any tap's (≤0.53 s). This is why
+  hold detection keys on *how long the press lasted*, not on gaps.
+- **Without a guard, a single click fires twice.** Recipe 1/2's
+  `light.toggle` toggles twice (looks like nothing happened); the shipped
+  blueprint fires the single action twice — or the *double* action, when the
+  burst gap happens to land inside its 0.4 s window.
+- **Selecting only one channel does not help.** The duplicate is on the same
+  channel as the original. (Earlier revisions of this guide blamed a sibling
+  `up_request`/`down_request` echo and advised picking one channel — the
+  labelled capture shows same-channel duplication.)
 
-Measure your own before tuning any window — use the
-[debug logger](#debug-logger--capture-the-raw-event-stream) below, or the
-repo's capture tool, which timestamps every frame and prints per-gesture
-timings directly:
+Measure your own buttons before trusting any recipe — the repo's capture tool
+timestamps every frame and prints per-gesture timings:
 
 ```sh
 python tools/ws-capture/capture_ws.py capture --host <gateway> --script rocker
 python tools/ws-capture/capture_ws.py analyze disk_dump/ws-capture-<stamp>/frames.jsonl
 ```
 
-If your captured double-click gaps are clearly longer than the duplicate-press
-gaps, a **cooldown** that ignores a press arriving within that duplicate window
-restores single-vs-double discrimination. If they overlap, single and double
-genuinely cannot be told apart on your hardware — use single + hold only, and
-leave the double action empty.
+If it shows **one** pair per single click, your firmware is unaffected. If it
+shows two, add the cooldown below to every press automation.
 
 #### A cooldown you can drop into any recipe
 
-Ignore a press that arrives too soon after this automation last ran — long
-enough to swallow a retransmission repeat, short enough not to eat a real
-double-click. Add to the conditions, and tune `0.35` from your measurements:
+Ignore a press arriving within the burst window of the previous run. The
+measured worst gap inside a burst is ~1.03 s, so the window must be **at
+least ~1.2 s** — there is no smaller "safe" value, because the burst gap
+overlaps human double-click territory (which is also *why* doubles are
+unrecoverable on this firmware):
 
 ```yaml
   - condition: template
     value_template: >
       {{ this.attributes.last_triggered is none
-         or (now() - this.attributes.last_triggered).total_seconds() > 0.35 }}
+         or (now() - this.attributes.last_triggered).total_seconds() > 1.2 }}
 ```
+
+The trade-off is inherent: any two presses of the same button within 1.2 s
+count as one. On firmware that double-reports, that is exactly what you want.
 
 ### Find your exact entity IDs
 

@@ -273,16 +273,19 @@ async def _capture(args: argparse.Namespace) -> int:
                 finally:
                     reader.cancel()
     except aiohttp.WSServerHandshakeError as err:
-        rec.close()
         if err.status in (401, 403):
             return _fail(f"gateway rejected the token (HTTP {err.status})")
         return _fail(f"handshake failed: {err}")
     except (aiohttp.ClientError, OSError) as err:
-        rec.close()
         return _fail(f"could not connect to {args.host}: {err}")
-    except KeyboardInterrupt:
-        print("\nstopped by user")
-    rec.close()
+    except asyncio.CancelledError:
+        # Ctrl-C / SIGTERM cancel the task rather than raising KeyboardInterrupt
+        # inside it. Every record was flushed as it was written, so the capture
+        # on disk is complete up to this moment — close and print the summary
+        # instead of dying with a traceback.
+        print("\nstopped early — capture saved")
+    finally:
+        rec.close()
     print(f"\nRecorded {rec.frames} frames to {path}")
     print("Now run:")
     print(f"    python {Path(__file__).name} analyze {path}")
@@ -334,6 +337,83 @@ def _edges(records: list[dict], types: tuple[str, ...]) -> list[dict]:
             }
         )
     return rows
+
+
+# Auto-segmentation for captures recorded without script markers (e.g. when
+# the operator cannot answer the interactive prompts). A silence longer than
+# GROUP_SILENCE_S starts a new instructed group; edges within GESTURE_GAP_S of
+# each other belong to the same physical gesture. Both were validated against
+# a real labelled session: instructed pauses were 15 s+, and no gap inside a
+# genuine gesture burst exceeded ~1.1 s.
+GROUP_SILENCE_S = 10.0
+GESTURE_GAP_S = 2.0
+
+
+def _auto_group(rows: list[dict]) -> bool:
+    """Assign synthetic group markers to a marker-less capture by silence.
+
+    Returns True when auto-grouping was applied (so the report can say the
+    labels are inferred, not scripted). A capture with real markers is left
+    untouched.
+    """
+    if not rows or any(r["marker"] for r in rows):
+        return False
+    group = 0
+    previous = None
+    for row in rows:
+        if previous is None or row["elapsed"] - previous > GROUP_SILENCE_S:
+            group += 1
+        row["marker"] = f"group-{group}"
+        previous = row["elapsed"]
+    return True
+
+
+def _split_gestures(group: list[dict]) -> list[list[dict]]:
+    """Split one group's edges into physical gestures on GESTURE_GAP_S.
+
+    Never split after an unanswered press: a hold's pulse (measured 2.4-3.1 s)
+    exceeds the gap threshold, but its release still belongs to the same
+    gesture — a gesture can only end on a release.
+    """
+    gestures: list[list[dict]] = []
+    current: list[dict] = []
+    for row in group:
+        if (
+            current
+            and row["elapsed"] - current[-1]["elapsed"] > GESTURE_GAP_S
+            and current[-1]["values"].get(current[-1]["type"]) != "1"
+        ):
+            gestures.append(current)
+            current = []
+        current.append(row)
+    if current:
+        gestures.append(current)
+    return gestures
+
+
+def _print_burst_shapes(by_marker: dict[str | None, list[dict]]) -> None:
+    """Report presses-per-gesture — the doubled-reporting diagnostic.
+
+    1.00 presses per gesture is clean reporting; 2.00 is the doubled-burst
+    device firmware (one physical tap emitted as two press/release pairs), on
+    which single and double clicks are indistinguishable. This single number
+    is what decides which gesture strategies can work at all.
+    """
+    print("\n=== BURST SHAPE (presses per physical gesture) ===")
+    for marker, group in by_marker.items():
+        counts = [
+            sum(1 for r in g if r["values"].get(r["type"]) == "1")
+            for g in _split_gestures(group)
+        ]
+        if not counts:
+            continue
+        avg = sum(counts) / len(counts)
+        note = ""
+        if all(c == 2 for c in counts):
+            note = "  <- every gesture doubled (affected device firmware)"
+        elif all(c == 1 for c in counts):
+            note = "  <- clean single-pair reporting"
+        print(f"-- {marker or '(unmarked)'}: {counts}  avg {avg:.2f}{note}")
 
 
 def _press_durations(subset: list[dict], rows: list[dict]) -> list[float]:
@@ -446,11 +526,18 @@ def _analyze_rocker(records: list[dict]) -> None:
         print("No rocker edges captured. Did you press the button during a step?")
         return
 
+    if _auto_group(rows):
+        print(
+            f"(no script markers in this capture — groups inferred from "
+            f">{GROUP_SILENCE_S:.0f}s silences; keep instructed pauses long)"
+        )
+
     by_marker: dict[str | None, list[dict]] = {}
     for row in rows:
         by_marker.setdefault(row["marker"], []).append(row)
 
     _print_edges(by_marker)
+    _print_burst_shapes(by_marker)
     _print_timings(by_marker, rows)
 
 
@@ -534,7 +621,13 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "capture":
-        return asyncio.run(_capture(args))
+        try:
+            return asyncio.run(_capture(args))
+        except KeyboardInterrupt:
+            # asyncio.run re-raises KeyboardInterrupt after cancelling the
+            # task; _capture already closed the recorder and printed the
+            # summary on its CancelledError path.
+            return 0
     return _analyze(args)
 
 

@@ -55,18 +55,21 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `pressed`/`depressed` edges (`up_request` / `down_request`, one datapoint
   per physical side — **not** alternating channels per press; that earlier
   belief was refuted by a timestamped capture).
-- **A quick tap can be reported twice, on the same channel.** The device
-  publishes each edge more than once (BT-Mesh retransmissions carry their own
-  sequence numbers) and the gateway only suppresses a repeat whose value has
-  not changed (`communicateToAPI`, gated on `hasChanged`) — so during a *hold*
-  the repeat is swallowed, but after a fast *tap* it lands after the release
-  and is emitted as a fresh press. Measured: the duplicate follows its release
-  by ~0.078 s, while the fastest human gap is ≥0.52 s and an ordinary tap
-  reads as 0.37–0.50 s press-to-release (holds 2.4 s+). It is **intermittent**
-  (once in ~20 gestures in one capture, every tap in another). Consequence: a
-  single click can be indistinguishable from a double, so gesture logic needs
-  a ~0.15–0.25 s cooldown; the shipped blueprint does not yet have one (see
-  Backlog). Evidence + tables in docs/gateway-websocket.md.
+- **On current DEVICE firmware, one tap is reported as TWO press/release
+  pairs — same channel; a hold as ONE.** Labelled capture (2026-08-02, 16
+  taps + 5 holds): tap pulse 0.40–0.53 s (near-constant — the device's
+  reporting granularity, not the finger), hold pulse 2.44–3.11 s, intra-burst
+  gap 0.11–1.03 s. Single vs double click is **indistinguishable** (both = 2
+  identical pairs, overlapping gap ranges); tap vs hold separates perfectly on
+  **pulse width** (5× empty band). **This is a regression**: the gateway's own
+  archived logs (2026-06-20→07-28, ~450 bursts) show 1.00 presses/burst on
+  the same buttons; gateway fw unchanged across the window, JUNG app went
+  2.1.0→2.2.0 (app 2.2.x updates device firmware — issue #66). Mechanism
+  unestablished — do NOT present it as BT-Mesh retransmission (gaps up to
+  1 s refute that); gesture logic must tolerate both one and two pairs per
+  tap. A duplicate-suppression window must be **≥ ~1.2 s** (earlier
+  0.15–0.25 s guidance came from a mis-segmented unlabelled capture —
+  refuted). Evidence + tables in docs/gateway-websocket.md.
 - **Every button gang exposes BOTH `up_request` and `down_request`**, even a
   single-action one: the firmware's `JungHome_PushButton` model always creates
   PushedUp + PushedDown + StatusLed states. The gateway knows the difference
@@ -372,18 +375,23 @@ or "clean — nothing above P3 survived verification."
   blind actually moving, to learn whether intermediate `level` pushes stream
   during travel (drives whether position can track live or only jump).
   Capture it with `tools/ws-capture/capture_ws.py capture --script cover`.
-- **Blueprint needs a duplicate-press cooldown** — measurement (see the
-  rocker bullet above) shows a single click can emit a second press ~78 ms
-  after its release, which lands inside the blueprint's 0.4 s
-  `double_click_window` and fires the *double* action for a *single* click.
-  Hold detection is unaffected. Fix: ignore a press arriving within
-  ~0.15–0.25 s of the previous release (docs already describe a
-  `last_triggered` cooldown for hand-written automations). Before changing
-  the shipped defaults, re-capture with `--script rocker` (the **guided**
-  script, so each gesture is labelled — a free-form capture cannot be
-  segmented reliably) and confirm the fastest genuine double-click gap on
-  real hardware, since the 0.4 s window may also be too *short*: the fastest
-  human press-to-press seen so far was 0.52 s.
+- **Button gesture handling must be rebuilt for double-reporting firmware**
+  — labelled capture done (see the rocker protocol bullet; numbers final).
+  On affected firmware every blueprint path is wrong: single fires twice
+  (or as double when the burst gap lands inside the 0.4 s window), double
+  fires single twice, only hold works. Since single-vs-double is provably
+  unrecoverable there, the plan (user decision pending on the double-click
+  strategy): (1) integration-level duplicate suppression in `event.py` —
+  fire on the FIRST press, ignore a press within ~1.2 s of the previous
+  release on the same datapoint; opt-in via options flow, covers device
+  triggers and hand-written automations, no added latency; (2) derived
+  `click`/`hold` event types classified on pulse width (taps ≤0.53 s, holds
+  ≥2.44 s — clean 5× band), replacing the blueprint's timing gymnastics;
+  (3) keep `double_action` for unaffected firmware, documented as such.
+  First: user checks the JUNG app for the button key-mode / device-fw
+  change and reports the regression upstream — a config fix at source
+  beats all of this. Verify any change on a second rocker before shipping
+  (all measurements so far are one button).
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —

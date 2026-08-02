@@ -70,6 +70,15 @@ press→press gaps, reported **per gesture** rather than pooled, because a
 double-click gap and two deliberately separate presses are both "gaps" and
 mixing them would justify any window at all.
 
+It also reports the **burst shape** — presses per physical gesture — which is
+the doubled-reporting diagnostic: 1.00 is clean, 2.00 is the affected device
+firmware on which single and double clicks are indistinguishable (see the
+rocker section of [gateway-websocket.md](../../docs/gateway-websocket.md) for
+the 2026-08-02 measurements and the regression evidence). A capture recorded
+**without** script markers is segmented automatically: >10 s silences separate
+instructed groups, so if you can't use the interactive script, just leave
+15-second hands-off pauses between gesture groups.
+
 For cover captures it reports how many `level` frames arrived during each
 move — more than a couple means the gateway streams intermediate positions —
 plus the `level_move` values seen.
