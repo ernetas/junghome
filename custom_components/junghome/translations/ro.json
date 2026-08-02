@@ -67,6 +67,7 @@
       "waiting_for_approval": "Aprobă cererea de acces în aplicația Jung Home la Setări, Gateway, Permisiuni de acces, Cereri deschise."
     },
     "error": {
+      "different_gateway": "Adresa răspunde, dar aparține unui alt gateway Jung Home decât această intrare.",
       "invalid_host": "Gazda nu este validă.",
       "cannot_connect": "Conectarea la gateway a eșuat.",
       "invalid_auth": "Gateway-ul a respins parola cheii de rețea.",

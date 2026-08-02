@@ -67,6 +67,7 @@
       "waiting_for_approval": "请在 Jung Home 应用中的“设置”“网关”“访问权限”“待处理请求”下批准访问请求。"
     },
     "error": {
+      "different_gateway": "该地址有响应，但它属于与此条目不同的 Jung Home 网关。",
       "invalid_host": "主机无效。",
       "cannot_connect": "无法连接到网关。",
       "invalid_auth": "网关拒绝了网络密钥密码。",

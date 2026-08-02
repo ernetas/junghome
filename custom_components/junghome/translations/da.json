@@ -67,6 +67,7 @@
       "waiting_for_approval": "Godkend adgangsanmodningen i Jung Home-appen under Indstillinger, Gateway, Adgangstilladelser, Åbne anmodninger."
     },
     "error": {
+      "different_gateway": "Adressen svarer, men den tilhører en anden Jung Home-gateway end denne post.",
       "invalid_host": "Værten er ikke gyldig.",
       "cannot_connect": "Kunne ikke oprette forbindelse til gatewayen.",
       "invalid_auth": "Gatewayen afviste netværksnøglekodeordet.",

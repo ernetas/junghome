@@ -20,10 +20,12 @@ if TYPE_CHECKING:
 
 # The gateway token is a bearer credential; never include it in a downloadable
 # report. The host (gateway IP/hostname) is mild PII and diagnostics are often
-# pasted into public issues, so redact it too. Device labels are intentionally
-# retained in `devices` below: they're the stable identity anchor and are the
-# main thing that makes a diagnostics dump useful for debugging.
-TO_REDACT = {CONF_TOKEN, "token", CONF_HOST, "host"}
+# pasted into public issues, so redact it too — as are the gateway hardware
+# serial and the identity anchor (which, for migrated entries, carries the old
+# host/hostname). Device labels are intentionally retained in `devices` below:
+# they're the stable identity anchor and are the main thing that makes a
+# diagnostics dump useful for debugging.
+TO_REDACT = {CONF_TOKEN, "token", CONF_HOST, "host", "serial", "identity_anchor"}
 
 # `async_redact_data` only masks values it can reach by *key*. Several fields
 # below are free-form text that can quote a secret inside a larger string, where

@@ -67,6 +67,7 @@
       "waiting_for_approval": "Jung Home アプリの「設定」「ゲートウェイ」「アクセス許可」「保留中のリクエスト」でアクセスリクエストを承認してください。"
     },
     "error": {
+      "different_gateway": "そのアドレスは応答しますが、このエントリとは別の Jung Home ゲートウェイのものです。",
       "invalid_host": "ホストが無効です。",
       "cannot_connect": "ゲートウェイに接続できませんでした。",
       "invalid_auth": "ゲートウェイがネットワークキーのパスワードを拒否しました。",

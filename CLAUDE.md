@@ -93,6 +93,15 @@ instead of re-deriving:
   firmware updates, so entity `unique_id`s and device identifiers derive from
   the device **label** + datapoint **suffix** (`stable_unique_id`), never the
   raw id. Don't reintroduce id-based identifiers.
+- **Entry identity vs. entity identity are decoupled.** Entries are keyed
+  (`unique_id`) on the gateway hardware serial when known (mDNS TXT
+  `serial=`, or REST `config/parameter/system_serial`), and legacy entries
+  are migrated to it on rediscovery/reconfigure — but ids derived from the
+  *entry* (the hub device, scene unique_id scope) anchor on
+  `entry_anchor()`/`entry.data["identity_anchor"]`, frozen at
+  creation/migration. Never derive an entity or device id from
+  `entry.unique_id` directly, and never change an existing entry's frozen
+  anchor — either re-keys the hub device and every scene entity.
 - **Slugs can collide — never key per-device state by slug without guarding.**
   Two labels that slug identically (`"Lamp 1"`/`"Lamp-1"`) share one
   `device_slug`; identity survives (the second device loses), but a *map keyed
@@ -194,20 +203,24 @@ them without new evidence wastes a session.
 
 ## Backlog (open, in rough value order)
 
-- **Key entries on the gateway serial instead of host/hostname.** The mDNS TXT
-  record carries `serial=`/`mac=`/`version=` (verified:
-  `etc/avahi/services/junghome.service` in the dump) via
-  `discovery_info.properties`. Fixes reconfigure identity (a wrong-but-live
-  address currently passes the probe), `discovery-update-info` for manual
-  entries, and manual-vs-discovered duplicates. The work is the entry
-  migration, not the data.
+- **Command-reply correlation.** A successful WS `datapoint` set is answered
+  with a `datapoint` reply that echoes the request's `message_id` and carries
+  the re-read value; a failed set produces only an uncorrelated `error:`
+  message frame and no reply (verified in the firmware's
+  `websocket-server-service.js`). Sending commands with a `message_id` and
+  awaiting the matching reply (short timeout) would turn today's
+  fire-and-forget into real service errors and could replace optimistic
+  state with the confirmed value.
+- **Cover travel states** — blocked on evidence: the existing ws-capture
+  contains zero `level` push frames, so first capture a blind actually moving
+  to learn whether intermediate levels stream; if they do, report
+  `is_opening`/`is_closing` and let pushes drive position instead of jumping
+  to the target.
 - **Narrow the three broad excepts** in `coordinator.py` (#133): reconnect
   loop, frame-handler catch-all, WS send path.
 - **A REST poll in flight when a push lands can briefly revert the pushed
   value** (poll snapshot predates the push). Small window, self-heals on the
   next push/poll.
-- **Covers report the target position immediately** (optimistic write, no
-  travel tracking); gateway pushes correct it live.
 - **Reusable JSON device/API fixtures** (`tests/fixtures/`); tests build
   device dicts inline.
 - **Richer `zeroconf_confirm`** — show serial/model in the confirm dialog for

@@ -67,6 +67,7 @@
       "waiting_for_approval": "Hyväksy käyttöoikeuspyyntö Jung Home -sovelluksessa kohdassa Asetukset, Yhdyskäytävä, Käyttöoikeudet, Avoimet pyynnöt."
     },
     "error": {
+      "different_gateway": "Osoite vastaa, mutta se kuuluu eri Jung Home -yhdyskäytävälle kuin tämä merkintä.",
       "invalid_host": "Isäntä ei kelpaa.",
       "cannot_connect": "Yhdyskäytävään ei saatu yhteyttä.",
       "invalid_auth": "Yhdyskäytävä hylkäsi verkkoavaimen salasanan.",

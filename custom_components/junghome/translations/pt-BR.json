@@ -67,6 +67,7 @@
       "waiting_for_approval": "Aprove a solicitação de acesso no aplicativo Jung Home em Configurações, Gateway, Permissões de acesso, Solicitações abertas."
     },
     "error": {
+      "different_gateway": "O endereço responde, mas pertence a um gateway Jung Home diferente desta entrada.",
       "invalid_host": "O host não é válido.",
       "cannot_connect": "Falha ao conectar ao gateway.",
       "invalid_auth": "O gateway rejeitou a senha da chave de rede.",

@@ -20,7 +20,14 @@ from custom_components.junghome.config_flow import (
     _cover_choices,
     _normalize_host,
 )
-from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN
+from custom_components.junghome.const import (
+    CONF_IDENTITY_ANCHOR,
+    CONF_INVERTED_COVERS,
+    CONF_SERIAL,
+    DOMAIN,
+    entry_scope,
+    gateway_device_id,
+)
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 
 # A single cover so the options flow has something to list. stable_unique_id =
@@ -49,6 +56,26 @@ def _flow(hass: HomeAssistant, host: str = "gw") -> JungHomeConfigFlow:
 
 
 _REGISTER = "custom_components.junghome.config_flow.JungHomeConfigFlow._async_register"
+_FETCH_SERIAL = (
+    "custom_components.junghome.config_flow.JungHomeConfigFlow._async_fetch_serial"
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_rest_serial(request):
+    """Default the REST serial lookup to 'unavailable' (legacy behaviour).
+
+    `async_step_finish` and reconfigure now ask the gateway for its hardware
+    serial over REST; an unstubbed call would open a real socket in every flow
+    test. Tests exercising serial keying patch `_FETCH_SERIAL` themselves —
+    an inner patch wins inside its `with` block — or opt out via the
+    `real_serial_fetch` marker to drive the real HTTP path with aioclient_mock.
+    """
+    if request.node.get_closest_marker("real_serial_fetch") is not None:
+        yield
+        return
+    with patch(_FETCH_SERIAL, AsyncMock(return_value=None)):
+        yield
 
 
 async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
@@ -236,16 +263,27 @@ async def test_manual_host_proceeds_when_no_entry_uses_it(
     assert result["data"][CONF_HOST] == "5.6.7.8"
 
 
-def _zeroconf_info(hostname: str = "junghome-abc.local.") -> ZeroconfServiceInfo:
+def _zeroconf_info(
+    hostname: str = "junghome-abc.local.",
+    host: str = "1.2.3.4",
+    properties: dict | None = None,
+) -> ZeroconfServiceInfo:
     return ZeroconfServiceInfo(
-        ip_address="1.2.3.4",
-        ip_addresses=["1.2.3.4"],
+        ip_address=host,
+        ip_addresses=[host],
         port=443,
         hostname=hostname,
         type="_junghome._tcp.local.",
         name="junghome._junghome._tcp.local.",
-        properties={},
+        properties=properties or {},
     )
+
+
+_SERIAL_TXT = {
+    "serial": "0000000084fb4b1b",
+    "mac": "00:22:d1:05:96:02",
+    "version": "2.1.3 Release (2840)",
+}
 
 
 async def test_zeroconf_discovery_starts_confirm(hass: HomeAssistant) -> None:
@@ -278,7 +316,11 @@ async def test_zeroconf_confirm_app_approval_prefills_host(
         )
         result = await _advance_progress(hass, result)
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-z"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "tok-z",
+            CONF_IDENTITY_ANCHOR: "junghome-abc.local",
+        }
         await hass.async_block_till_done()
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     assert entry.unique_id == "junghome-abc.local"
@@ -301,7 +343,11 @@ async def test_zeroconf_confirm_password_prefills_host(hass: HomeAssistant) -> N
             result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
         )
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "pw-z"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "pw-z",
+            CONF_IDENTITY_ANCHOR: "junghome-abc.local",
+        }
         await hass.async_block_till_done()
     entry = hass.config_entries.async_entries(DOMAIN)[0]
     assert entry.unique_id == "junghome-abc.local"
@@ -364,7 +410,11 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
         )
         result = await _advance_progress(hass, result)
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-123"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "tok-123",
+            CONF_IDENTITY_ANCHOR: "1.2.3.4",
+        }
         await hass.async_block_till_done()
 
 
@@ -401,7 +451,11 @@ async def test_register_shows_progress_while_pending(hass: HomeAssistant) -> Non
         result = await hass.config_entries.flow.async_configure(result["flow_id"])
         result = await _advance_progress(hass, result)
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-waited"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "tok-waited",
+            CONF_IDENTITY_ANCHOR: "1.2.3.4",
+        }
         await hass.async_block_till_done()
 
 
@@ -444,7 +498,11 @@ async def test_register_failed_form_allows_retry(hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         result = await _advance_progress(hass, result)
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok-retry"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "tok-retry",
+            CONF_IDENTITY_ANCHOR: "1.2.3.4",
+        }
         assert attempts == 2
         await hass.async_block_till_done()
 
@@ -652,7 +710,11 @@ async def test_user_flow_password_success(hass: HomeAssistant) -> None:
             result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "secret"}
         )
         assert result["type"] == FlowResultType.CREATE_ENTRY
-        assert result["data"] == {CONF_HOST: "1.2.3.4", CONF_TOKEN: "pw-tok"}
+        assert result["data"] == {
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "pw-tok",
+            CONF_IDENTITY_ANCHOR: "1.2.3.4",
+        }
         await hass.async_block_till_done()
 
 
@@ -1143,3 +1205,348 @@ async def test_zeroconf_ip_change_updates_the_stored_host(
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     assert entry.data[CONF_HOST] == "9.9.9.9"
+
+
+# ---------------------------------------------------------------------------
+# Serial-based entry identity
+# ---------------------------------------------------------------------------
+
+
+async def test_zeroconf_with_serial_keys_entry_on_serial(
+    hass: HomeAssistant,
+) -> None:
+    """A discovery carrying the TXT serial keys the new entry on it.
+
+    The serial is the only identifier that survives IP changes and
+    re-provisioning; the identity anchor is frozen at creation.
+    """
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER_PW, AsyncMock(return_value="tok-s")), fetch, run_ws:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "zeroconf"},
+            data=_zeroconf_info(properties=_SERIAL_TXT),
+        )
+        result = await _choose(hass, result, "password")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4", "password": "pw"}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_SERIAL] == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_IDENTITY_ANCHOR] == _SERIAL_TXT["serial"]
+
+
+async def test_zeroconf_serial_rediscovery_updates_host(
+    hass: HomeAssistant,
+) -> None:
+    """An IP change reaches a serial-keyed entry no matter how it was added."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=_SERIAL_TXT["serial"],
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: _SERIAL_TXT["serial"],
+            CONF_IDENTITY_ANCHOR: _SERIAL_TXT["serial"],
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+
+
+async def test_zeroconf_adopts_legacy_hostname_keyed_entry(
+    hass: HomeAssistant,
+) -> None:
+    """A hostname-keyed entry is migrated onto the serial, identity intact.
+
+    The critical assertion is the last pair: the hub-device identifier and the
+    scene unique_id scope must be EXACTLY what they were before the migration,
+    or the re-keying would orphan the hub device and every scene entity.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    hub_before = gateway_device_id(entry)
+    scope_before = entry_scope(entry)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+    assert entry.unique_id == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_SERIAL] == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    assert entry.data[CONF_IDENTITY_ANCHOR] == "junghome-abc.local"
+    assert gateway_device_id(entry) == hub_before
+    assert entry_scope(entry) == scope_before
+
+
+async def test_zeroconf_adopts_legacy_manual_host_keyed_entry(
+    hass: HomeAssistant,
+) -> None:
+    """A manually added, host-keyed entry is adopted onto the serial too."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(properties=_SERIAL_TXT),
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.unique_id == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_IDENTITY_ANCHOR] == "1.2.3.4"
+
+
+async def test_zeroconf_does_not_hijack_serial_keyed_entry_with_stale_host(
+    hass: HomeAssistant,
+) -> None:
+    """A DIFFERENT gateway's discovery must not adopt a serial-keyed entry
+    whose stale recorded host happens to equal the discovered address."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-other",
+        data={
+            CONF_HOST: "1.2.3.4",  # stale: now used by another gateway
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-other",
+            CONF_IDENTITY_ANCHOR: "ser-other",
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(properties=_SERIAL_TXT),  # different serial
+    )
+    # Not adopted: a fresh discovery flow is offered instead.
+    assert result["type"] == FlowResultType.MENU
+    assert entry.unique_id == "ser-other"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+
+async def test_manual_flow_upgrades_to_serial_when_rest_provides_it(
+    hass: HomeAssistant,
+) -> None:
+    """A manual entry learns its serial over REST once a token exists."""
+    fetch, run_ws = _no_network()
+    with (
+        patch(_REGISTER, AsyncMock(return_value="tok-m")),
+        patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")),
+        fetch,
+        run_ws,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert entry.unique_id == "ser-777"
+    assert entry.data[CONF_SERIAL] == "ser-777"
+    assert entry.data[CONF_IDENTITY_ANCHOR] == "ser-777"
+
+
+async def test_manual_flow_detects_existing_gateway_by_serial(
+    hass: HomeAssistant,
+) -> None:
+    """Typing the (new) IP of an already-configured gateway updates that
+    entry's host and aborts, instead of creating a duplicate."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-777",
+        data={
+            CONF_HOST: "9.9.9.9",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-777",
+            CONF_IDENTITY_ANCHOR: "ser-777",
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch(_REGISTER, AsyncMock(return_value="tok")),
+        patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+
+
+async def test_reconfigure_rejects_a_different_gateway(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A live responder with the WRONG serial fails the form, not later."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-orig",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-orig",
+            CONF_IDENTITY_ANCHOR: "ser-orig",
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-OTHER")):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "different_gateway"}
+    assert entry.data[CONF_HOST] == "1.2.3.4"  # unchanged
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+
+async def test_reconfigure_accepts_matching_serial(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The same gateway at a new address reconfigures cleanly."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-orig",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-orig",
+            CONF_IDENTITY_ANCHOR: "ser-orig",
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    fetch, run_ws = _no_network()
+    with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-orig")), fetch, run_ws:
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_reconfigure_migrates_a_legacy_entry_to_serial(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Reconfiguring a legacy entry records the serial it just learned,
+    freezing the identity anchor so hub/scene ids stay put."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    hub_before = gateway_device_id(entry)
+    scope_before = entry_scope(entry)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    fetch, run_ws = _no_network()
+    with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")), fetch, run_ws:
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.unique_id == "ser-777"
+    assert entry.data[CONF_SERIAL] == "ser-777"
+    assert entry.data[CONF_IDENTITY_ANCHOR] == "1.2.3.4"
+    assert gateway_device_id(entry) == hub_before
+    assert entry_scope(entry) == scope_before
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_reconfigure_to_an_already_configured_gateway_aborts(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Reconfiguring a legacy entry onto a gateway another entry already owns
+    (by serial) aborts instead of creating a unique_id collision."""
+    owner = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-777",
+        data={
+            CONF_HOST: "9.9.9.9",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-777",
+            CONF_IDENTITY_ANCHOR: "ser-777",
+        },
+    )
+    owner.add_to_hass(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://9.9.9.9/api/junghome/functions", json=[])
+    with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "9.9.9.9"}
+        )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.unique_id == "1.2.3.4"  # unchanged
+
+
+@pytest.mark.real_serial_fetch
+async def test_fetch_serial_over_rest(hass: HomeAssistant, aioclient_mock) -> None:
+    """The REST helper parses the raw-string body and tolerates failures."""
+    url = "https://gw/api/junghome/config/parameter/system_serial"
+    aioclient_mock.get(url, json="0000000084fb4b1b")
+    assert await _flow(hass)._async_fetch_serial("gw", "tok") == "0000000084fb4b1b"
+
+    # Older firmware: parameter unknown -> 404 -> None.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url, status=404)
+    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+
+    # The middleware populates the value asynchronously after boot; an empty
+    # string must read as "not known", not become a unique_id.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url, json="")
+    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(url, exc=aiohttp.ClientError())
+    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None

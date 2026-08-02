@@ -67,6 +67,7 @@
       "waiting_for_approval": "Patvirtinkite prieigos užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
     },
     "error": {
+      "different_gateway": "Adresas atsako, bet jis priklauso kitam Jung Home šliuzui nei šis įrašas.",
       "invalid_host": "Serveris netinkamas.",
       "cannot_connect": "Nepavyko prisijungti prie sietuvo.",
       "invalid_auth": "Sietuvas atmetė tinklo rakto slaptažodį.",

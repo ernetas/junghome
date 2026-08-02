@@ -104,10 +104,12 @@ defaults to `junghome.local` (which works on many networks) and you can change
 it to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
 
 The issued token is stored in the config entry. Devices added or removed in
-the Jung Home app afterwards are picked up automatically. If the gateway's IP
-later changes, discovery updates it automatically **for gateways that were
-added via discovery**; an entry you added manually is keyed by the address you
-typed, so use **Reconfigure** to point it at the new one.
+the Jung Home app afterwards are picked up automatically. The entry is keyed
+on the gateway's **hardware serial** (read from mDNS or the gateway itself),
+so if the gateway's IP later changes, discovery updates the stored address
+automatically — however the entry was added. On networks without mDNS (e.g.
+across VLANs) use **Reconfigure** to point the entry at the new address; it
+verifies the address actually belongs to *this* gateway before saving.
 
 ## Button automations (rocker switches)
 

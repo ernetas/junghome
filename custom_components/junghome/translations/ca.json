@@ -67,6 +67,7 @@
       "waiting_for_approval": "Aprova la sol·licitud d'accés a l'aplicació Jung Home a Configuració, Passarel·la, Permisos d'accés, Sol·licituds obertes."
     },
     "error": {
+      "different_gateway": "L'adreça respon, però pertany a una passarel·la Jung Home diferent d'aquesta entrada.",
       "invalid_host": "L'amfitrió no és vàlid.",
       "cannot_connect": "No s'ha pogut connectar amb la passarel·la.",
       "invalid_auth": "La passarel·la ha rebutjat la contrasenya de la clau de xarxa.",
