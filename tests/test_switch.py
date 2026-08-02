@@ -1,5 +1,6 @@
 """Switch / socket platform tests for Jung Home."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -120,17 +121,36 @@ async def test_unrelated_push_does_not_revert_optimistic_socket_state(
 ) -> None:
     """An unrelated device's push must not flip a just-commanded socket back.
 
-    Every push notifies every entity. The socket used to re-read its own stored
-    datapoint — still the pre-command value until the gateway echoes — and
-    reverted the optimistic state, so the switch visibly flipped off and then on
-    again.
+    Every push notifies every entity via ``async_update_listeners``, including
+    the ``functions``-broadcast-adjacent reply that confirms this socket's own
+    command. The socket used to re-read its own stored datapoint on ANY
+    listener dispatch and reverted the optimistic state whenever that read
+    predated the echo, so the switch visibly flipped off and then on again.
+    ``_should_refresh`` guards this by gating a refresh on the pushed
+    datapoint id matching the entity's own — this proves the guard still holds
+    once a genuinely different device's push arrives right after this
+    command's own confirmed echo.
     """
     coordinator = init_integration.runtime_data
     assert hass.states.get("switch.boiler").state == "on"
 
-    # Command it off. The gateway has not echoed yet, so the stored value is
-    # still "1"; only the optimistic write says otherwise.
-    with patch.object(coordinator, "send_websocket_message", AsyncMock()):
+    # Command it off, simulating the gateway's normal confirmed echo (see
+    # coordinator._send_datapoint_command) so the await completes instead of
+    # racing COMMAND_REPLY_TIMEOUT.
+    async def _confirm(message: dict) -> None:
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {
+                    "type": "datapoint",
+                    "data": message["data"],
+                    "message_id": message["message_id"],
+                }
+            )
+        )
+
+    with patch.object(
+        coordinator, "send_websocket_message", AsyncMock(side_effect=_confirm)
+    ):
         await hass.services.async_call(
             "switch",
             "turn_off",
@@ -139,7 +159,7 @@ async def test_unrelated_push_does_not_revert_optimistic_socket_state(
         )
     assert hass.states.get("switch.boiler").state == "off"
 
-    # A push for a completely different device arrives before the echo.
+    # A push for a completely different device arrives right after.
     coordinator._handle_websocket_message(
         {
             "type": "datapoint",

@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Jung Home -yhdyskäytävään ei saatu yhteyttä komennon lähettämiseksi; se yhdistää uudelleen. Yritä hetken kuluttua uudelleen."
     },
+    "command_timeout": {
+      "message": "Jung Home -yhdyskäytävä ei vahvistanut komentoa ajoissa."
+    },
     "invalid_response": {
       "message": "Jung Home -yhdyskäytävä palautti odottamattoman vastauksen."
     },

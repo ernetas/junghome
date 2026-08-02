@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "A Jung Home átjáró nem volt elérhető a parancs elküldéséhez; éppen újracsatlakozik. Próbáld újra egy pillanat múlva."
     },
+    "command_timeout": {
+      "message": "A Jung Home átjáró nem erősítette meg a parancsot időben."
+    },
     "invalid_response": {
       "message": "A Jung Home átjáró váratlan választ adott."
     },

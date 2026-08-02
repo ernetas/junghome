@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "No se pudo contactar con la pasarela Jung Home para enviar el comando; se está reconectando. Vuelve a intentarlo dentro de un momento."
     },
+    "command_timeout": {
+      "message": "La pasarela Jung Home no confirmó el comando a tiempo."
+    },
     "invalid_response": {
       "message": "La pasarela Jung Home devolvió una respuesta inesperada."
     },

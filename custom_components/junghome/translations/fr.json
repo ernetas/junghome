@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Impossible de joindre la passerelle Jung Home pour envoyer la commande ; elle est en cours de reconnexion. Réessayez dans un instant."
     },
+    "command_timeout": {
+      "message": "La passerelle Jung Home n'a pas confirmé la commande à temps."
+    },
     "invalid_response": {
       "message": "La passerelle Jung Home a renvoyé une réponse inattendue."
     },

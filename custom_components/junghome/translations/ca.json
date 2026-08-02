@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "No s'ha pogut contactar amb la passarel·la Jung Home per enviar l'ordre; s'està tornant a connectar. Torna-ho a provar d'aquí a un moment."
     },
+    "command_timeout": {
+      "message": "La passarel·la Jung Home no ha confirmat l'ordre a temps."
+    },
     "invalid_response": {
       "message": "La passarel·la Jung Home ha retornat una resposta inesperada."
     },

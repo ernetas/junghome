@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "无法连接到 Jung Home 网关以发送命令；正在重新连接。请稍后重试。"
     },
+    "command_timeout": {
+      "message": "Jung Home 网关未能及时确认该命令。"
+    },
     "invalid_response": {
       "message": "Jung Home 网关返回了意外的响应。"
     },

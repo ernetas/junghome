@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "コマンドを送信するために Jung Home ゲートウェイに接続できませんでした。再接続中です。しばらくしてからもう一度お試しください。"
     },
+    "command_timeout": {
+      "message": "Jung Home ゲートウェイが時間内にコマンドを確認しませんでした。"
+    },
     "invalid_response": {
       "message": "Jung Home ゲートウェイが予期しない応答を返しました。"
     },

@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Prehoda Jung Home ni bilo mogoče doseči za pošiljanje ukaza; ponovno se povezuje. Poskusite znova čez trenutek."
     },
+    "command_timeout": {
+      "message": "Prehod Jung Home ni pravočasno potrdil ukaza."
+    },
     "invalid_response": {
       "message": "Prehod Jung Home je vrnil nepričakovan odgovor."
     },

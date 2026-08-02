@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Bránu Jung Home se nepodařilo kontaktovat pro odeslání příkazu; probíhá opětovné připojení. Zkuste to za okamžik znovu."
     },
+    "command_timeout": {
+      "message": "Brána Jung Home nepotvrdila příkaz včas."
+    },
     "invalid_response": {
       "message": "Brána Jung Home vrátila neočekávanou odpověď."
     },

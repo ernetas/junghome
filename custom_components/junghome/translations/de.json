@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Das Jung Home Gateway war nicht erreichbar, um den Befehl zu senden; es stellt die Verbindung gerade wieder her. Versuche es in einem Moment erneut."
     },
+    "command_timeout": {
+      "message": "Das Jung Home Gateway hat den Befehl nicht rechtzeitig bestätigt."
+    },
     "invalid_response": {
       "message": "Das Jung Home Gateway hat eine unerwartete Antwort zurückgegeben."
     },

@@ -1,5 +1,6 @@
 """Tests for the coordinator's WebSocket session handling."""
 
+import asyncio
 import json
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -15,6 +16,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from tests.conftest import _auto_reply_to_datapoint_commands
 
 
 class _FakeMsg:
@@ -98,6 +100,34 @@ async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> N
     # ...and is reset to False (with the socket cleared) in the finally block.
     assert coordinator.ws_connected is False
     assert coordinator.websocket is None
+
+
+async def test_session_end_fails_pending_command_replies(hass: HomeAssistant) -> None:
+    """The _run_websocket finally block sweeps in-flight command futures.
+
+    A command's reply only ever arrives on the session that sent it, so the
+    session ending (drop, gateway close, or entry unload cancelling the task)
+    must fail the pending future immediately rather than leaving the command
+    to sit out COMMAND_REPLY_TIMEOUT.
+    """
+    coordinator = _coordinator(hass)
+    pending: asyncio.Future[dict] = hass.loop.create_future()
+    coordinator._pending_replies["ha1"] = pending
+
+    session = Mock()
+    session.ws_connect = Mock(return_value=_FakeWS([]))  # closes immediately
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        pytest.raises(ConnectionError),  # clean close is routed to the failure path
+    ):
+        await coordinator._run_websocket()
+
+    assert pending.done()
+    assert isinstance(pending.exception(), HomeAssistantError)
 
 
 async def test_ws_error_message_frame_logged(
@@ -300,9 +330,18 @@ async def test_update_data_rejects_json_null_body(
 
 async def test_all_command_methods_send(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
-    ws = AsyncMock()
-    ws.closed = False
+    ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
+    # A matching stub datapoint so the confirmed reply merges instead of
+    # falling into the unmatched-push path (which would schedule a refresh
+    # this test never cleans up).
+    coordinator.data = [
+        {
+            "id": "dev",
+            "label": "Dev",
+            "datapoints": [{"id": "d", "type": "switch", "values": []}],
+        }
+    ]
     await coordinator.turn_on_switch("d")
     await coordinator.turn_off_switch("d")
     await coordinator.turn_on_light("d")
@@ -341,9 +380,15 @@ async def test_all_command_methods_send(hass: HomeAssistant) -> None:
 async def test_status_led_off_sends_zero(hass: HomeAssistant) -> None:
     """set_status_led(False) sends the LED value field as "0"."""
     coordinator = _coordinator(hass)
-    ws = AsyncMock()
-    ws.closed = False
+    ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
+    coordinator.data = [
+        {
+            "id": "dev",
+            "label": "Dev",
+            "datapoints": [{"id": "d", "type": "status_led", "values": []}],
+        }
+    ]
     await coordinator.set_status_led("d", state=False)
     sent = json.loads(ws.send_str.call_args.args[0])
     assert sent["data"]["values"] == [{"key": "status_led", "value": "0"}]

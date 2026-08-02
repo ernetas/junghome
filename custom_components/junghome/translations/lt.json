@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Nepavyko pasiekti „Jung Home“ sietuvo komandai išsiųsti; jis jungiasi iš naujo. Pabandykite dar kartą po akimirkos."
     },
+    "command_timeout": {
+      "message": "„Jung Home“ sietuvas laiku nepatvirtino komandos."
+    },
     "invalid_response": {
       "message": "„Jung Home“ sietuvas grąžino netikėtą atsakymą."
     },

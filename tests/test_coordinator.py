@@ -28,6 +28,7 @@ from custom_components.junghome.coordinator import (
     STABLE_SESSION_SECONDS,
     JungHomeDataUpdateCoordinator,
 )
+from tests.conftest import _auto_reply_to_datapoint_commands
 
 
 def _coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -109,15 +110,41 @@ async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) ->
 
 def _coordinator_with_ws(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
     coordinator = _coordinator(hass)
-    ws = AsyncMock()
-    ws.closed = False
-    coordinator.websocket = ws
+    coordinator.websocket = _auto_reply_to_datapoint_commands(coordinator)
     return coordinator
 
 
 async def test_cover_climate_command_payloads(hass: HomeAssistant) -> None:
     """The new command methods build the expected datapoint set frames."""
     coordinator = _coordinator_with_ws(hass)
+    # Matching stub data for every id these commands target, so the confirmed
+    # reply the auto-reply mock echoes back finds a datapoint to merge into
+    # (as a real command's reply always does — it targets an id the caller
+    # just read off coordinator.data) instead of hitting the unmatched-push
+    # path and scheduling a refresh the test never cleans up.
+    coordinator.data = [
+        {
+            "id": "dev",
+            "label": "Dev",
+            "datapoints": [
+                {
+                    "id": "dp-1",
+                    "type": "level",
+                    "values": [{"key": "level", "value": "0"}],
+                },
+                {
+                    "id": "dp-2",
+                    "type": "angle",
+                    "values": [{"key": "angle", "value": "0"}],
+                },
+                {
+                    "id": "dp-3",
+                    "type": "temperature_ctrl",
+                    "values": [{"key": "temperature_ctrl", "value": "20"}],
+                },
+            ],
+        }
+    ]
     await coordinator.set_level("dp-1", 75)
     await coordinator.move_level("dp-1", 0)
     await coordinator.set_angle("dp-2", 60)
@@ -134,6 +161,188 @@ async def test_cover_climate_command_payloads(hass: HomeAssistant) -> None:
     assert sent[4]["data"]["values"] == [
         {"key": "temperature_ctrl_preset", "value": "eco"}
     ]
+
+
+async def test_command_reply_confirms_and_merges_the_read_back_value(
+    hass: HomeAssistant,
+) -> None:
+    """A successful command reply merges into coordinator.data like a push.
+
+    The gateway's reply carries the freshly re-read datapoint, not just an ack
+    — awaiting it (rather than firing and forgetting) means the coordinator's
+    stored state reflects the CONFIRMED value the instant the command method
+    returns, before any caller-side optimistic write.
+    """
+    coordinator = _coordinator_with_ws(hass)
+    coordinator.data = [
+        {
+            "id": "dev1",
+            "label": "Blind",
+            "datapoints": [
+                {
+                    "id": "dp-1",
+                    "type": "level",
+                    "values": [{"key": "level", "value": "10"}],
+                }
+            ],
+        }
+    ]
+    await coordinator.set_level("dp-1", 75)
+    assert coordinator.data[0]["datapoints"][0]["values"] == [
+        {"key": "level", "value": "75"}
+    ]
+
+
+async def test_command_times_out_when_gateway_never_replies(
+    hass: HomeAssistant,
+) -> None:
+    """A command the gateway silently drops surfaces as a real service error.
+
+    Firmware-verified: a rejected datapoint set produces only an uncorrelated
+    `error:` message frame (websocket-server-service.js), so there is nothing
+    to await besides a timeout. Before this, the send was fire-and-forget and
+    a rejected command looked identical to a successful one.
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws  # accepts the send, never produces a reply
+
+    with (
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await coordinator.turn_on_switch("dp-1")
+    assert exc_info.value.translation_key == "command_timeout"
+    # The pending entry must not leak once the wait gives up.
+    assert coordinator._pending_replies == {}
+
+
+async def test_uncorrelated_error_frame_does_not_resolve_a_pending_command(
+    hass: HomeAssistant,
+) -> None:
+    """An `error:` message frame carries no message_id, so it must not be
+    mistaken for the reply to whichever command happens to be in flight —
+    that would misattribute a different command's failure. The pending
+    command still only settles via COMMAND_REPLY_TIMEOUT.
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws
+
+    async def _send_then_inject_error(raw: str) -> None:
+        coordinator._dispatch_text_frame(
+            json.dumps({"type": "message", "data": "error: could not set datapoint"})
+        )
+
+    ws.send_str.side_effect = _send_then_inject_error
+
+    with (
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await coordinator.turn_on_switch("dp-1")
+    assert exc_info.value.translation_key == "command_timeout"
+
+
+async def test_ws_drop_fails_inflight_commands_immediately(
+    hass: HomeAssistant,
+) -> None:
+    """A dropped session fails in-flight commands now, not after the timeout.
+
+    The gateway replies only to the socket that carried the request, so once
+    the session is gone the confirmation can never arrive — waiting out
+    COMMAND_REPLY_TIMEOUT would stall the service call (and entry unload) for
+    the full 5 s and then blame the wrong thing ("did not confirm in time"
+    instead of the connection loss).
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws  # accepts the send, never produces a reply
+
+    task = asyncio.ensure_future(coordinator.turn_on_switch("dp-1"))
+    await asyncio.sleep(0)  # let the send land and register the future
+    assert len(coordinator._pending_replies) == 1
+
+    # An already-settled future (reply raced the drop) must be left alone.
+    done_future: asyncio.Future[dict] = hass.loop.create_future()
+    done_future.set_result({})
+    coordinator._pending_replies["ha-done"] = done_future
+
+    # No COMMAND_REPLY_TIMEOUT patch: the point is that this does NOT wait.
+    coordinator._fail_pending_replies()
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await task
+    assert exc_info.value.translation_key == "cannot_send"
+    assert done_future.result() == {}  # untouched by the sweep
+    coordinator._pending_replies.pop("ha-done")
+    assert coordinator._pending_replies == {}
+
+
+async def test_concurrent_commands_do_not_cross_resolve(hass: HomeAssistant) -> None:
+    """Two in-flight commands get distinct message_ids; replying to one must
+    not resolve the other."""
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    sent_ids: list[str] = []
+
+    def _capture(raw: str) -> None:
+        sent_ids.append(json.loads(raw)["message_id"])
+
+    ws.send_str.side_effect = _capture
+    coordinator.websocket = ws
+    coordinator.data = [
+        {
+            "id": "dev1",
+            "label": "L",
+            "datapoints": [
+                {
+                    "id": "dp-a",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                },
+                {
+                    "id": "dp-b",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                },
+            ],
+        }
+    ]
+
+    task_a = asyncio.ensure_future(coordinator.turn_on_switch("dp-a"))
+    task_b = asyncio.ensure_future(coordinator.turn_on_switch("dp-b"))
+    await asyncio.sleep(0)  # let both sends land and register their futures
+    assert len(sent_ids) == 2
+    assert len(coordinator._pending_replies) == 2
+
+    # Reply only to the SECOND command sent; the first must remain pending.
+    coordinator._dispatch_text_frame(
+        json.dumps(
+            {
+                "type": "datapoint",
+                "data": {"id": "dp-b", "values": [{"key": "switch", "value": "1"}]},
+                "message_id": sent_ids[1],
+            }
+        )
+    )
+    await task_b
+    assert not task_a.done()
+
+    # Clean up: reply to the first so the test doesn't leak a pending task.
+    coordinator._dispatch_text_frame(
+        json.dumps(
+            {
+                "type": "datapoint",
+                "data": {"id": "dp-a", "values": [{"key": "switch", "value": "1"}]},
+                "message_id": sent_ids[0],
+            }
+        )
+    )
+    await task_a
 
 
 async def test_scenes_broadcast_full_new_deleted(hass: HomeAssistant) -> None:

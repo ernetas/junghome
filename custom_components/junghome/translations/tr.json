@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Komutu göndermek için Jung Home ağ geçidine ulaşılamadı; yeniden bağlanıyor. Birazdan tekrar deneyin."
     },
+    "command_timeout": {
+      "message": "Jung Home ağ geçidi komutu zamanında onaylamadı."
+    },
     "invalid_response": {
       "message": "Jung Home ağ geçidi beklenmeyen bir yanıt döndürdü."
     },

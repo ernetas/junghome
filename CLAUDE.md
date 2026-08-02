@@ -133,6 +133,24 @@ instead of re-deriving:
   `ws_connected` (a stale-True socket flag froze energy readings — issue
   #120); controllable entities additionally require the live WS because
   commands only travel over it.
+- **Commands await the gateway's confirmation, not fire-and-forget.** Every
+  datapoint set (`_send_datapoint_command` in `coordinator.py`) is tagged with
+  a `message_id`; a successful set is answered with a `datapoint` reply
+  echoing it back (firmware-verified, `websocket-server-service.js`), which
+  `_dispatch_text_frame` routes to `_resolve_pending_reply` to resolve the
+  future the command method is awaiting — then falls through to the normal
+  merge path, so `coordinator.data` holds the *confirmed* value before the
+  entity's own optimistic write runs. A rejected set produces only an
+  `error:` message frame with **no `message_id`** to correlate against, so a
+  rejection surfaces as a `COMMAND_REPLY_TIMEOUT` (5 s; the middleware itself
+  gives up on the BT-Mesh node after 3 s — `config.btmesh.response_timeout_ms`
+  in `config.json`) rather than the gateway's specific error text. Do not try
+  to attribute an uncorrelated `error:` frame to whichever command is
+  in-flight — with concurrent commands from different entities that would
+  misattribute someone else's failure. The reply only ever arrives on the
+  session that sent the command (`socket.send`, not a broadcast), so the
+  `_run_websocket` finally block fails all in-flight futures (`cannot_send`)
+  the moment the session ends — never leave them to sit out the timeout.
 
 ## Conventions
 
@@ -203,14 +221,6 @@ them without new evidence wastes a session.
 
 ## Backlog (open, in rough value order)
 
-- **Command-reply correlation.** A successful WS `datapoint` set is answered
-  with a `datapoint` reply that echoes the request's `message_id` and carries
-  the re-read value; a failed set produces only an uncorrelated `error:`
-  message frame and no reply (verified in the firmware's
-  `websocket-server-service.js`). Sending commands with a `message_id` and
-  awaiting the matching reply (short timeout) would turn today's
-  fire-and-forget into real service errors and could replace optimistic
-  state with the confirmed value.
 - **Cover travel states** — blocked on evidence: the existing ws-capture
   contains zero `level` push frames, so first capture a blind actually moving
   to learn whether intermediate levels stream; if they do, report

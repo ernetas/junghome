@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Jung Home-gatewayen kunne ikke nås til at sende kommandoen; den er ved at oprette forbindelse igen. Prøv igen om et øjeblik."
     },
+    "command_timeout": {
+      "message": "Jung Home-gatewayen bekræftede ikke kommandoen i tide."
+    },
     "invalid_response": {
       "message": "Jung Home-gatewayen returnerede et uventet svar."
     },

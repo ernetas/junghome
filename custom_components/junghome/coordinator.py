@@ -63,6 +63,17 @@ WS_CONNECT_TIMEOUT = 30
 # has no timeout of its own, so a peer that stops reading can block the calling
 # service call indefinitely. Short, because this is a LAN write of a few bytes.
 WS_SEND_TIMEOUT = 10
+# Bound for awaiting the gateway's confirmation of a datapoint set. A successful
+# set is answered with a `datapoint` reply that echoes the request's
+# `message_id` (firmware-verified, websocket-server-service.js); the middleware
+# itself gives up waiting on the BT-Mesh node after
+# `config.btmesh.response_timeout_ms` = 3000 ms (config.json) before the set
+# rejects and the reply never comes, so this leaves comfortable headroom above
+# that mesh-level bound for the WS round trip. A rejected set produces only an
+# uncorrelated `error:` message frame (no message_id to match against — see
+# `_dispatch_text_frame`), so a rejection surfaces here as a timeout rather than
+# the gateway's specific error text.
+COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 
@@ -195,6 +206,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # branch); repeats log at DEBUG so a phantom id can't spam the log or
         # amplify polling.
         self._unmatched_push_ids: set[str] = set()
+        # In-flight datapoint set commands, keyed by the `message_id` we tagged
+        # them with, so the matching `datapoint` reply (see
+        # `_resolve_pending_reply`) can resolve the future the sender is
+        # awaiting instead of the send being fire-and-forget. Popped by
+        # `_send_datapoint_command` whichever way the wait ends (reply or
+        # COMMAND_REPLY_TIMEOUT), so this never accumulates stale entries.
+        self._pending_replies: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._next_message_id = 0
         # Bounded log of recent raw WebSocket frames for diagnostics.
         self.ws_frame_log: deque[str] = deque(maxlen=WS_FRAME_LOG_SIZE)
         # Latest raw frame of each type, so the connect-time handshake
@@ -633,6 +652,40 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             },
         )
 
+    def _fail_pending_replies(self) -> None:
+        """Fail every in-flight command the moment its WebSocket session ends.
+
+        The gateway sends a command's reply only to the socket that carried the
+        request (``socket.send`` in ``websocket-server-service.js``), so once
+        this session is gone the reply can never arrive — not even after a
+        reconnect. Without this, each in-flight command sat out the full
+        ``COMMAND_REPLY_TIMEOUT`` and then reported "did not confirm in time"
+        when the truthful error is the connection loss (``cannot_send``, the
+        same error an immediately-detected dead socket raises) — and an entry
+        unload with a command in flight stalled the same way. Futures that are
+        already done (reply raced the drop, or the timeout fired) are left
+        alone; each command's ``finally`` still pops its own entry.
+        """
+        for future in self._pending_replies.values():
+            if not future.done():
+                future.set_exception(
+                    HomeAssistantError(
+                        translation_domain=DOMAIN, translation_key="cannot_send"
+                    )
+                )
+
+    def _resolve_pending_reply(self, message_id: str, reply_data: Any) -> None:
+        """Resolve the future a command is awaiting, if `message_id` matches one.
+
+        A no-op if nothing is pending under this id (already timed out, or an
+        id we never sent) or the future was somehow already resolved — a
+        malformed/duplicate frame must never raise
+        ``asyncio.InvalidStateError`` out of the frame handler.
+        """
+        future = self._pending_replies.get(message_id)
+        if future is not None and not future.done():
+            future.set_result(reply_data if isinstance(reply_data, dict) else {})
+
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
 
@@ -650,6 +703,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if not isinstance(data, dict):
                 _LOGGER.error("Received non-object WebSocket message: %s", data)
                 return
+            message_id = data.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                # Only a reply to one of OUR OWN datapoint sets/gets carries
+                # message_id back (websocket-server-service.js never assigns it
+                # to a broadcast), so this can only ever match something
+                # `_send_datapoint_command` is awaiting. Resolving it here does
+                # not short-circuit the frame: it still falls through to the
+                # normal dispatch below, which merges `data.get("data")` into
+                # `self.data` exactly like a push would — the confirmed value
+                # replaces the optimistic one HA already wrote.
+                self._resolve_pending_reply(message_id, data.get("data"))
             if data.get("type") == "version":
                 self.gateway_version = data.get("data")
                 _LOGGER.info(
@@ -727,6 +791,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 cancel_stable()
                 self.websocket = None
                 self.ws_connected = False
+                self._fail_pending_replies()
                 self._notify_websocket_closed()
 
     @callback
@@ -1060,106 +1125,112 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_domain=DOMAIN, translation_key="cannot_send"
             )
 
+    async def _send_datapoint_command(
+        self, datapoint_id: str, dp_type: str, values: list[dict[str, str]]
+    ) -> None:
+        """Set a datapoint and wait for the gateway to confirm it.
+
+        Every command method below funnels through here. The frame is tagged
+        with a ``message_id``; a successful set is answered with a matching
+        ``datapoint`` reply that ``_dispatch_text_frame`` routes to
+        ``_resolve_pending_reply``, which resolves the future this method
+        awaits — turning what used to be fire-and-forget into a real,
+        raiseable outcome. See ``COMMAND_REPLY_TIMEOUT`` for why a rejection
+        (which the gateway cannot correlate back to this request) surfaces as
+        a timeout rather than the gateway's own error text.
+
+        The pending entry is always popped in ``finally``, whether the wait
+        succeeded, timed out, or ``send_websocket_message`` raised first (e.g.
+        no live socket) — so a send failure can never leak a future nothing
+        will ever resolve.
+        """
+        self._next_message_id += 1
+        message_id = f"ha{self._next_message_id}"
+        message = {
+            "type": "datapoint",
+            "data": {"id": datapoint_id, "type": dp_type, "values": values},
+            "message_id": message_id,
+        }
+        future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
+        self._pending_replies[message_id] = future
+        try:
+            await self.send_websocket_message(message)
+            try:
+                async with asyncio.timeout(COMMAND_REPLY_TIMEOUT):
+                    await future
+            except TimeoutError as err:
+                # Named here so it can be paired with the gateway's own
+                # uncorrelated "error: ..." WARNING (logged by the message-frame
+                # branch), which is the usual reason the reply never came.
+                _LOGGER.warning(
+                    "Jung Home gateway did not confirm the %s command for %s "
+                    "within %s s",
+                    dp_type,
+                    datapoint_id,
+                    COMMAND_REPLY_TIMEOUT,
+                )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="command_timeout"
+                ) from err
+        finally:
+            self._pending_replies.pop(message_id, None)
+
     async def turn_on_switch(self, datapoint_id: str) -> None:
         """Turn on the switch."""
         _LOGGER.debug("Turning on switch with datapoint_id: %s", datapoint_id)
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "switch",
-                "values": [{"key": "switch", "value": "1"}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "switch", [{"key": "switch", "value": "1"}]
+        )
 
     async def turn_off_switch(self, datapoint_id: str) -> None:
         """Turn off the switch."""
         _LOGGER.debug("Turning off switch with datapoint_id: %s", datapoint_id)
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "switch",
-                "values": [{"key": "switch", "value": "0"}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "switch", [{"key": "switch", "value": "0"}]
+        )
 
     async def turn_on_light(self, datapoint_id: str) -> None:
         """Turn on the light."""
         _LOGGER.debug("Turning on light with datapoint_id: %s", datapoint_id)
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "switch",
-                "values": [{"key": "switch", "value": "1"}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "switch", [{"key": "switch", "value": "1"}]
+        )
 
     async def turn_off_light(self, datapoint_id: str) -> None:
         """Turn off the light."""
         _LOGGER.debug("Turning off light with datapoint_id: %s", datapoint_id)
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "switch",
-                "values": [{"key": "switch", "value": "0"}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "switch", [{"key": "switch", "value": "0"}]
+        )
 
     async def set_brightness(self, datapoint_id: str, brightness: int) -> None:
         """Set the brightness of the light."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "brightness",
-                "values": [{"key": "brightness", "value": str(brightness)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id,
+            "brightness",
+            [{"key": "brightness", "value": str(brightness)}],
+        )
 
     async def set_color_temp(self, datapoint_id: str, color_temp: int) -> None:
         """Set the color temperature of the light."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "color_temperature",
-                "values": [{"key": "color_temperature", "value": str(color_temp)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id,
+            "color_temperature",
+            [{"key": "color_temperature", "value": str(color_temp)}],
+        )
 
     async def set_status_led(self, datapoint_id: str, state: bool) -> None:
         """Set the status LED on (True) or off (False)."""
         value = "1" if state else "0"
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "status_led",
-                "values": [{"key": "status_led", "value": value}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "status_led", [{"key": "status_led", "value": value}]
+        )
 
     async def set_level(self, datapoint_id: str, level: int) -> None:
         """Set a cover's position level (device scale 0-100)."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "level",
-                "values": [{"key": "level", "value": str(level)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "level", [{"key": "level", "value": str(level)}]
+        )
 
     async def move_level(self, datapoint_id: str, direction: int) -> None:
         """Move/stop a cover via the ``level_move`` key.
@@ -1168,48 +1239,28 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``0`` to stop. (See ``cdb_types_datapoints.json``: ``level_move`` range
         ``["-1","0","1"]``.)
         """
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "level",
-                "values": [{"key": "level_move", "value": str(direction)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "level", [{"key": "level_move", "value": str(direction)}]
+        )
 
     async def set_angle(self, datapoint_id: str, angle: int) -> None:
         """Set a cover's slat angle (device scale 0-100)."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "angle",
-                "values": [{"key": "angle", "value": str(angle)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id, "angle", [{"key": "angle", "value": str(angle)}]
+        )
 
     async def set_temperature(self, datapoint_id: str, temperature: float) -> None:
         """Set a thermostat's target temperature (°C)."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "temperature_ctrl",
-                "values": [{"key": "temperature_ctrl", "value": str(temperature)}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id,
+            "temperature_ctrl",
+            [{"key": "temperature_ctrl", "value": str(temperature)}],
+        )
 
     async def set_temperature_preset(self, datapoint_id: str, preset: str) -> None:
         """Set a thermostat preset (``none`` / ``frost`` / ``eco`` / ``comfort``)."""
-        message = {
-            "type": "datapoint",
-            "data": {
-                "id": datapoint_id,
-                "type": "temperature_ctrl",
-                "values": [{"key": "temperature_ctrl_preset", "value": preset}],
-            },
-        }
-        await self.send_websocket_message(message)
+        await self._send_datapoint_command(
+            datapoint_id,
+            "temperature_ctrl",
+            [{"key": "temperature_ctrl_preset", "value": preset}],
+        )
