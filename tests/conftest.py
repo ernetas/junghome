@@ -1,6 +1,7 @@
 """Shared fixtures for the Jung Home test suite."""
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from copy import deepcopy
 from unittest.mock import AsyncMock, patch
@@ -211,10 +212,39 @@ DEVICES = [
 PRISTINE_DEVICES: list[dict] = deepcopy(DEVICES)
 
 
-async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
-    """Stand in for the real WebSocket: present a fake socket, then park."""
+def _auto_reply_to_datapoint_commands(
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> AsyncMock:
+    """Build a fake WebSocket that immediately confirms any command it is sent.
+
+    Command methods now await a `datapoint` reply echoing the `message_id` they
+    sent (see `coordinator._send_datapoint_command`) instead of firing and
+    forgetting, mirroring what the real gateway does
+    (websocket-server-service.js: every set is answered with the re-read
+    datapoint, tagged with the same message_id). Without this, every test that
+    exercises a service call (turn_on, set_cover_position, ...) against a bare
+    mocked socket would race COMMAND_REPLY_TIMEOUT and fail with a timeout
+    error instead of completing.
+    """
     ws = AsyncMock()
     ws.closed = False
+
+    def _reply(raw: str) -> None:
+        sent = json.loads(raw)
+        message_id = sent.get("message_id")
+        if sent.get("type") == "datapoint" and message_id:
+            reply = json.dumps(
+                {"type": "datapoint", "data": sent.get("data"), "message_id": message_id}
+            )
+            coordinator._dispatch_text_frame(reply)
+
+    ws.send_str.side_effect = _reply
+    return ws
+
+
+async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
+    """Stand in for the real WebSocket: present a fake socket, then park."""
+    ws = _auto_reply_to_datapoint_commands(self)
     self.websocket = ws
     self.ws_connected = True
     self.gateway_version = "1.5.0"

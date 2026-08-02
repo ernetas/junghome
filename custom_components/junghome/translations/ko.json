@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "명령을 보내기 위해 Jung Home 게이트웨이에 연결할 수 없습니다. 다시 연결하는 중입니다. 잠시 후 다시 시도하세요."
     },
+    "command_timeout": {
+      "message": "Jung Home 게이트웨이가 제한 시간 내에 명령을 확인하지 않았습니다."
+    },
     "invalid_response": {
       "message": "Jung Home 게이트웨이가 예기치 않은 응답을 반환했습니다."
     },

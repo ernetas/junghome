@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Gateway-ul Jung Home nu a putut fi contactat pentru a trimite comanda; se reconectează. Încearcă din nou peste o clipă."
     },
+    "command_timeout": {
+      "message": "Gateway-ul Jung Home nu a confirmat comanda la timp."
+    },
     "invalid_response": {
       "message": "Gateway-ul Jung Home a returnat un răspuns neașteptat."
     },

@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Não foi possível alcançar o gateway Jung Home para enviar o comando; ele está se reconectando. Tente novamente em instantes."
     },
+    "command_timeout": {
+      "message": "O gateway Jung Home não confirmou o comando a tempo."
+    },
     "invalid_response": {
       "message": "O gateway Jung Home retornou uma resposta inesperada."
     },

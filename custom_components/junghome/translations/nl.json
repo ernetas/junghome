@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "De Jung Home-gateway was niet bereikbaar om de opdracht te versturen; de verbinding wordt hersteld. Probeer het zo meteen opnieuw."
     },
+    "command_timeout": {
+      "message": "De Jung Home-gateway heeft de opdracht niet op tijd bevestigd."
+    },
     "invalid_response": {
       "message": "De Jung Home-gateway gaf een onverwacht antwoord."
     },

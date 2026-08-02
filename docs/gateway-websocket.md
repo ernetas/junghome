@@ -195,7 +195,13 @@ Any failure is returned as a `message` frame:
 ## Notes for the integration
 
 - State updates arrive as `datapoint` broadcasts; the coordinator matches them to
-  entities. Commands are sent as `datapoint` set frames.
+  entities. Commands are sent as `datapoint` set frames, each tagged with a
+  `message_id`; the coordinator awaits the matching reply (short timeout)
+  instead of firing and forgetting, so a rejected command now surfaces as a
+  real service error and the confirmed re-read value — not just an
+  optimistic guess — lands before the awaiting service call returns. A
+  rejection itself is not correlatable (see "Errors" above), so it surfaces
+  as a timeout rather than the gateway's own error text.
 - The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
   broadcasts to populate the scene platform (recall is REST-only), and the
   `groups` broadcasts for room→area assignment and diagnostics. The singular

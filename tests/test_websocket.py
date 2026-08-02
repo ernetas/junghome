@@ -15,6 +15,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from tests.conftest import _auto_reply_to_datapoint_commands
 
 
 class _FakeMsg:
@@ -300,9 +301,18 @@ async def test_update_data_rejects_json_null_body(
 
 async def test_all_command_methods_send(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
-    ws = AsyncMock()
-    ws.closed = False
+    ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
+    # A matching stub datapoint so the confirmed reply merges instead of
+    # falling into the unmatched-push path (which would schedule a refresh
+    # this test never cleans up).
+    coordinator.data = [
+        {
+            "id": "dev",
+            "label": "Dev",
+            "datapoints": [{"id": "d", "type": "switch", "values": []}],
+        }
+    ]
     await coordinator.turn_on_switch("d")
     await coordinator.turn_off_switch("d")
     await coordinator.turn_on_light("d")
@@ -341,9 +351,15 @@ async def test_all_command_methods_send(hass: HomeAssistant) -> None:
 async def test_status_led_off_sends_zero(hass: HomeAssistant) -> None:
     """set_status_led(False) sends the LED value field as "0"."""
     coordinator = _coordinator(hass)
-    ws = AsyncMock()
-    ws.closed = False
+    ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
+    coordinator.data = [
+        {
+            "id": "dev",
+            "label": "Dev",
+            "datapoints": [{"id": "d", "type": "status_led", "values": []}],
+        }
+    ]
     await coordinator.set_status_led("d", state=False)
     sent = json.loads(ws.send_str.call_args.args[0])
     assert sent["data"]["values"] == [{"key": "status_led", "value": "0"}]

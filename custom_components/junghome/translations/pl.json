@@ -139,6 +139,9 @@
     "cannot_send": {
       "message": "Nie udało się połączyć z bramką Jung Home, aby wysłać polecenie; trwa ponowne łączenie. Spróbuj ponownie za chwilę."
     },
+    "command_timeout": {
+      "message": "Bramka Jung Home nie potwierdziła polecenia na czas."
+    },
     "invalid_response": {
       "message": "Bramka Jung Home zwróciła nieoczekiwaną odpowiedź."
     },
