@@ -4,7 +4,11 @@ A ``Thermostat`` function exposes three datapoints (see
 ``cdb_types_datapoints.json`` / ``cdb_types_functions.json``):
 
 - ``temperature_ctrl`` — the target temperature in °C (range 5..30) plus a
-  ``temperature_ctrl_preset`` key (``none`` / ``frost`` / ``eco`` / ``comfort``).
+  ``temperature_ctrl_preset`` key. Writes accept exactly ``frost`` / ``eco`` /
+  ``comfort``; reads report the matching preset or ``""`` when the target
+  matches no threshold. (The gateway's API descriptor also advertises
+  ``none``, but the firmware rejects writing it and never reports it — see
+  the preset note in ``docs/gateway-websocket.md``.)
 - ``quantity`` — the room temperature reading, surfaced here as
   ``current_temperature``. (Sensor discovery does not turn a Thermostat's
   quantity into a standalone sensor entity; it is only the ambient reading.)
@@ -57,15 +61,31 @@ DEFAULT_MAX_TEMP = 30.0
 # "frost" (frost protection) has no standard HA preset constant; expose it under
 # its gateway name. The others map onto HA's well-known presets.
 PRESET_FROST = "frost"
-# HA preset <-> gateway preset value (they coincide, but keep the map explicit
+# HA preset -> gateway preset value (they coincide, but keep the map explicit
 # so a future HA constant rename doesn't silently desync the wire value).
+# PRESET_NONE is deliberately absent: the firmware accepts only these three
+# (`SetPointState.publishMode` throws "does not set a valid preset" for
+# anything else, including the `none` its own API descriptor advertises), and
+# a preset here is not a mode but a *derived* fact — "the target temperature
+# equals one of the three configured thresholds" — so there is no device
+# state a "none" write could set. `async_set_preset_mode` no-ops it instead.
 _HA_TO_DEVICE_PRESET = {
-    PRESET_NONE: "none",
     PRESET_FROST: "frost",
     PRESET_ECO: "eco",
     PRESET_COMFORT: "comfort",
 }
-_DEVICE_TO_HA_PRESET = {v: k for k, v in _HA_TO_DEVICE_PRESET.items()}
+# Gateway preset value -> HA preset. Not the inverse of the write map: the
+# gateway reports `""` when no threshold matches the target (the common steady
+# state — `getRTRTemperatureMode` returns the empty string, never "none"),
+# which reads as PRESET_NONE. "none" is kept for a future descriptor-faithful
+# firmware. Anything else is unknown and maps to None.
+_DEVICE_TO_HA_PRESET = {
+    "": PRESET_NONE,
+    "none": PRESET_NONE,
+    "frost": PRESET_FROST,
+    "eco": PRESET_ECO,
+    "comfort": PRESET_COMFORT,
+}
 
 # The Thermostat's ``switch`` datapoint value -> momentary HVAC action. Any other
 # value (notably the ``"NaN"`` the gateway sends for an offline device) leaves the
@@ -184,7 +204,23 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self.async_write_ha_state()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Set a new preset."""
+        """Set a new preset.
+
+        PRESET_NONE is a local no-op: a preset on this device is the *derived*
+        fact that the target temperature equals one of the three configured
+        thresholds, so "no preset" is not a state that can be commanded — and
+        the firmware rejects the write (`SetPointState.publishMode` throws for
+        anything but frost/eco/comfort), which would surface here as a 5 s
+        command-confirmation timeout for a selection that cannot mean anything.
+        The displayed preset keeps tracking the device's own report.
+        """
+        if preset_mode == PRESET_NONE:
+            _LOGGER.debug(
+                "Thermostat %s: PRESET_NONE is display-only (a preset is "
+                "derived from the target temperature); nothing to send",
+                self._name,
+            )
+            return
         device_preset = _HA_TO_DEVICE_PRESET.get(preset_mode)
         if device_preset is None:
             _LOGGER.warning("Unknown thermostat preset %r", preset_mode)

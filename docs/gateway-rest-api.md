@@ -96,7 +96,8 @@ the gateway's network-key password.
 | GET  | `/log/...` | Diagnostic snapshots (system, kernel, middleware, api-server, jungremote-client, bt_mesh_project, jung_home_project). |
 
 > Endpoint set grows with firmware. `products/*` and `project/*` exist on 1.5.0
-> but not on the 1.4.1 build seen on disk. Always confirm against `/apidoc`.
+> but not on the previous partition's 1.1.0 build (the api-server version that
+> ships with gateway firmware v2.0.0). Always confirm against `/apidoc`.
 
 ## `functions` payload (what the integration uses)
 

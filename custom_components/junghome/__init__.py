@@ -193,16 +193,23 @@ def _make_stale_device_pruner(
     reload) therefore no longer destroys a live device's entities.
     """
     missing_polls: dict[str, int] = {}
+    # The last device-list adoption this pruner has counted. Device membership
+    # only changes when the coordinator adopts a fresh list (a REST poll or a
+    # `functions` broadcast — `coordinator.data_generation`); every other
+    # dispatch that reaches this listener (per-datapoint pushes, scenes
+    # broadcasts, the WS-drop notification) re-presents the SAME list, so
+    # counting those as misses shrank the debounce below
+    # STALE_DEVICE_PRUNE_MISSES real polls — e.g. a WS flapping while a device
+    # was transiently absent from one poll burned several "misses" per minute
+    # from reconnect notifications alone.
+    last_generation: int | None = None
 
     @callback
     def _prune_stale_devices() -> None:
-        # Device membership only changes on a REST poll; a WebSocket push merges
-        # datapoint values into existing devices and never adds or removes one.
-        # Skip push dispatches so the miss counter below tracks poll cycles, not
-        # the (frequent) pushes — otherwise a device transiently absent from one
-        # poll would reach the miss threshold within seconds of pushes.
-        if coordinator.pushed_datapoint_id is not None:
-            return
+        nonlocal last_generation
+        if coordinator.data_generation == last_generation:
+            return  # same device list as last time; nothing new to count
+        last_generation = coordinator.data_generation
         if not coordinator.data:
             return  # don't prune on an empty/failed poll
         current = {device_slug(d) for d in coordinator.data}

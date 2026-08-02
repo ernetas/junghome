@@ -320,7 +320,17 @@ This confirms the A/B update scheme: the bootloader flips between `sdc2`/`sdc3`,
 and `/data` (`sdc4`) is shared across both slots. `sdc4/update/history.txt`
 records a real update (2026-05-12) doing, in order: save `/data` → migrate →
 update `fstab` → flash boot partition → update bootloader config → mark slot
-active. The on-disk device DB in this image is empty (a reset/test gateway).
+active. The **live** device DB is `sdc4/middleware/res_6/` (the schema-v6
+directory the middleware uses) and holds the full ~30-node production mesh
+with its keys; only the leftover unnumbered `middleware/res/` (factory state,
+2023 mtimes) is near-empty — an earlier revision of this doc mistook it for
+the real CDB and called this a reset/test gateway.
+
+A second dump of the same card, `disk_dump/jung-20260801/` (`sdb1`–`sdb4`),
+was taken 2026-08-01: rootfs partitions byte-identical to this one, data
+partition further along (project export from app 2.2.0, RockerSwitch count
+8 → 21, a ~68 MB support snapshot). Its extraction is the higher-fidelity one
+— prefer `sdb2` when quoting firmware evidence (see its `NOTES.md`).
 
 ### Matter — provisioned but inactive
 
@@ -341,10 +351,12 @@ The data partition contains live secrets — handle the dump accordingly
 - Cloud token `jungremote-client/res/api_token.tk` and the per-user API token
   secrets in `api-server/res/tokens/*.tkn` (these sign the gateway's JWTs).
 
-### Live WebSocket capture (`disk_dump/ws-capture/`)
+### Live WebSocket captures (`disk_dump/ws-capture/`, `ws-capture-20260727/`)
 
-A real session from a **production** gateway (fw 1.5.0), separate from the disk
-image. It validates the protocol the integration depends on:
+Real sessions from a **production** gateway (API 1.5.0), separate from the
+disk image — the second capture is from 2026-07-27 and shows the same four
+function types with more rockers (OnOff 23, RockerSwitch 23, ColorLight 4,
+Socket 2). They validate the protocol the integration depends on:
 
 - Connect frame order: `message → version → functions → groups → scenes` — the
   gateway pushes the full `scenes` list on connect (what the scene platform

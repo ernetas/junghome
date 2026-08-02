@@ -12,7 +12,13 @@ needed to use the integration.
 
 ## microSD partition layout
 
-The card has four partitions (seen in the dump as `sdc1`–`sdc4`):
+The card has four partitions (seen in the dump as `sdc1`–`sdc4`). There are
+two dumps of the same card: `disk_dump/jung/` (2026-06-13, `sdc*`) and
+`disk_dump/jung-20260801/` (`sdb*`) — the rootfs partitions are
+**byte-identical builds** in both, but the 2026-08-01 extraction is the
+higher-fidelity one (ext4, `rsync -aHAX`; the June one went through a
+case-insensitive filesystem and dropped device nodes and some symlinks — see
+its `NOTES.md`), so prefer `jung-20260801/sdb2` when quoting evidence:
 
 | Partition | Type | Role |
 |-----------|------|------|
@@ -93,8 +99,13 @@ The middleware persists the mesh state on the data partition under
 - `btmesh_iv_index`, `btmesh_iv_index_birthday`, `btmesh_sequence_number` — IV
   index and sequence-number state (mesh replay protection).
 
-Devices observed use `cid 0x0527` / `pid 0x000B`. (The dump's own copy was a
-factory/empty CDB; a live gateway's copy contains all provisioned nodes.)
+The live CDB on the data partition (`middleware/res_6/` — the schema-v6
+directory the middleware actually uses) contains the full provisioned mesh:
+~30 nodes with JUNG's `cid 0x0527` and per-product `pid`s (`0x0001`–`0x0004`,
+`0x000B`), plus the provisioning iPhone at `cid 0x004C` on unicast `0001`.
+Only the leftover *unnumbered* `middleware/res/` (untouched factory state
+from 2023) is near-empty — an earlier revision of this doc mistook that copy
+for "the" CDB and called the gateway reset/empty.
 
 > ⚠ The CDB contains the network's secret keys. Never commit a real
 > `bt_mesh_project.json` (or the whole `disk_dump/`, which is `.gitignore`d).

@@ -266,6 +266,49 @@ async def test_climate_unknown_preset_noops(hass: HomeAssistant) -> None:
     sp.assert_not_called()
 
 
+async def test_no_active_preset_reads_as_preset_none(hass: HomeAssistant) -> None:
+    """A target matching no threshold reads as PRESET_NONE, not unknown.
+
+    The wire value for that state is the EMPTY STRING — the firmware's
+    ``getRTRTemperatureMode`` returns ``""`` when the target temperature
+    matches none of the frost/eco/comfort thresholds, and never the ``none``
+    its API descriptor advertises. It is the common steady state (any manually
+    chosen target), so mapping it to unknown hid the preset attribute for most
+    real installations.
+    """
+    coordinator = bare_coordinator(hass)
+    assert _climate(coordinator, preset="").preset_mode == "none"
+    # A future descriptor-faithful firmware that reports "none" reads the same.
+    assert _climate(coordinator, preset="none").preset_mode == "none"
+
+
+async def test_set_preset_none_is_a_local_noop(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Selecting the "None" preset sends nothing and raises nothing.
+
+    A preset on this device is a *derived* fact (target temperature equals a
+    configured threshold), so there is no device state a "none" write could
+    set — and the firmware throws for any preset write other than
+    frost/eco/comfort (``SetPointState.publishMode``), which used to surface
+    as a guaranteed 5 s command-confirmation timeout every time a user picked
+    "None". The displayed preset keeps tracking the device's own report.
+    """
+    coordinator = init_integration.runtime_data
+    with patch.object(coordinator, "set_temperature_preset", AsyncMock()) as sp:
+        await hass.services.async_call(
+            "climate",
+            "set_preset_mode",
+            {"entity_id": "climate.living_room", "preset_mode": "none"},
+            blocking=True,
+        )
+    sp.assert_not_called()
+    # The device still reports comfort; the entity must not pretend otherwise.
+    state = hass.states.get("climate.living_room")
+    assert state is not None
+    assert state.attributes["preset_mode"] == "comfort"
+
+
 async def test_set_hvac_mode_never_writes_the_switch_datapoint(
     hass: HomeAssistant,
 ) -> None:

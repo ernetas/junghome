@@ -28,9 +28,17 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - `docs/` — reverse-engineered gateway reference (see below) plus
   `docs/example-button-automation.md` (user-facing guide).
 - `config/`, `docker-compose.yml`, `scripts/` — local test harness.
-- `disk_dump/` — gateway microSD image, **gitignored** (tokens + mesh keys;
-  never commit it). `jung/sdc2` is the **current** firmware (v2.1.x, API
-  1.5.0); `sdc3` is the older A/B partition — quote evidence from sdc2.
+- `disk_dump/` — gateway microSD dumps + live WS captures, **gitignored**
+  (tokens + mesh keys; never commit it). Two dumps of the same card:
+  `jung/` (2026-06-13, `sdc*`) and `jung-20260801/` (`sdb*`) — same builds
+  byte-for-byte, but the 2026-08-01 extraction is higher fidelity (see its
+  `NOTES.md`). **Quote evidence from `jung-20260801/sdb2`** (current
+  firmware, v2.1.3 build 2840, API 1.5.0; `jung/sdc2` is the same build);
+  `sdb3`/`sdc3` are the older v2.0.0 A/B partition — evidence found *only*
+  there is stale (v2.1.3 refactored the middleware into
+  `models/device_states/*State.js`). `ws-capture/` and `ws-capture-20260727/`
+  are live production WS sessions; the data partition's live mesh DB is
+  `sd?4/middleware/res_6/` (the unnumbered `res/` is empty factory state).
 
 ## Protocol facts the platforms encode (all firmware-verified)
 
@@ -51,6 +59,13 @@ JUNG HOME Gateway over its REST API and WebSocket.
   regulator has no on/off at all, so the climate entity is permanently
   `HVACMode.HEAT` and that datapoint only feeds `hvac_action`; never map it to
   `hvac_mode` again (issue #121; evidence in docs/gateway-websocket.md).
+- **Thermostat presets: the API descriptor's `none` is a lie.** Writes accept
+  exactly `frost`/`eco`/`comfort` (the firmware throws on anything else,
+  surfacing as an uncorrelated error → command timeout); "no preset" reads
+  back as the **empty string**, never `"none"` (a preset is derived — target
+  temperature == a configured threshold). climate.py maps `""` → PRESET_NONE
+  on read and treats selecting PRESET_NONE as a local no-op; never send
+  `"none"` (preset note in docs/gateway-websocket.md).
 - **Cover `level` is percent-closed**: close ⇒ BT-Mesh "down" (`0x7FFF`,
   level→100 %), open ⇒ "up" (`0x8000`, →0 %); HA position = `100 - level`.
   Correct for shutters/blinds; **awnings mount the motor the opposite way** and
@@ -234,13 +249,100 @@ them without new evidence wastes a session.
   fetch/parse handlers); narrowing these three trades crash-risk for no
   diagnostic gain.
 
+## Maximum-effort review protocol
+
+Run this whenever asked to review the repo or a PR ("run the review
+protocol", "review PR #N"). The bar: **only verified findings count**, and
+repeated runs must converge — an empty report is a success state, not a
+failure to try hard enough. Padding a clean run with nits poisons every
+future run.
+
+**Setup.** Record findings incrementally to `CLAUDE-fable.md` (kept out of
+git via `.git/info/exclude` — never commit it; a dead session must not lose
+progress). If the file exists from a previous run, first re-verify its open
+findings — fixed → mark fixed, still open → carry forward — before hunting
+new ones. PR scope = the diff plus every invariant it touches; repo scope =
+all passes below.
+
+**What counts as a finding.** A defect with (a) concrete evidence
+(file:line, firmware path, capture frame), (b) a failure scenario a real
+user or contributor can hit, and (c) a proposed fix. Actively try to
+*refute* every candidate before recording it — read the callers, trace the
+wire path, run the test. What does NOT count: style ruff doesn't enforce,
+speculative rewrites, unreachable hypotheticals, anything under "Settled
+decisions" without new evidence, anything already in the Backlog. A
+candidate that survives refutation but can't be fully proven goes in a
+separate, clearly-marked "unproven" list. Severity: P0 user-visible
+breakage · P1 correctness under race/edge conditions · P2 wrong or stale
+evidence in docs/comments · P3 polish worth doing while nearby.
+
+**Pass 1 — firmware-evidence accuracy.** The current build is v2.1.3
+(2840): `disk_dump/jung-20260801/sdb2` (highest-fidelity extraction;
+`jung/sdc2` is the same build). `sdb3`/`sdc3` are v2.0.0 — evidence found
+*only* there is stale (v2.1.3 refactored the middleware into
+`models/device_states/*State.js`; services the docs once cited exist only
+in v2.0.0). Every firmware citation in docs/, CLAUDE.md and code comments
+must resolve in the current build — file exists, behaviour matches.
+Descriptor files (`cdb_types_*.json`, `/apidoc`) are *promises*; the
+`dist/` implementation is the truth — when they disagree, the
+implementation wins and the disagreement is a finding (the preset-"none"
+bug shipped because the descriptor was trusted). Cross-check the live
+captures (`disk_dump/ws-capture*/`) whenever a claim concerns what the wire
+actually carries.
+
+**Pass 2 — wire contracts, both directions.** For every datapoint type the
+integration writes, trace the full path: HA service → coordinator command →
+`ip_event_handler` routing → state-class publish, and confirm every value
+sent is one the firmware accepts (it throws on anything else, which
+surfaces as an uncorrelated error → command timeout). For every read, trace
+state class → `composeDatapointByState` → the value set that can actually
+appear — including `""`, `"NaN"`, trailing-space labels and boundary
+numbers — and confirm the platform parses all of them.
+
+**Pass 3 — concurrency interleavings.** Enumerate the concurrent actors:
+60 s poll, unmatched-push debounced refresh, connect-time refresh,
+`functions` broadcast, per-datapoint pushes, command sends + correlated
+replies, the reconnect loop, entry reload/unload. For each documented
+invariant (push-overlay refcount, pending replies failed on session end, no
+poll starvation, the membership-race backlog note), pick the pairwise
+interleavings that could violate it and check the *code*, not the comment.
+
+**Pass 4 — identity & HA-contract invariants.** No unique_id or device
+identifier from a volatile gateway id, and none derived from
+`entry.unique_id` (only `entry_anchor`). Every map keyed by device slug is
+guarded with `duplicate_slugs`. Availability: `last_update_success` only;
+`ws_connected` may gate controllable entities, never grant availability.
+Optimistic entity writes happen only after the awaited command returns.
+Quantified claims in comments ("10 consecutive polls", "5 s", "60 s") must
+match what the code actually measures — same quantity, same unit, same
+trigger. When two sibling code paths handle the same untrusted input, their
+hardening must match — an asymmetry is a latent finding. `strings.json` and
+all 26 translations move together.
+
+**Pass 5 — tests.** Fixture and test wire values must be values the current
+firmware can emit (`"comfort"`-only coverage is how the `""` preset gap
+survived). Every P0/P1 fix gets a test that fails before and passes after.
+Respect the two test landmines (flow-manager auto-advance, bare-coordinator
+shutdown) and the 95 % branch gate.
+
+**Pass 6 — hygiene.** Secrets stay out of git (`disk_dump/` gitignored;
+diagnostics redact hosts/tokens/serials, including inside free-form text).
+CI pins consistent (ruff version, HA floor). `manifest.json`/`hacs.json`
+coherent.
+
+**Report.** Severity-ordered; each finding with evidence, failure scenario
+and proposed fix. Close with an explicit verdict: the list of open P0–P2s,
+or "clean — nothing above P3 survived verification."
+
 ## Backlog (open, in rough value order)
 
-- **Cover travel states** — blocked on evidence: the existing ws-capture
-  contains zero `level` push frames, so first capture a blind actually moving
-  to learn whether intermediate levels stream; if they do, report
-  `is_opening`/`is_closing` and let pushes drive position instead of jumping
-  to the target.
+- **Cover travel states** — half-unblocked by firmware evidence: every
+  composed `level` datapoint always carries a `level_move` value (−1/1/0)
+  derived from current-vs-target (`PositionState.fromMeshMessage` computes
+  mode opening/closing/stopped), so `is_opening`/`is_closing` could be read
+  from `level` pushes today. Still needed before building it: a capture of a
+  blind actually moving, to learn whether intermediate `level` pushes stream
+  during travel (drives whether position can track live or only jump).
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —
