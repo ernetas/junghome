@@ -174,6 +174,10 @@ instead of re-deriving:
   translations/device-trigger files; new platform behaviour goes in that
   platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
+  The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
+  loaded by conftest as `DEVICES`; `bare_coordinator` is the shared bare
+  setup). One-off device dicts stay inline in the test that uses them —
+  visible inputs beat indirection for single-use data.
 - **Snapshot tests** pin every entity's registry entry (`unique_id` included),
   state and attributes (`tests/snapshots/*.ambr`). Regenerate with
   `pytest --snapshot-update` and **review the diff** — a `unique_id` change is
@@ -221,6 +225,14 @@ them without new evidence wastes a session.
 - **The group `color_temperature_range` parser stays unwired** — no captured
   firmware sends the field (`disk_dump/ws-capture*/groups.json`); the gateway
   clamps CT to 2000–6000 K anyway.
+- **The three broad excepts in `coordinator.py` stay broad** (reconnect loop,
+  frame-handler catch-all, WS send path) — wontfix. Each is load-bearing
+  containment: the reconnect loop must retry through *any* failure class, a
+  malformed frame must never tear down a healthy session, and every send
+  failure must surface as `cannot_send` to the calling service. The
+  narrowing that mattered was already done in PR #133 (best-effort
+  fetch/parse handlers); narrowing these three trades crash-risk for no
+  diagnostic gain.
 
 ## Backlog (open, in rough value order)
 
@@ -229,11 +241,7 @@ them without new evidence wastes a session.
   to learn whether intermediate levels stream; if they do, report
   `is_opening`/`is_closing` and let pushes drive position instead of jumping
   to the target.
-- **Narrow the three broad excepts** in `coordinator.py` (#133): reconnect
-  loop, frame-handler catch-all, WS send path.
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —
   and the next poll heals it.
-- **Reusable JSON device/API fixtures** (`tests/fixtures/`); tests build
-  device dicts inline.

@@ -15,7 +15,7 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.binary_sensor import JungHomePresence
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket
+from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket, bare_coordinator
 
 # A presence detector to hang off the shared device list for the snapshot
 # test. Presence is reported as a quantity datapoint with an *empty* unit (the
@@ -37,16 +37,6 @@ PRESENCE_DEVICE = {
         },
     ],
 }
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
 
 
 def _presence_device(value: str) -> dict:
@@ -71,7 +61,7 @@ def _presence_device(value: str) -> dict:
 
 async def test_presence_binary_sensor_states(hass: HomeAssistant) -> None:
     """Presence maps 1->on, 0->off, and NaN/missing to unknown (None)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = _presence_device("1")
     dp = device["datapoints"][0]
     sensor = JungHomePresence(coordinator, device, dp, "Presence Detected")
@@ -90,7 +80,7 @@ async def test_presence_binary_sensor_states(hass: HomeAssistant) -> None:
 
 async def test_presence_binary_sensor_updates_on_push(hass: HomeAssistant) -> None:
     """A coordinator update re-reads the presence state from stored data."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = _presence_device("0")
     dp = device["datapoints"][0]
     coordinator.data = [device]
@@ -147,7 +137,7 @@ async def test_presence_binary_sensor_keeps_state_when_datapoint_gone(
     entity's availability tracks the gateway on every update (matching the
     switch platform).
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = _presence_device("1")
     dp = device["datapoints"][0]
     sensor = JungHomePresence(coordinator, device, dp, "Presence Detected")

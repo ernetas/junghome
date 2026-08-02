@@ -7,16 +7,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
-from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from tests.conftest import _auto_reply_to_datapoint_commands
+from tests.conftest import _auto_reply_to_datapoint_commands, bare_coordinator
 
 
 class _FakeMsg:
@@ -52,18 +50,8 @@ class _FakeWS:
             yield frame
 
 
-def _coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
-
-
 async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     text = aiohttp.WSMsgType.TEXT
     frames = [
         _FakeMsg(text, '{"type":"message","data":"hi"}'),
@@ -110,7 +98,7 @@ async def test_session_end_fails_pending_command_replies(hass: HomeAssistant) ->
     must fail the pending future immediately rather than leaving the command
     to sit out COMMAND_REPLY_TIMEOUT.
     """
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     pending: asyncio.Future[dict] = hass.loop.create_future()
     coordinator._pending_replies["ha1"] = pending
 
@@ -134,7 +122,7 @@ async def test_ws_error_message_frame_logged(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A gateway `error:` message frame is surfaced at WARNING, not swallowed."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     frames = [
         _FakeMsg(
             aiohttp.WSMsgType.TEXT,
@@ -158,7 +146,7 @@ async def test_ws_error_message_frame_logged(
 
 async def test_ws_handshake_auth_failure_triggers_reauth(hass: HomeAssistant) -> None:
     """A 401 at the WS upgrade starts reauth and stops the reconnect loop."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     err = aiohttp.WSServerHandshakeError(Mock(), (), status=401, message="unauthorized")
     with (
         patch.object(
@@ -175,7 +163,7 @@ async def test_ws_handshake_auth_failure_triggers_reauth(hass: HomeAssistant) ->
 
 
 async def test_apply_gateway_version_updates_registry(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     registry = dr.async_get(hass)
     device = registry.async_get_or_create(
         config_entry_id=coordinator.config_entry.entry_id,
@@ -198,7 +186,7 @@ async def test_apply_gateway_version_keeps_per_device_sw_version(
     version, making the registry disagree with ``device_info`` — this pins the
     fix (the branch was previously untested).
     """
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator.data = [
         {"id": "d1", "label": "Versioned", "sw_version": "9.9-device"},
         {"id": "d2", "label": "Unversioned"},
@@ -221,7 +209,7 @@ async def test_apply_gateway_version_keeps_per_device_sw_version(
 
 
 async def test_apply_gateway_version_noop_without_version(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     registry = dr.async_get(hass)
     device = registry.async_get_or_create(
         config_entry_id=coordinator.config_entry.entry_id,
@@ -233,7 +221,7 @@ async def test_apply_gateway_version_noop_without_version(hass: HomeAssistant) -
 
 
 async def test_send_raises_when_disconnected(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator.websocket = None
     # A dropped command must surface as an error, not a silent success.
     with pytest.raises(HomeAssistantError):
@@ -244,13 +232,13 @@ async def test_fetch_rejects_non_list_response(
     hass: HomeAssistant, aioclient_mock
 ) -> None:
     aioclient_mock.get("https://gw/api/junghome/functions", json={"error": "boom"})
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with pytest.raises(UpdateFailed):
         await coordinator._fetch_devices_from_api("gw", "tok")
 
 
 async def test_stop_cancels_task_and_closes_socket(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     ws = AsyncMock()
     ws.closed = False
     coordinator.websocket = ws
@@ -260,7 +248,7 @@ async def test_stop_cancels_task_and_closes_socket(hass: HomeAssistant) -> None:
 
 
 async def test_websocket_loop_reconnects_with_backoff(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     calls: list[int] = []
 
     async def flaky(self: JungHomeDataUpdateCoordinator) -> None:
@@ -282,7 +270,7 @@ async def test_fetch_devices_from_api(hass: HomeAssistant, aioclient_mock) -> No
     aioclient_mock.get(
         "https://gw/api/junghome/functions", json=[{"id": "x", "datapoints": []}]
     )
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     data = await coordinator._fetch_devices_from_api("gw", "tok")
     assert data == [{"id": "x", "datapoints": []}]
 
@@ -293,7 +281,7 @@ async def test_fetch_groups_from_api(hass: HomeAssistant, aioclient_mock) -> Non
         "https://gw/api/junghome/groups",
         json=[{"id": "g1", "name": "Kitchen"}, "not-a-dict"],
     )
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     # Dict groups are kept; non-dict entries in the array are dropped.
     data = await coordinator._fetch_groups_from_api("gw", "tok")
     assert data == [{"id": "g1", "name": "Kitchen"}]
@@ -305,7 +293,7 @@ async def test_fetch_groups_from_api_ignores_non_list(
 ) -> None:
     # A non-list response (e.g. an error object) yields no groups, never raises.
     aioclient_mock.get("https://gw/api/junghome/groups", json={"error": "boom"})
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     assert await coordinator._fetch_groups_from_api("gw", "tok") == []
 
 
@@ -323,13 +311,13 @@ async def test_update_data_rejects_json_null_body(
         text="null",
         headers={"Content-Type": "application/json"},
     )
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with pytest.raises(UpdateFailed):
         await coordinator._fetch_devices_from_api("gw", "tok")
 
 
 async def test_all_command_methods_send(hass: HomeAssistant) -> None:
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
     # A matching stub datapoint so the confirmed reply merges instead of
@@ -379,7 +367,7 @@ async def test_all_command_methods_send(hass: HomeAssistant) -> None:
 
 async def test_status_led_off_sends_zero(hass: HomeAssistant) -> None:
     """set_status_led(False) sends the LED value field as "0"."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     ws = _auto_reply_to_datapoint_commands(coordinator)
     coordinator.websocket = ws
     coordinator.data = [
@@ -398,7 +386,7 @@ async def test_update_data_raises_update_failed_on_timeout(
     hass: HomeAssistant,
 ) -> None:
     """A fetch TimeoutError surfaces as UpdateFailed (not a bare TimeoutError)."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with (
         patch.object(
             coordinator, "_fetch_devices_from_api", AsyncMock(side_effect=TimeoutError)
@@ -410,7 +398,7 @@ async def test_update_data_raises_update_failed_on_timeout(
 
 async def test_update_data_5xx_maps_to_update_failed(hass: HomeAssistant) -> None:
     """A non-auth ClientResponseError (e.g. 500) surfaces as UpdateFailed."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     err = aiohttp.ClientResponseError(Mock(), (), status=500)
     with (
         patch.object(
@@ -423,7 +411,7 @@ async def test_update_data_5xx_maps_to_update_failed(hass: HomeAssistant) -> Non
 
 async def test_ws_handshake_non_auth_error_reconnects(hass: HomeAssistant) -> None:
     """A non-401/403 handshake error reconnects with backoff (not reauth)."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     err = aiohttp.WSServerHandshakeError(Mock(), (), status=500, message="x")
     calls: list[int] = []
 
@@ -443,7 +431,7 @@ async def test_ws_handshake_non_auth_error_reconnects(hass: HomeAssistant) -> No
 
 async def test_send_raises_when_send_str_fails(hass: HomeAssistant) -> None:
     """A send failure on a live socket surfaces as HomeAssistantError."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     ws = AsyncMock()
     ws.closed = False
     ws.send_str = AsyncMock(side_effect=RuntimeError("boom"))
@@ -454,7 +442,7 @@ async def test_send_raises_when_send_str_fails(hass: HomeAssistant) -> None:
 
 async def test_ws_message_without_datapoint_id_is_ignored(hass: HomeAssistant) -> None:
     """A datapoint frame with a dict payload but no id is logged and ignored."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator._handle_websocket_message(  # must not raise
         {"type": "datapoint", "data": {"values": []}}
     )
@@ -462,13 +450,13 @@ async def test_ws_message_without_datapoint_id_is_ignored(hass: HomeAssistant) -
 
 async def test_handle_message_non_dict_is_ignored(hass: HomeAssistant) -> None:
     """A non-dict message payload hits the defensive guard and is ignored."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator._handle_websocket_message(["not-a-dict"])  # type: ignore[arg-type]
 
 
 async def test_groups_broadcast_is_stored(hass: HomeAssistant) -> None:
     """A `groups` broadcast is cached for diagnostics (not consumed by entities)."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator._handle_websocket_message(
         {"type": "groups", "data": [{"id": "g1", "name": "Living room"}, "junk"]}
     )
@@ -481,7 +469,7 @@ async def test_groups_broadcast_is_stored(hass: HomeAssistant) -> None:
 
 async def test_ws_frame_log_truncates_large_frames(hass: HomeAssistant) -> None:
     """The diagnostics frame log keeps recent frames and truncates large ones."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator._log_ws_frame("x" * 5000)
     coordinator._log_ws_frame("short")
     assert coordinator.ws_frame_log[-1] == "short"
@@ -491,7 +479,7 @@ async def test_ws_frame_log_truncates_large_frames(hass: HomeAssistant) -> None:
 
 async def test_ws_frame_log_keeps_latest_per_type(hass: HomeAssistant) -> None:
     """The latest frame of each type is kept IN FULL (handshake survives churn)."""
-    coordinator = _coordinator(hass)
+    coordinator = bare_coordinator(hass)
     # A large functions handshake frame: it exceeds the rolling-log truncation
     # cap, but the per-type store keeps it complete for direct wire comparison.
     big = '{"type":"functions","data":[' + ",".join(['{"id":"x"}'] * 500) + "]}"

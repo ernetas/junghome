@@ -3,32 +3,21 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     snapshot_platform,
 )
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.light import (
     DEFAULT_MAX_KELVIN,
     DEFAULT_MIN_KELVIN,
     JungHomeLight,
 )
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import bare_coordinator
 
 
 def _color_light(
@@ -263,7 +252,7 @@ async def test_light_external_change_applied(
 
 async def test_light_value_extractors_are_defensive(hass: HomeAssistant) -> None:
     """The light value extractors tolerate missing/garbage datapoints."""
-    light = _color_light(_bare_coordinator(hass))
+    light = _color_light(bare_coordinator(hass))
     # Missing datapoint -> safe defaults (0 / None), never an exception.
     assert light._get_brightness_from_datapoint(None) == 0
     assert light._get_color_temp_from_datapoint(None) is None
@@ -291,7 +280,7 @@ async def test_light_set_without_datapoints_warns_and_noops(
     hass: HomeAssistant,
 ) -> None:
     """Setting brightness/colour-temp on a light lacking those datapoints no-ops."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {
         "id": "o",
         "type": "OnOff",
@@ -316,7 +305,7 @@ async def test_light_set_without_datapoints_warns_and_noops(
 
 async def test_brightness_floor_keeps_dim_on(hass: HomeAssistant) -> None:
     """A non-zero HA brightness never rounds to device raw 0 (which reads as off)."""
-    light = _color_light(_bare_coordinator(hass))
+    light = _color_light(bare_coordinator(hass))
     assert light._ha_to_raw_brightness(0) == 0
     # round(1 * 100 / 255) == 0 without the floor; the floor keeps it on at 1.
     assert light._ha_to_raw_brightness(1) == 1
@@ -347,7 +336,7 @@ async def test_dimmer_brightness_command(hass: HomeAssistant, init_integration) 
 
 async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) -> None:
     """Out-of-range gateway values are clamped to HA's contracts."""
-    light = _color_light(_bare_coordinator(hass))
+    light = _color_light(bare_coordinator(hass))
     # Device brightness 150 (>100) would scale to 383; clamp to 255.
     assert (
         light._get_brightness_from_datapoint(
@@ -389,7 +378,7 @@ async def test_light_ignores_any_gateway_advertised_color_temp_range(
     disconnected, so wiring it up has to be a deliberate change with a capture
     behind it rather than something that drifts in.
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator.groups = [
         {
             "id": "g1",
@@ -412,7 +401,7 @@ async def test_light_color_temp_range_uses_module_defaults(
     hass: HomeAssistant,
 ) -> None:
     """Every group shape leaves the module defaults in place, valid or not."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     for groups in (
         [],  # no groups known yet
         [{"id": "g1", "name": "Living room"}],  # group without the capability
@@ -435,7 +424,7 @@ async def test_light_color_temp_range_uses_module_defaults(
 
 async def test_light_clamps_reads_to_the_module_defaults(hass: HomeAssistant) -> None:
     """Reads clamp to the module defaults, which is the only range in play."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     light = _color_light(coordinator, color_temp="9000")
     assert light.color_temp_kelvin == DEFAULT_MAX_KELVIN
     assert (
@@ -458,7 +447,7 @@ async def test_colortemp_light_without_brightness(hass: HomeAssistant) -> None:
     Regression guard: the color_temp init used to be gated on _has_brightness, so
     such a device advertised COLOR_TEMP yet reported color_temp_kelvin == None.
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {
         "id": "ct",
         "type": "ColorLight",
@@ -513,7 +502,7 @@ async def test_decimal_brightness_is_parsed(
     through to brightness 0, showing the lamp at 0 % with nothing logged. Cover,
     climate and sensor all parse via float(); this brings light into line.
     """
-    light = _color_light(_bare_coordinator(hass), brightness=raw)
+    light = _color_light(bare_coordinator(hass), brightness=raw)
     assert light.brightness == round(expected_pct * 255 / 100)
 
 
@@ -522,7 +511,7 @@ async def test_unparseable_brightness_falls_back_to_zero(
     hass: HomeAssistant, raw: str
 ) -> None:
     """Genuinely unusable values still degrade safely rather than raise."""
-    assert _color_light(_bare_coordinator(hass), brightness=raw).brightness == 0
+    assert _color_light(bare_coordinator(hass), brightness=raw).brightness == 0
 
 
 @pytest.mark.parametrize(("raw", "expected"), [("2700", 2700), ("2700.0", 2700)])
@@ -530,12 +519,12 @@ async def test_decimal_color_temp_is_parsed(
     hass: HomeAssistant, raw: str, expected: int
 ) -> None:
     """A decimal-formatted Kelvin value must not blank the colour temperature."""
-    light = _color_light(_bare_coordinator(hass), color_temp=raw)
+    light = _color_light(bare_coordinator(hass), color_temp=raw)
     assert light.color_temp_kelvin == expected
 
 
 @pytest.mark.parametrize("raw", ["nan", "inf", "abc"])
 async def test_unparseable_color_temp_is_none(hass: HomeAssistant, raw: str) -> None:
     """An unusable Kelvin value yields None rather than raising."""
-    light = _color_light(_bare_coordinator(hass), color_temp=raw)
+    light = _color_light(bare_coordinator(hass), color_temp=raw)
     assert light.color_temp_kelvin is None

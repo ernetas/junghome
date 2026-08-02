@@ -47,17 +47,12 @@ from custom_components.junghome.diagnostics import (
     async_get_device_diagnostics,
 )
 from custom_components.junghome.event import JungHomeEventEntity
-from tests.conftest import DEVICES, PRISTINE_DEVICES, _fake_run_websocket
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import (
+    DEVICES,
+    PRISTINE_DEVICES,
+    _fake_run_websocket,
+    bare_coordinator,
+)
 
 
 async def test_all_entity_types_created(hass: HomeAssistant, init_integration) -> None:
@@ -1017,7 +1012,7 @@ async def test_migration_device_repoint_error_isolated(hass: HomeAssistant) -> N
 
 async def test_area_for_device_resolves_group_name(hass: HomeAssistant) -> None:
     """area_for_device maps parent_groups ids to the group's name (or label)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     coordinator.groups = [{"id": "g1", "name": "Kitchen"}]
     assert (
         coordinator.area_for_device({"id": "d", "parent_groups": ["g1"]}) == "Kitchen"
@@ -1036,7 +1031,7 @@ async def test_color_temp_range_for_device_reads_group_metadata(
     hass: HomeAssistant,
 ) -> None:
     """color_temp_range_for_device resolves the group's advertised Kelvin range."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     device = {"id": "d", "parent_groups": ["g1"]}
     # Both plausible encodings are accepted, and values may be strings.
     coordinator.groups = [
@@ -1176,7 +1171,7 @@ def test_color_temp_range_for_device_first_group_wins(hass: HomeAssistant) -> No
 
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
     """A gateway-side groups failure leaves groups empty and never raises."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with patch.object(
         coordinator,
         "_fetch_groups_from_api",
@@ -1201,7 +1196,7 @@ async def test_async_fetch_groups_lets_unexpected_errors_surface(
     A RuntimeError here is not the gateway being unreachable; it is a defect,
     and swallowing it would hide it behind a debug-level log line forever.
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with (
         patch.object(
             coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=RuntimeError)
@@ -1558,7 +1553,7 @@ async def test_notify_websocket_closed_skips_during_teardown(
     hass: HomeAssistant,
 ) -> None:
     """The disconnect notify fires on a live drop but is muted while stopping."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     with patch.object(coordinator, "async_update_listeners") as notify:
         # A genuine drop notifies listeners so the connectivity sensor flips off.
         coordinator._notify_websocket_closed()

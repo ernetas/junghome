@@ -16,17 +16,7 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
-from tests.conftest import DEVICES, _fake_run_websocket
-
-
-def _bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "h", CONF_TOKEN: "t"})
-    entry.add_to_hass(hass)
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, entry
-    )
-    coordinator.data = []
-    return coordinator
+from tests.conftest import DEVICES, _fake_run_websocket, bare_coordinator
 
 
 def _cover(
@@ -98,7 +88,7 @@ async def test_cover_inverted_awning_position(hass: HomeAssistant) -> None:
     100 when extended ("open"). Inverted, HA reads those as 0/closed and 100/open
     instead of the shutter convention's 100/open and 0/closed.
     """
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
 
     def _awning(level: str) -> JungHomeCover:
         dps = [
@@ -120,7 +110,7 @@ async def test_cover_inverted_awning_position(hass: HomeAssistant) -> None:
 
 async def test_cover_normal_device_class_is_blind(hass: HomeAssistant) -> None:
     """A non-inverted cover keeps the blind device class."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     dps = [{"id": "b-1", "type": "level", "values": [{"key": "level", "value": "0"}]}]
     device = {"id": "b", "type": "Position", "label": "Shutter", "datapoints": dps}
     cover = JungHomeCover(coordinator, device, dps[0])
@@ -129,7 +119,7 @@ async def test_cover_normal_device_class_is_blind(hass: HomeAssistant) -> None:
 
 async def test_cover_inverted_commands_pass_through(hass: HomeAssistant) -> None:
     """Inverted covers send the HA position to the gateway unchanged (no 100-x)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     dps = [{"id": "a-1", "type": "level", "values": [{"key": "level", "value": "0"}]}]
     device = {"id": "a", "type": "Position", "label": "Awning", "datapoints": dps}
     cover = JungHomeCover(coordinator, device, dps[0], inverted=True)
@@ -207,7 +197,7 @@ async def test_cover_position_only_has_no_tilt(hass: HomeAssistant, init_integra
 
 async def test_cover_extractors_defensive(hass: HomeAssistant) -> None:
     """Cover value extractors tolerate missing/garbage datapoints."""
-    cover = _cover(_bare_coordinator(hass))
+    cover = _cover(bare_coordinator(hass))
     assert cover._get_position_from_datapoint(None) is None
     assert cover._get_tilt_from_datapoint(None) is None
     assert (
@@ -255,14 +245,14 @@ async def test_cover_extractors_defensive(hass: HomeAssistant) -> None:
 
 async def test_cover_is_closed_none_when_position_unknown(hass: HomeAssistant) -> None:
     """is_closed is None when the level can't be read."""
-    cover = _cover(_bare_coordinator(hass))
+    cover = _cover(bare_coordinator(hass))
     cover._position = None
     assert cover.is_closed is None
 
 
 async def test_cover_tilt_commands(hass: HomeAssistant) -> None:
     """open/close tilt drive the angle command to 100/0."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     cover = _cover(coordinator)
     with (
         patch.object(coordinator, "set_angle", AsyncMock()) as sa,
@@ -275,7 +265,7 @@ async def test_cover_tilt_commands(hass: HomeAssistant) -> None:
 
 async def test_cover_stop_requests_refresh(hass: HomeAssistant) -> None:
     """Stop sends level_move 0 and re-reads the real position."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     cover = _cover(coordinator)
     with (
         patch.object(coordinator, "move_level", AsyncMock()) as ml,
@@ -288,7 +278,7 @@ async def test_cover_stop_requests_refresh(hass: HomeAssistant) -> None:
 
 async def test_cover_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
     """Cover update writes state even when the device is gone."""
-    cover = _cover(_bare_coordinator(hass))  # coordinator.data is []
+    cover = _cover(bare_coordinator(hass))  # coordinator.data is []
     with patch.object(cover, "async_write_ha_state") as write_state:
         cover._handle_coordinator_update()
     write_state.assert_called_once()
@@ -296,7 +286,7 @@ async def test_cover_handle_update_missing_device_noops(hass: HomeAssistant) -> 
 
 async def test_cover_set_tilt_without_angle_noops(hass: HomeAssistant) -> None:
     """_set_tilt is a no-op on a position-only cover (no angle datapoint)."""
-    coordinator = _bare_coordinator(hass)
+    coordinator = bare_coordinator(hass)
     cover = _cover(coordinator, with_angle=False)
     assert cover._angle_datapoint_id is None
     with patch.object(coordinator, "set_angle", AsyncMock()) as set_angle:
