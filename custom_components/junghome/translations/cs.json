@@ -67,6 +67,7 @@
       "waiting_for_approval": "Schvalte žádost o přístup v aplikaci Jung Home v části Nastavení, Brána, Přístupová oprávnění, Otevřené žádosti."
     },
     "error": {
+      "different_gateway": "Adresa odpovídá, ale patří jiné bráně Jung Home než tento záznam.",
       "invalid_host": "Hostitel není platný.",
       "cannot_connect": "Připojení k bráně se nezdařilo.",
       "invalid_auth": "Brána odmítla heslo síťového klíče.",

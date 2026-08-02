@@ -67,6 +67,7 @@
       "waiting_for_approval": "Keur het toegangsverzoek goed in de Jung Home-app onder Instellingen, Gateway, Toegangsrechten, Openstaande verzoeken."
     },
     "error": {
+      "different_gateway": "Het adres reageert, maar hoort bij een andere Jung Home-gateway dan deze invoer.",
       "invalid_host": "De host is ongeldig.",
       "cannot_connect": "Verbinding maken met de gateway is mislukt.",
       "invalid_auth": "De gateway heeft het netwerksleutelwachtwoord geweigerd.",

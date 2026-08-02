@@ -89,7 +89,7 @@ the gateway's network-key password.
 | GET  | `/scenes/`, `/scenes/{scene_id}` | Scenes. |
 | POST | `/scenes/{scene_id}` | Trigger / recall a scene. |
 | GET  | `/types/functions`, `/types/function_versions`, `/types/datapoints`, `/types/datapoint_versions` | Type/template catalog. |
-| GET  | `/config/`, `/config/types`, `/config/parameter/{parameter}`, `/config/topic/{topic}` | Gateway configuration. |
+| GET  | `/config/`, `/config/types`, `/config/parameter/{parameter}`, `/config/topic/{topic}` | Gateway configuration. `parameter/system_serial` returns the hardware serial as a raw JSON string — the same cpuinfo-derived value the mDNS TXT record advertises (`serial=`); read-only, populated by the middleware shortly after boot (empty string until then), 404 on firmware without it. The integration keys config entries on it. |
 | POST | `/config/` | Update configuration. |
 | GET  | `/products/`, `/products/{uuid}` | Product catalog *(fw 1.5.0+)*. |
 | GET  | `/project/cdb`, `/project/junghome` ; PATCH `/project` | Project / mesh DB export *(fw 1.5.0+)*. |

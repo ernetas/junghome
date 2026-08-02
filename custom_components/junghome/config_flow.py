@@ -17,7 +17,14 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
-from .const import CONF_INVERTED_COVERS, DOMAIN, stable_unique_id
+from .const import (
+    CONF_IDENTITY_ANCHOR,
+    CONF_INVERTED_COVERS,
+    CONF_SERIAL,
+    DOMAIN,
+    entry_anchor,
+    stable_unique_id,
+)
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +60,24 @@ STEP_HOST_PASSWORD_SCHEMA = vol.Schema(
 
 class CannotRegister(Exception):
     """Raised when the gateway does not return a token."""
+
+
+def _serial_from_properties(properties: Mapping[str, Any]) -> str | None:
+    """Extract the gateway hardware serial from mDNS TXT properties.
+
+    The gateway's `_junghome._tcp` service carries `serial=<16 hex>` (verified
+    against the firmware's avahi service definition, alongside `mac=` and
+    `version=`). Returns None when absent/empty so callers can fall back to
+    the legacy hostname keying for firmware that does not advertise it.
+    """
+    raw = properties.get("serial")
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="ignore")
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if raw:
+            return raw
+    return None
 
 
 def _normalize_host(host: str) -> str:
@@ -175,6 +200,9 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # True once the host is known from discovery, so the method steps skip
         # asking for it again.
         self._discovered: bool = False
+        # The gateway hardware serial, when known (mDNS TXT record). Manual
+        # flows learn it over REST at finish time instead.
+        self._serial: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -323,13 +351,42 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_finish(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Create the config entry once a token has been obtained."""
+        """Create the config entry once a token has been obtained.
+
+        With a token in hand this is the first moment a *manual* flow can learn
+        the gateway's hardware serial (REST `config/parameter/system_serial`) —
+        discovery flows already carry it from the mDNS TXT record. When known,
+        the serial becomes the entry's ``unique_id``: it is the only identifier
+        that survives IP changes, re-provisioning and firmware updates, and it
+        is what lets a later discovery update this entry's host and lets
+        reconfigure refuse a different gateway. Firmware that does not expose
+        the serial falls back to the legacy host keying.
+        """
+        serial = self._serial
+        if serial is None and self._host is not None and self._token is not None:
+            serial = await self._async_fetch_serial(self._host, self._token)
+        if serial is not None and serial != self.unique_id:
+            # Typing the address of an already-configured gateway now surfaces
+            # here (the host-based duplicate checks can't see through an IP
+            # change): update that entry's host and bow out.
+            await self.async_set_unique_id(serial)
+            self._abort_if_unique_id_configured(updates={CONF_HOST: self._host})
+        # Freeze the identity anchor at creation (see const.entry_anchor): ids
+        # derived from the entry (hub device, scene scope) must never change,
+        # even if the unique_id is migrated later.
+        data: dict[str, Any] = {
+            CONF_HOST: self._host,
+            CONF_TOKEN: self._token,
+            CONF_IDENTITY_ANCHOR: self.unique_id or self._host,
+        }
+        if serial is not None:
+            data[CONF_SERIAL] = serial
         # Carry the host in the title so two gateways are distinguishable in
         # the entries list (every entry used to be titled just "Jung Home").
         # Existing entries keep their title; this only affects new entries.
         return self.async_create_entry(
             title=f"Jung Home ({self._host})",
-            data={CONF_HOST: self._host, CONF_TOKEN: self._token},
+            data=data,
         )
 
     async def async_step_register_failed(
@@ -439,26 +496,56 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 errors["base"] = probe_error
             else:
-                # Update the stored host and let the `add_update_listener` reload
-                # the entry exactly once (the host change makes its guard pass).
-                # Using async_update_reload_and_abort here would schedule a second,
-                # redundant reload on top of the listener's. The entry keeps its
-                # existing unique_id (the manual host or the zeroconf hostname) so
-                # a later mDNS rediscovery still matches it instead of surfacing a
-                # duplicate.
-                self.hass.config_entries.async_update_entry(
-                    entry, data={**entry.data, CONF_HOST: host}
+                # Identity check: any HTTPS responder passes the reachability
+                # probe, so ask the gateway who it is. A mismatch against the
+                # recorded serial means the address points at a DIFFERENT
+                # gateway — committing it would only surface later as a
+                # confusing reauth, so fail the form now instead.
+                serial = await self._async_fetch_serial(
+                    host, entry.data.get(CONF_TOKEN, "")
                 )
-                # That listener only exists while the entry is loaded — it is
-                # registered on the last line of a successful `async_setup_entry`.
-                # A user reconfiguring a gateway that is failing to set up (the
-                # usual reason to reconfigure) is in SETUP_RETRY, where there is
-                # no listener, so nothing would pick the new host up until HA's
-                # retry timer next fired — up to 10 minutes later. Schedule the
-                # reload explicitly there; it also cancels the pending retry.
-                if entry.state is not ConfigEntryState.LOADED:
-                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
-                return self.async_abort(reason="reconfigure_successful")
+                recorded = entry.data.get(CONF_SERIAL)
+                if recorded and serial and serial != recorded:
+                    errors["base"] = "different_gateway"
+                else:
+                    # An entry with no recorded serial (legacy, or firmware
+                    # without the endpoint) is migrated onto the serial we just
+                    # learned — unless another entry already owns it.
+                    conflict = (
+                        self.hass.config_entries.async_entry_for_domain_unique_id(
+                            DOMAIN, serial
+                        )
+                        if serial is not None
+                        else None
+                    )
+                    if conflict is not None and conflict.entry_id != entry.entry_id:
+                        return self.async_abort(reason="already_configured")
+                    # Update the stored host (and identity, when learned) and
+                    # let the `add_update_listener` reload the entry exactly
+                    # once — async_update_reload_and_abort would schedule a
+                    # second, redundant reload on top of the listener's.
+                    new_data = {**entry.data, CONF_HOST: host}
+                    if serial is not None:
+                        # Freeze the anchor BEFORE the unique_id changes so
+                        # the hub device and scene ids stay put (see
+                        # const.entry_anchor).
+                        new_data.setdefault(CONF_IDENTITY_ANCHOR, entry_anchor(entry))
+                        new_data[CONF_SERIAL] = serial
+                        self.hass.config_entries.async_update_entry(
+                            entry, data=new_data, unique_id=serial
+                        )
+                    else:
+                        self.hass.config_entries.async_update_entry(
+                            entry, data=new_data
+                        )
+                    # The update listener only exists while the entry is loaded.
+                    # A user reconfiguring a gateway that is failing to set up
+                    # (the usual reason to reconfigure) is in SETUP_RETRY, where
+                    # there is no listener — schedule the reload explicitly; it
+                    # also cancels the pending retry timer.
+                    if entry.state is not ConfigEntryState.LOADED:
+                        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                    return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -471,33 +558,99 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf(
         self, discovery_info: ZeroconfServiceInfo
     ) -> ConfigFlowResult:
-        """Handle a gateway discovered via mDNS (_junghome._tcp)."""
+        """Handle a gateway discovered via mDNS (_junghome._tcp).
+
+        The TXT record carries the gateway's hardware serial, which is the
+        preferred ``unique_id``: unlike the hostname or IP it survives network
+        changes and identifies the *device*, so an IP change updates the stored
+        host no matter how the entry was originally added. A discovery that
+        matches an entry still keyed the legacy way (mDNS hostname, or the
+        manually typed host) migrates that entry to the serial in place —
+        freezing its identity anchor first so the hub device and scene ids do
+        not change (see ``const.entry_anchor``).
+        """
         self._host = discovery_info.host
         self._discovered = True
         hostname = (discovery_info.hostname or "").rstrip(".") or self._host
-        # Stable per-gateway id; update the stored host if its IP changed.
-        await self.async_set_unique_id(hostname)
-        # `reload_on_update=False`: the entry's own update listener
-        # (`async_reload_entry`) is what reloads on a host change, which is
-        # exactly what Home Assistant asks integrations that have a listener to
-        # do (it reports the alternative as deprecated, breaking in 2026.12.0).
-        #
-        # This is belt-and-braces rather than a bug fix: today the listener
-        # dispatches synchronously inside `async_update_entry`, so by the time
-        # core re-checks `entry.state` it already reads UNLOAD_IN_PROGRESS and
-        # core's own reload branch never runs. Saying so explicitly keeps that
-        # from depending on listener dispatch order.
-        self._abort_if_unique_id_configured(
-            updates={CONF_HOST: self._host}, reload_on_update=False
-        )
-        # Also skip gateways already added manually under a different unique id.
-        if any(
-            entry.data.get(CONF_HOST) in (self._host, hostname)
-            for entry in self._async_current_entries()
-        ):
-            return self.async_abort(reason="already_configured")
+        self._serial = _serial_from_properties(discovery_info.properties)
+        # `reload_on_update=False` on the aborts below: the entry's own update
+        # listener (`async_reload_entry`) is what reloads on a host change,
+        # which is what Home Assistant asks integrations with a listener to do.
+        # Belt-and-braces: today the listener dispatches synchronously inside
+        # `async_update_entry`, so core's own reload branch never runs anyway.
+        if self._serial is not None:
+            # Serial-keyed entry already configured: refresh its host.
+            await self.async_set_unique_id(self._serial)
+            self._abort_if_unique_id_configured(
+                updates={CONF_HOST: self._host}, reload_on_update=False
+            )
+            # A legacy-keyed entry for this same gateway: adopt it onto the
+            # serial rather than offering a duplicate discovery.
+            legacy = self._async_find_legacy_entry(hostname)
+            if legacy is not None:
+                self._async_migrate_entry_to_serial(legacy, self._serial, self._host)
+                return self.async_abort(reason="already_configured")
+        else:
+            # Firmware without a serial TXT record: legacy hostname keying.
+            await self.async_set_unique_id(hostname)
+            self._abort_if_unique_id_configured(
+                updates={CONF_HOST: self._host}, reload_on_update=False
+            )
+            # Also skip gateways added manually under a different unique id.
+            if any(
+                entry.data.get(CONF_HOST) in (self._host, hostname)
+                for entry in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
         self.context["title_placeholders"] = {"host": hostname}
         return await self.async_step_zeroconf_confirm()
+
+    @callback
+    def _async_find_legacy_entry(self, hostname: str) -> JungHomeConfigEntry | None:
+        """Find an entry for this gateway still keyed by hostname/host.
+
+        Entries carrying a recorded serial are skipped: their identity is
+        known, and if it had matched this discovery the unique_id abort above
+        would already have fired — a serial-keyed entry whose *stale host*
+        happens to equal the discovered address must not be hijacked.
+        """
+        for entry in self._async_current_entries(include_ignore=False):
+            if entry.data.get(CONF_SERIAL):
+                continue
+            if entry.unique_id in (hostname, self._host) or entry.data.get(
+                CONF_HOST
+            ) in (self._host, hostname):
+                return entry
+        return None
+
+    @callback
+    def _async_migrate_entry_to_serial(
+        self, entry: JungHomeConfigEntry, serial: str, host: str
+    ) -> None:
+        """Re-key a legacy entry onto the gateway serial, in place.
+
+        Freezes the entry's current identity anchor into ``entry.data`` BEFORE
+        changing the unique_id, so `gateway_device_id`/`entry_scope` keep
+        producing the exact ids the registry already holds — the hub device
+        and every scene entity survive the migration untouched. The host is
+        refreshed in the same write; the entry's update listener reloads it if
+        the host actually changed.
+        """
+        _LOGGER.info(
+            "Migrating Jung Home entry %s from unique_id %r to gateway serial",
+            entry.entry_id,
+            entry.unique_id,
+        )
+        self.hass.config_entries.async_update_entry(
+            entry,
+            unique_id=serial,
+            data={
+                **entry.data,
+                CONF_IDENTITY_ANCHOR: entry_anchor(entry),
+                CONF_SERIAL: serial,
+                CONF_HOST: host,
+            },
+        )
 
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None
@@ -537,6 +690,35 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.debug("Jung Home gateway probe failed for %s: %s", host, err)
             return "cannot_connect"
+
+    async def _async_fetch_serial(self, host: str, token: str) -> str | None:
+        """Best-effort fetch of the gateway's hardware serial over REST.
+
+        ``GET /config/parameter/system_serial`` returns the raw serial string
+        (the same cpuinfo-derived value the mDNS TXT record advertises; the
+        firmware marks the parameter read-only). Requires a valid token.
+        Returns None on any failure — an unreachable endpoint, older firmware
+        (404), a rejected token, or an empty value (the middleware populates
+        it asynchronously after boot) — so every caller falls back to the
+        legacy host-based keying rather than blocking on identity.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/config/parameter/system_serial"
+        headers = {"token": token}
+        try:
+            async with (
+                asyncio.timeout(PROBE_TIMEOUT),
+                session.get(url, headers=headers) as response,
+            ):
+                if response.status != 200:
+                    return None
+                data = await response.json()
+        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+            _LOGGER.debug("Could not fetch gateway serial from %s: %s", host, err)
+            return None
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        return None
 
     async def _async_register(self) -> str:
         """POST the registration request and return the issued token.

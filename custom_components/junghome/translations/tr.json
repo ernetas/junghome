@@ -67,6 +67,7 @@
       "waiting_for_approval": "Erişim isteğini Jung Home uygulamasında Ayarlar, Ağ Geçidi, Erişim İzinleri, Açık İstekler bölümünden onaylayın."
     },
     "error": {
+      "different_gateway": "Adres yanıt veriyor ancak bu girişten farklı bir Jung Home ağ geçidine ait.",
       "invalid_host": "Sunucu geçerli değil.",
       "cannot_connect": "Ağ geçidine bağlanılamadı.",
       "invalid_auth": "Ağ geçidi, ağ anahtarı parolasını reddetti.",

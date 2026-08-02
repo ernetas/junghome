@@ -67,6 +67,7 @@
       "waiting_for_approval": "Zatwierdź żądanie dostępu w aplikacji Jung Home w sekcji Ustawienia, Bramka, Uprawnienia dostępu, Otwarte żądania."
     },
     "error": {
+      "different_gateway": "Adres odpowiada, ale należy do innej bramy Jung Home niż ten wpis.",
       "invalid_host": "Host jest nieprawidłowy.",
       "cannot_connect": "Nie udało się połączyć z bramką.",
       "invalid_auth": "Bramka odrzuciła hasło klucza sieciowego.",

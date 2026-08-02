@@ -66,12 +66,13 @@ rules:
   discovery-update-info:
     status: done
     comment: >-
-      Honoured for zeroconf-keyed entries (unique_id = mDNS hostname; an IP
-      change updates the stored host). A manually added entry is keyed by the
-      typed host, so an IP change there surfaces as a new discovery instead of
-      an update — fixing that means re-keying entries on the gateway serial
-      from the mDNS TXT record (confirmed present: serial=/mac=/version=),
-      which is tracked as backlog in CLAUDE.md.
+      Entries are keyed on the gateway hardware serial (mDNS TXT record for
+      discovered entries; REST config/parameter/system_serial for manual
+      ones), so a discovery updates the stored host regardless of how the
+      entry was added. Legacy host/hostname-keyed entries are migrated to the
+      serial in place on rediscovery or reconfigure, with their identity
+      anchor frozen first (see const.entry_anchor). Only an entry against
+      firmware that exposes no serial anywhere stays host-keyed.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

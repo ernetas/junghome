@@ -67,6 +67,7 @@
       "waiting_for_approval": "Hagyd jóvá a hozzáférési kérelmet a Jung Home alkalmazásban a Beállítások, Átjáró, Hozzáférési jogosultságok, Nyitott kérelmek menüpontban."
     },
     "error": {
+      "different_gateway": "A cím válaszol, de egy másik Jung Home átjáróhoz tartozik, mint ez a bejegyzés.",
       "invalid_host": "A kiszolgáló érvénytelen.",
       "cannot_connect": "Nem sikerült csatlakozni az átjáróhoz.",
       "invalid_auth": "Az átjáró elutasította a hálózatikulcs-jelszót.",

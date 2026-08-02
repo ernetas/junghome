@@ -67,6 +67,7 @@
       "waiting_for_approval": "Godkjenn tilgangsforespørselen i Jung Home-appen under Innstillinger, Gateway, Tilgangstillatelser, Åpne forespørsler."
     },
     "error": {
+      "different_gateway": "Adressen svarer, men den tilhører en annen Jung Home-gateway enn denne oppføringen.",
       "invalid_host": "Verten er ikke gyldig.",
       "cannot_connect": "Kunne ikke koble til gatewayen.",
       "invalid_auth": "Gatewayen avviste passordet for nettverksnøkkelen.",

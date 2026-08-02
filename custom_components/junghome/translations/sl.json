@@ -67,6 +67,7 @@
       "waiting_for_approval": "Odobrite zahtevo za dostop v aplikaciji Jung Home pod Nastavitve, Prehod, Dovoljenja za dostop, Odprte zahteve."
     },
     "error": {
+      "different_gateway": "Naslov se odziva, vendar pripada drugemu prehodu Jung Home kot ta vnos.",
       "invalid_host": "Gostitelj ni veljaven.",
       "cannot_connect": "Povezava s prehodom ni uspela.",
       "invalid_auth": "Prehod je zavrnil geslo omrežnega ključa.",

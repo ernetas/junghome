@@ -67,6 +67,7 @@
       "waiting_for_approval": "Approuvez la demande d'accès dans l'application Jung Home sous Paramètres, Passerelle, Autorisations d'accès, Demandes ouvertes."
     },
     "error": {
+      "different_gateway": "L'adresse répond, mais elle appartient à une autre passerelle Jung Home que cette entrée.",
       "invalid_host": "L'hôte n'est pas valide.",
       "cannot_connect": "Échec de la connexion à la passerelle.",
       "invalid_auth": "La passerelle a rejeté le mot de passe de la clé réseau.",

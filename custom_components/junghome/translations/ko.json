@@ -67,6 +67,7 @@
       "waiting_for_approval": "Jung Home 앱의 설정, 게이트웨이, 액세스 권한, 대기 중인 요청에서 액세스 요청을 승인하세요."
     },
     "error": {
+      "different_gateway": "해당 주소는 응답하지만 이 항목과 다른 Jung Home 게이트웨이의 것입니다.",
       "invalid_host": "호스트가 유효하지 않습니다.",
       "cannot_connect": "게이트웨이에 연결하지 못했습니다.",
       "invalid_auth": "게이트웨이가 네트워크 키 비밀번호를 거부했습니다.",

@@ -58,6 +58,25 @@ GATEWAY_MODEL = "Gateway"
 # the gateway's function data, so the user marks them here. See cover.py.
 CONF_INVERTED_COVERS = "inverted_covers"
 
+# Entry-data key: the gateway's hardware serial (from the mDNS TXT record or
+# the REST `config/parameter/system_serial` endpoint). Presence of this key
+# means the entry's identity is verified: `unique_id` equals this serial, a
+# rediscovered gateway updates the stored host by serial match, and
+# reconfigure can refuse an address that answers with a *different* serial.
+# Entries created before serial-keying (or against firmware that does not
+# expose the serial) lack it and keep their legacy host/hostname `unique_id`
+# until a discovery or reconfigure migrates them.
+CONF_SERIAL = "serial"
+
+# Entry-data key: the frozen identity anchor for ids derived from the entry
+# itself (the synthetic hub device, scene unique_id scoping — see
+# `entry_anchor`). `gateway_device_id` and `entry_scope` historically anchored
+# on `entry.unique_id`, so re-keying an entry's unique_id (host → serial)
+# would silently re-key the hub device and every scene entity. Freezing the
+# anchor at creation/migration time decouples entry identity (unique_id, may
+# change) from entity identity (anchor, never changes).
+CONF_IDENTITY_ANCHOR = "identity_anchor"
+
 # Entry-data key: the device slugs whose Home Assistant area has already been
 # considered for auto-placement from the gateway's group (room) data.
 #
@@ -103,21 +122,39 @@ def is_presence_quantity(label: str | None, unit: str | None = None) -> bool:
     return any(keyword in text for keyword in _PRESENCE_LABEL_KEYWORDS)
 
 
+def entry_anchor(entry: "ConfigEntry") -> str:
+    """Return the frozen identity anchor for entry-derived ids.
+
+    ``gateway_device_id`` and ``entry_scope`` derive the hub-device identifier
+    and the scene unique_id scope from this. It must NEVER change for an
+    existing entry — changing it re-keys the hub device and every scene
+    entity — which is why it is frozen into ``entry.data`` at creation, and
+    why migrating an entry's ``unique_id`` (legacy host/hostname → gateway
+    serial) freezes the *old* unique_id here first. Entries created before the
+    anchor existed fall back to ``unique_id``/``entry_id``, which reproduces
+    their historical anchor exactly.
+    """
+    anchor = entry.data.get(CONF_IDENTITY_ANCHOR)
+    if isinstance(anchor, str) and anchor:
+        return anchor
+    return entry.unique_id or entry.entry_id
+
+
 def gateway_device_id(entry: "ConfigEntry") -> str:
     """Return the stable identifier for the synthetic gateway (hub) device.
 
     The gateway itself is not one of the gateway's *functions*, so it has no
     device slug from the device list. Give it a fixed, per-entry identifier so
     gateway-level entities (e.g. the connectivity sensor) can share one hub
-    device. Anchored on the entry's ``unique_id`` (the host/mDNS hostname, which
-    survives reconfigure) and falling back to the entry id.
+    device. Anchored on ``entry_anchor`` (frozen at entry creation; survives
+    reconfigure and unique_id migration).
 
     ``__init__._prune_stale_devices`` adds this exact identifier to its live
     set so the hub is never pruned (it never appears in the gateway's device
-    list). The raw host keeps its dots here (unlike a device slug), so a
-    device label cannot normally collide with it.
+    list). A host-based anchor keeps its dots here (unlike a device slug), so
+    a device label cannot normally collide with it.
     """
-    return f"gateway_{entry.unique_id or entry.entry_id}"
+    return f"gateway_{entry_anchor(entry)}"
 
 
 def entry_scope(entry: "ConfigEntry") -> str:
@@ -129,11 +166,11 @@ def entry_scope(entry: "ConfigEntry") -> str:
     entries of an integration, so two gateways each holding a "Movie night"
     scene collided and the second entity was rejected.
 
-    Anchored on the entry's ``unique_id`` (the typed host or the mDNS hostname),
-    which survives a reconfigure, and falling back to the entry id. Same anchor
-    as ``gateway_device_id``.
+    Anchored on ``entry_anchor`` (frozen at entry creation; survives
+    reconfigure and unique_id migration). Same anchor as
+    ``gateway_device_id``.
     """
-    return slugify(entry.unique_id or entry.entry_id)
+    return slugify(entry_anchor(entry))
 
 
 def scene_slug(label: str) -> str:

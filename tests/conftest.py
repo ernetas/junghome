@@ -338,6 +338,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "real_scenes_fetch: let the test run the real _fetch_scenes_from_api "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_serial_fetch: let the test run the real _async_fetch_serial "
+        "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
 
 
 @pytest.fixture(autouse=True)

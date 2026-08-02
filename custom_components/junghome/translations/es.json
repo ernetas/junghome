@@ -67,6 +67,7 @@
       "waiting_for_approval": "Aprueba la solicitud de acceso en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
     },
     "error": {
+      "different_gateway": "La dirección responde, pero pertenece a una puerta de enlace Jung Home distinta de esta entrada.",
       "invalid_host": "El host no es válido.",
       "cannot_connect": "No se pudo conectar con la pasarela.",
       "invalid_auth": "La pasarela rechazó la contraseña de la clave de red.",

@@ -67,6 +67,7 @@
       "waiting_for_approval": "Bestätige die Zugriffsanfrage in der Jung Home App unter Einstellungen, Gateway, Zugriffsberechtigungen, Offene Anfragen."
     },
     "error": {
+      "different_gateway": "Die Adresse antwortet, gehört aber zu einem anderen Jung Home Gateway als dieser Eintrag.",
       "invalid_host": "Der Host ist ungültig.",
       "cannot_connect": "Verbindung zum Gateway fehlgeschlagen.",
       "invalid_auth": "Das Gateway hat das Netzwerkschlüssel-Passwort abgelehnt.",
