@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home-gateway fundet",
-        "description": "Der blev fundet en Jung Home-gateway på {host}. Vælg, hvordan der skal oprettes forbindelse.",
+        "description": "Der blev fundet en Jung Home-gateway på {host} (serienummer {serial}, firmware {version}). Vælg, hvordan der skal oprettes forbindelse.",
         "menu_options": {
           "app_approval": "Godkend forbindelsen i Jung Home-appen",
           "password": "Indtast gatewayens netværksnøglekodeord (opretter forbindelse med det samme)"

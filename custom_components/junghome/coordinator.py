@@ -214,6 +214,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # COMMAND_REPLY_TIMEOUT), so this never accumulates stale entries.
         self._pending_replies: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._next_message_id = 0
+        # While a REST poll is in flight, every pushed datapoint's merged keys
+        # are recorded here (datapoint id -> merged keys) and re-applied over
+        # the poll's snapshot before it is adopted — the snapshot was generated
+        # before the push, so adopting it as-is briefly reverted the pushed
+        # (or command-confirmed) value until the next push or poll healed it.
+        # None outside a poll, so the steady state records nothing. Polls CAN
+        # overlap (DataUpdateCoordinator holds no lock: the 60 s schedule, the
+        # unmatched-push request_refresh and the connect-time resync are
+        # independent), so the dict is shared and refcounted via
+        # `_polls_in_flight` — replacing it per-poll would clobber pushes
+        # recorded for a poll still in flight.
+        self._poll_push_overlay: dict[str, dict[str, Any]] | None = None
+        self._polls_in_flight = 0
         # Bounded log of recent raw WebSocket frames for diagnostics.
         self.ws_frame_log: deque[str] = deque(maxlen=WS_FRAME_LOG_SIZE)
         # Latest raw frame of each type, so the connect-time handshake
@@ -255,6 +268,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def _async_update_data(self) -> list[Device]:
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
+        # Open the push overlay for the duration of the fetch: the response's
+        # snapshot is generated before any push that races it, so those pushes
+        # must win over the snapshot (see _apply_push_overlay). Joined, not
+        # replaced, when another poll already opened it.
+        if self._poll_push_overlay is None:
+            self._poll_push_overlay = {}
+        self._polls_in_flight += 1
         try:
             response = await self._fetch_devices_from_api(
                 self.config["host"], self.config["token"]
@@ -285,11 +305,48 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_key="cannot_connect",
                 translation_placeholders={"error": str(err)},
             ) from err
+        finally:
+            # Leave the overlay open while a concurrent poll is still fetching
+            # (this poll takes a snapshot copy — applied synchronously below,
+            # so the still-recording dict cannot mutate it mid-walk); the last
+            # poll out closes it. On the failure paths above the collected
+            # overlay is simply discarded: there is no snapshot to correct,
+            # and a failed poll leaves `self.data` (with the pushes already
+            # merged in) untouched.
+            self._polls_in_flight -= 1
+            if self._polls_in_flight == 0:
+                overlay = self._poll_push_overlay
+                self._poll_push_overlay = None
+            else:
+                overlay = dict(self._poll_push_overlay or {})
 
         _LOGGER.debug("API Response: %s", response)
+        if overlay:
+            self._apply_push_overlay(response, overlay)
         self._reload_if_device_ids_changed(response)
         # `async_set_updated_data` is automatically called with this.
         return response
+
+    @staticmethod
+    def _apply_push_overlay(
+        devices: list[Device], overlay: dict[str, dict[str, Any]]
+    ) -> None:
+        """Re-apply pushes that raced an in-flight poll over its snapshot.
+
+        A push reflects a state change the poll's snapshot may predate, and
+        every gateway-side change emits a push — so for the datapoints it
+        covers, the overlay always holds a value at least as fresh as the
+        snapshot's. Without this, adopting the snapshot briefly reverted a
+        value pushed (or confirmed back to a command) during the fetch, until
+        the next push or poll set it right again. The key-by-key update
+        mirrors the live merge in ``_handle_websocket_message`` exactly.
+        """
+        for device in devices:
+            for datapoint in device.get("datapoints", []):
+                dp_id = datapoint.get("id")
+                if not dp_id or dp_id not in overlay:
+                    continue
+                cast("dict[str, Any]", datapoint).update(overlay[dp_id])
 
     def _reload_if_device_ids_changed(self, devices: list[Device]) -> None:
         """Reload the entry if the gateway regenerated its device ids.
@@ -868,6 +925,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     "Received WebSocket message without datapoint_id: %s", message
                 )
                 return
+            if self._poll_push_overlay is not None:
+                # A REST poll is in flight; record this push so the poll's
+                # (older) snapshot cannot revert it. Recorded before the match
+                # loop below on purpose: an unmatched push usually belongs to a
+                # device the in-flight poll is about to discover, and its
+                # snapshot values may predate this push just the same.
+                overlay = self._poll_push_overlay.setdefault(datapoint_id, {})
+                for key, value in data.items():
+                    if key != "id":
+                        overlay[key] = value
             updated = False
             for device in self.data or []:
                 for datapoint in device.get("datapoints", []):

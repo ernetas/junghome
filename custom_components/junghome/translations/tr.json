@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home ağ geçidi bulundu",
-        "description": "{host} adresinde bir Jung Home ağ geçidi bulundu. Nasıl bağlanmak istediğinizi seçin.",
+        "description": "{host} adresinde bir Jung Home ağ geçidi bulundu (seri numarası {serial}, donanım yazılımı {version}). Nasıl bağlanmak istediğinizi seçin.",
         "menu_options": {
           "app_approval": "Bağlantıyı Jung Home uygulamasında onaylayın",
           "password": "Ağ geçidinin ağ anahtarı parolasını girin (anında bağlanır)"

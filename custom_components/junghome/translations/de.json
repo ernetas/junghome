@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home Gateway gefunden",
-        "description": "Unter {host} wurde ein Jung Home Gateway gefunden. Wähle aus, wie die Verbindung hergestellt werden soll.",
+        "description": "Unter {host} wurde ein Jung Home Gateway gefunden (Seriennummer {serial}, Firmware {version}). Wähle aus, wie die Verbindung hergestellt werden soll.",
         "menu_options": {
           "app_approval": "Verbindung in der Jung Home App bestätigen",
           "password": "Netzwerkschlüssel-Passwort des Gateways eingeben (verbindet sofort)"

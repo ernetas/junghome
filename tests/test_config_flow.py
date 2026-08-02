@@ -287,13 +287,45 @@ _SERIAL_TXT = {
 
 
 async def test_zeroconf_discovery_starts_confirm(hass: HomeAssistant) -> None:
-    """A discovered gateway offers a menu of connection methods."""
+    """A discovered gateway offers a menu of connection methods.
+
+    Without TXT identity records (pre-serial firmware), the serial/version
+    placeholders fall back to a locale-neutral dash rather than rendering an
+    empty gap in the dialog sentence.
+    """
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info()
     )
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "zeroconf_confirm"
     assert set(result["menu_options"]) == {"app_approval", "password"}
+    assert result["description_placeholders"] == {
+        "host": "1.2.3.4",
+        "serial": "—",
+        "version": "—",
+    }
+
+
+async def test_zeroconf_confirm_shows_serial_and_firmware(
+    hass: HomeAssistant,
+) -> None:
+    """The confirm dialog names the gateway it is about (serial + firmware).
+
+    Both TXT records are advertised by every captured firmware generation
+    (2.0.0 and 2.1.3 avahi service definitions), so a multi-gateway household
+    can tell which gateway a discovery belongs to before approving it.
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(properties=_SERIAL_TXT),
+    )
+    assert result["type"] == FlowResultType.MENU
+    assert result["description_placeholders"] == {
+        "host": "1.2.3.4",
+        "serial": "0000000084fb4b1b",
+        "version": "2.1.3 Release (2840)",
+    }
 
 
 async def test_zeroconf_confirm_app_approval_prefills_host(

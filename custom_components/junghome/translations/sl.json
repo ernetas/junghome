@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Odkrit prehod Jung Home",
-        "description": "Na naslovu {host} je bil najden prehod Jung Home. Izberite način povezave.",
+        "description": "Na naslovu {host} je bil najden prehod Jung Home (serijska številka {serial}, strojna programska oprema {version}). Izberite način povezave.",
         "menu_options": {
           "app_approval": "Odobri povezavo v aplikaciji Jung Home",
           "password": "Vnesi geslo omrežnega ključa prehoda (poveže se takoj)"

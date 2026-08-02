@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home ゲートウェイを検出しました",
-        "description": "{host} で Jung Home ゲートウェイが見つかりました。接続方法を選択してください。",
+        "description": "{host} で Jung Home ゲートウェイが見つかりました（シリアル番号: {serial}、ファームウェア: {version}）。接続方法を選択してください。",
         "menu_options": {
           "app_approval": "Jung Home アプリで接続を承認する",
           "password": "ゲートウェイのネットワークキーのパスワードを入力する（すぐに接続します）"

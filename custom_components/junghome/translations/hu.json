@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home átjáró található",
-        "description": "A(z) {host} címen Jung Home átjáró található. Válaszd ki, hogyan szeretnél csatlakozni.",
+        "description": "A(z) {host} címen Jung Home átjáró található (sorozatszám: {serial}, firmware: {version}). Válaszd ki, hogyan szeretnél csatlakozni.",
         "menu_options": {
           "app_approval": "A kapcsolat jóváhagyása a Jung Home alkalmazásban",
           "password": "Az átjáró hálózatikulcs-jelszavának megadása (azonnal csatlakozik)"

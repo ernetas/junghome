@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Jung Home -yhdyskäytävä löytyi",
-        "description": "Osoitteesta {host} löytyi Jung Home -yhdyskäytävä. Valitse, miten haluat yhdistää.",
+        "description": "Osoitteesta {host} löytyi Jung Home -yhdyskäytävä (sarjanumero {serial}, laiteohjelmisto {version}). Valitse, miten haluat yhdistää.",
         "menu_options": {
           "app_approval": "Hyväksy yhteys Jung Home -sovelluksessa",
           "password": "Anna yhdyskäytävän verkkoavaimen salasana (yhdistää heti)"
