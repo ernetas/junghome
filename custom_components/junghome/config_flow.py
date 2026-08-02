@@ -62,6 +62,22 @@ class CannotRegister(Exception):
     """Raised when the gateway does not return a token."""
 
 
+def _txt_property(properties: Mapping[str, Any], key: str) -> str | None:
+    """Extract one string mDNS TXT property, or None when absent/empty.
+
+    zeroconf hands TXT values through as str or bytes depending on the
+    resolver path, so both are tolerated.
+    """
+    raw = properties.get(key)
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="ignore")
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if raw:
+            return raw
+    return None
+
+
 def _serial_from_properties(properties: Mapping[str, Any]) -> str | None:
     """Extract the gateway hardware serial from mDNS TXT properties.
 
@@ -70,14 +86,7 @@ def _serial_from_properties(properties: Mapping[str, Any]) -> str | None:
     `version=`). Returns None when absent/empty so callers can fall back to
     the legacy hostname keying for firmware that does not advertise it.
     """
-    raw = properties.get("serial")
-    if isinstance(raw, bytes):
-        raw = raw.decode(errors="ignore")
-    if isinstance(raw, str):
-        raw = raw.strip()
-        if raw:
-            return raw
-    return None
+    return _txt_property(properties, "serial")
 
 
 def _normalize_host(host: str) -> str:
@@ -203,6 +212,10 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # The gateway hardware serial, when known (mDNS TXT record). Manual
         # flows learn it over REST at finish time instead.
         self._serial: str | None = None
+        # The gateway firmware version from the same TXT record; shown in the
+        # discovery confirm dialog so multi-gateway households can tell which
+        # gateway they are approving. Display-only, never part of identity.
+        self._txt_version: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -573,6 +586,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered = True
         hostname = (discovery_info.hostname or "").rstrip(".") or self._host
         self._serial = _serial_from_properties(discovery_info.properties)
+        self._txt_version = _txt_property(discovery_info.properties, "version")
         # `reload_on_update=False` on the aborts below: the entry's own update
         # listener (`async_reload_entry`) is what reloads on a host change,
         # which is what Home Assistant asks integrations with a listener to do.
@@ -655,11 +669,21 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Let the user choose how to connect to the discovered gateway."""
+        """Let the user choose how to connect to the discovered gateway.
+
+        The serial and firmware version come from the discovery TXT record
+        (every captured firmware generation advertises both) and let a
+        multi-gateway household tell which gateway this dialog is about. The
+        "—" fallback is defensive, for firmware that omits the record.
+        """
         return self.async_show_menu(
             step_id="zeroconf_confirm",
             menu_options=["app_approval", "password"],
-            description_placeholders={"host": self._host or ""},
+            description_placeholders={
+                "host": self._host or "",
+                "serial": self._serial or "—",
+                "version": self._txt_version or "—",
+            },
         )
 
     async def _async_probe_host(self, host: str, token: str) -> str | None:

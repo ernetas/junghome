@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Gateway Jung Home rilevato",
-        "description": "È stato trovato un gateway Jung Home su {host}. Scegli come connetterti.",
+        "description": "È stato trovato un gateway Jung Home su {host} (numero di serie {serial}, firmware {version}). Scegli come connetterti.",
         "menu_options": {
           "app_approval": "Approva la connessione nell'app Jung Home",
           "password": "Inserisci la password della chiave di rete del gateway (connette immediatamente)"

@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Gateway Jung Home descoperit",
-        "description": "A fost găsit un gateway Jung Home la {host}. Alege modul de conectare.",
+        "description": "A fost găsit un gateway Jung Home la {host} (număr de serie {serial}, firmware {version}). Alege modul de conectare.",
         "menu_options": {
           "app_approval": "Aprobă conexiunea în aplicația Jung Home",
           "password": "Introdu parola cheii de rețea a gateway-ului (se conectează imediat)"

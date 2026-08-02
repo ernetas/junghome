@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "S'ha detectat una passarel·la Jung Home",
-        "description": "S'ha trobat una passarel·la Jung Home a {host}. Tria com vols connectar-t'hi.",
+        "description": "S'ha trobat una passarel·la Jung Home a {host} (número de sèrie {serial}, microprogramari {version}). Tria com vols connectar-t'hi.",
         "menu_options": {
           "app_approval": "Aprova la connexió a l'aplicació Jung Home",
           "password": "Introdueix la contrasenya de la clau de xarxa de la passarel·la (es connecta a l'instant)"

@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Passerelle Jung Home découverte",
-        "description": "Une passerelle Jung Home a été trouvée à l'adresse {host}. Choisissez le mode de connexion.",
+        "description": "Une passerelle Jung Home a été trouvée à l'adresse {host} (numéro de série {serial}, micrologiciel {version}). Choisissez le mode de connexion.",
         "menu_options": {
           "app_approval": "Approuver la connexion dans l'application Jung Home",
           "password": "Saisir le mot de passe de la clé réseau de la passerelle (connexion immédiate)"

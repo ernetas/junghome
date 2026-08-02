@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Pasarela Jung Home detectada",
-        "description": "Se ha encontrado una pasarela Jung Home en {host}. Elige cómo conectarte.",
+        "description": "Se ha encontrado una pasarela Jung Home en {host} (número de serie {serial}, firmware {version}). Elige cómo conectarte.",
         "menu_options": {
           "app_approval": "Aprobar la conexión en la aplicación Jung Home",
           "password": "Introducir la contraseña de la clave de red de la pasarela (conecta al instante)"

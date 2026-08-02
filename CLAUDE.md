@@ -237,5 +237,3 @@ them without new evidence wastes a session.
   and the next poll heals it.
 - **Reusable JSON device/API fixtures** (`tests/fixtures/`); tests build
   device dicts inline.
-- **Richer `zeroconf_confirm`** — show serial/model in the confirm dialog for
-  multi-gateway networks.

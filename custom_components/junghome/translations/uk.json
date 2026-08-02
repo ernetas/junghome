@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Виявлено шлюз Jung Home",
-        "description": "За адресою {host} виявлено шлюз Jung Home. Виберіть спосіб підключення.",
+        "description": "За адресою {host} виявлено шлюз Jung Home (серійний номер {serial}, прошивка {version}). Виберіть спосіб підключення.",
         "menu_options": {
           "app_approval": "Підтвердити підключення в застосунку Jung Home",
           "password": "Ввести пароль мережевого ключа шлюзу (підключення відбудеться одразу)"

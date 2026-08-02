@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Aptiktas „Jung Home“ tinklų sietuvas",
-        "description": "Adresu {host} rastas „Jung Home“ tinklų sietuvas. Pasirinkite, kaip prisijungti.",
+        "description": "Adresu {host} rastas „Jung Home“ tinklų sietuvas (serijos numeris {serial}, programinė įranga {version}). Pasirinkite, kaip prisijungti.",
         "menu_options": {
           "app_approval": "Patvirtinti ryšį „Jung Home“ programėlėje",
           "password": "Įvesti sietuvo tinklo rakto slaptažodį (prisijungiama iš karto)"

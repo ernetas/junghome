@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Wykryto bramkę Jung Home",
-        "description": "Znaleziono bramkę Jung Home pod adresem {host}. Wybierz sposób połączenia.",
+        "description": "Znaleziono bramkę Jung Home pod adresem {host} (numer seryjny {serial}, oprogramowanie {version}). Wybierz sposób połączenia.",
         "menu_options": {
           "app_approval": "Zatwierdź połączenie w aplikacji Jung Home",
           "password": "Wprowadź hasło klucza sieciowego bramki (łączy natychmiast)"

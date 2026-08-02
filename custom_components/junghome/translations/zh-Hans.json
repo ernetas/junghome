@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "已发现 Jung Home 网关",
-        "description": "在 {host} 发现了一个 Jung Home 网关。请选择连接方式。",
+        "description": "在 {host} 发现了一个 Jung Home 网关（序列号：{serial}，固件：{version}）。请选择连接方式。",
         "menu_options": {
           "app_approval": "在 Jung Home 应用中批准连接",
           "password": "输入网关的网络密钥密码（立即连接）"

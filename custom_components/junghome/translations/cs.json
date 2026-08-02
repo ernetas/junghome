@@ -4,7 +4,7 @@
     "step": {
       "zeroconf_confirm": {
         "title": "Nalezena brána Jung Home",
-        "description": "Na adrese {host} byla nalezena brána Jung Home. Zvolte způsob připojení.",
+        "description": "Na adrese {host} byla nalezena brána Jung Home (sériové číslo {serial}, firmware {version}). Zvolte způsob připojení.",
         "menu_options": {
           "app_approval": "Schválit připojení v aplikaci Jung Home",
           "password": "Zadat heslo síťového klíče brány (připojí se okamžitě)"
