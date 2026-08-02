@@ -147,7 +147,10 @@ instead of re-deriving:
   in `config.json`) rather than the gateway's specific error text. Do not try
   to attribute an uncorrelated `error:` frame to whichever command is
   in-flight — with concurrent commands from different entities that would
-  misattribute someone else's failure.
+  misattribute someone else's failure. The reply only ever arrives on the
+  session that sent the command (`socket.send`, not a broadcast), so the
+  `_run_websocket` finally block fails all in-flight futures (`cannot_send`)
+  the moment the session ends — never leave them to sit out the timeout.
 
 ## Conventions
 

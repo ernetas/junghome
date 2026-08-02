@@ -242,6 +242,41 @@ async def test_uncorrelated_error_frame_does_not_resolve_a_pending_command(
     assert exc_info.value.translation_key == "command_timeout"
 
 
+async def test_ws_drop_fails_inflight_commands_immediately(
+    hass: HomeAssistant,
+) -> None:
+    """A dropped session fails in-flight commands now, not after the timeout.
+
+    The gateway replies only to the socket that carried the request, so once
+    the session is gone the confirmation can never arrive — waiting out
+    COMMAND_REPLY_TIMEOUT would stall the service call (and entry unload) for
+    the full 5 s and then blame the wrong thing ("did not confirm in time"
+    instead of the connection loss).
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws  # accepts the send, never produces a reply
+
+    task = asyncio.ensure_future(coordinator.turn_on_switch("dp-1"))
+    await asyncio.sleep(0)  # let the send land and register the future
+    assert len(coordinator._pending_replies) == 1
+
+    # An already-settled future (reply raced the drop) must be left alone.
+    done_future: asyncio.Future[dict] = hass.loop.create_future()
+    done_future.set_result({})
+    coordinator._pending_replies["ha-done"] = done_future
+
+    # No COMMAND_REPLY_TIMEOUT patch: the point is that this does NOT wait.
+    coordinator._fail_pending_replies()
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await task
+    assert exc_info.value.translation_key == "cannot_send"
+    assert done_future.result() == {}  # untouched by the sweep
+    coordinator._pending_replies.pop("ha-done")
+    assert coordinator._pending_replies == {}
+
+
 async def test_concurrent_commands_do_not_cross_resolve(hass: HomeAssistant) -> None:
     """Two in-flight commands get distinct message_ids; replying to one must
     not resolve the other."""

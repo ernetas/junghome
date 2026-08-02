@@ -652,6 +652,28 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             },
         )
 
+    def _fail_pending_replies(self) -> None:
+        """Fail every in-flight command the moment its WebSocket session ends.
+
+        The gateway sends a command's reply only to the socket that carried the
+        request (``socket.send`` in ``websocket-server-service.js``), so once
+        this session is gone the reply can never arrive — not even after a
+        reconnect. Without this, each in-flight command sat out the full
+        ``COMMAND_REPLY_TIMEOUT`` and then reported "did not confirm in time"
+        when the truthful error is the connection loss (``cannot_send``, the
+        same error an immediately-detected dead socket raises) — and an entry
+        unload with a command in flight stalled the same way. Futures that are
+        already done (reply raced the drop, or the timeout fired) are left
+        alone; each command's ``finally`` still pops its own entry.
+        """
+        for future in self._pending_replies.values():
+            if not future.done():
+                future.set_exception(
+                    HomeAssistantError(
+                        translation_domain=DOMAIN, translation_key="cannot_send"
+                    )
+                )
+
     def _resolve_pending_reply(self, message_id: str, reply_data: Any) -> None:
         """Resolve the future a command is awaiting, if `message_id` matches one.
 
@@ -769,6 +791,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 cancel_stable()
                 self.websocket = None
                 self.ws_connected = False
+                self._fail_pending_replies()
                 self._notify_websocket_closed()
 
     @callback
@@ -1136,6 +1159,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 async with asyncio.timeout(COMMAND_REPLY_TIMEOUT):
                     await future
             except TimeoutError as err:
+                # Named here so it can be paired with the gateway's own
+                # uncorrelated "error: ..." WARNING (logged by the message-frame
+                # branch), which is the usual reason the reply never came.
+                _LOGGER.warning(
+                    "Jung Home gateway did not confirm the %s command for %s "
+                    "within %s s",
+                    dp_type,
+                    datapoint_id,
+                    COMMAND_REPLY_TIMEOUT,
+                )
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="command_timeout"
                 ) from err
