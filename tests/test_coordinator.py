@@ -127,8 +127,16 @@ async def test_cover_climate_command_payloads(hass: HomeAssistant) -> None:
             "id": "dev",
             "label": "Dev",
             "datapoints": [
-                {"id": "dp-1", "type": "level", "values": [{"key": "level", "value": "0"}]},
-                {"id": "dp-2", "type": "angle", "values": [{"key": "angle", "value": "0"}]},
+                {
+                    "id": "dp-1",
+                    "type": "level",
+                    "values": [{"key": "level", "value": "0"}],
+                },
+                {
+                    "id": "dp-2",
+                    "type": "angle",
+                    "values": [{"key": "angle", "value": "0"}],
+                },
                 {
                     "id": "dp-3",
                     "type": "temperature_ctrl",
@@ -201,9 +209,7 @@ async def test_command_times_out_when_gateway_never_replies(
     coordinator.websocket = ws  # accepts the send, never produces a reply
 
     with (
-        patch(
-            "custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01
-        ),
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
         pytest.raises(HomeAssistantError) as exc_info,
     ):
         await coordinator.turn_on_switch("dp-1")
@@ -233,9 +239,7 @@ async def test_uncorrelated_error_frame_does_not_resolve_a_pending_command(
     ws.send_str.side_effect = _send_then_inject_error
 
     with (
-        patch(
-            "custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01
-        ),
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
         pytest.raises(HomeAssistantError) as exc_info,
     ):
         await coordinator.turn_on_switch("dp-1")
@@ -295,8 +299,16 @@ async def test_concurrent_commands_do_not_cross_resolve(hass: HomeAssistant) -> 
             "id": "dev1",
             "label": "L",
             "datapoints": [
-                {"id": "dp-a", "type": "switch", "values": [{"key": "switch", "value": "0"}]},
-                {"id": "dp-b", "type": "switch", "values": [{"key": "switch", "value": "0"}]},
+                {
+                    "id": "dp-a",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                },
+                {
+                    "id": "dp-b",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                },
             ],
         }
     ]

@@ -234,7 +234,11 @@ def _auto_reply_to_datapoint_commands(
         message_id = sent.get("message_id")
         if sent.get("type") == "datapoint" and message_id:
             reply = json.dumps(
-                {"type": "datapoint", "data": sent.get("data"), "message_id": message_id}
+                {
+                    "type": "datapoint",
+                    "data": sent.get("data"),
+                    "message_id": message_id,
+                }
             )
             coordinator._dispatch_text_frame(reply)
 

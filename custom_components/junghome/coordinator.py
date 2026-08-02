@@ -1206,7 +1206,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def set_brightness(self, datapoint_id: str, brightness: int) -> None:
         """Set the brightness of the light."""
         await self._send_datapoint_command(
-            datapoint_id, "brightness", [{"key": "brightness", "value": str(brightness)}]
+            datapoint_id,
+            "brightness",
+            [{"key": "brightness", "value": str(brightness)}],
         )
 
     async def set_color_temp(self, datapoint_id: str, color_temp: int) -> None:
