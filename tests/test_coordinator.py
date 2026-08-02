@@ -60,6 +60,124 @@ async def test_update_raises_update_failed_on_client_error(hass: HomeAssistant) 
         await coordinator._async_update_data()
 
 
+def _switch_device(value: str) -> dict:
+    """One device with a single switch datapoint at the given value."""
+    return {
+        "id": "dev1",
+        "label": "Lamp",
+        "datapoints": [
+            {
+                "id": "dp-1",
+                "type": "switch",
+                "values": [{"key": "switch", "value": value}],
+            },
+            # A malformed id-less datapoint: the overlay application must skip
+            # it rather than raise.
+            {"type": "switch", "values": []},
+        ],
+    }
+
+
+async def test_push_during_poll_wins_over_the_stale_snapshot(
+    hass: HomeAssistant,
+) -> None:
+    """A push landing mid-poll must not be reverted by the poll's snapshot.
+
+    The REST snapshot is generated before a push that races the response, so
+    adopting it as-is briefly rolled the pushed value back until the next
+    push or poll healed it (the switch visibly flicked off and on again).
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [_switch_device("0")]  # snapshot predating the push
+
+    with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        # The light is switched on while the poll is in flight.
+        coordinator._handle_websocket_message(
+            {
+                "type": "datapoint",
+                "data": {"id": "dp-1", "values": [{"key": "switch", "value": "1"}]},
+            }
+        )
+        release_fetch.set()
+        result = await poll
+
+    assert result[0]["datapoints"][0]["values"] == [{"key": "switch", "value": "1"}]
+    # The overlay is closed once the poll completes; later pushes with no poll
+    # in flight are not recorded anywhere.
+    assert coordinator._poll_push_overlay is None
+
+
+async def test_push_for_a_device_the_poll_discovers_survives_it(
+    hass: HomeAssistant,
+) -> None:
+    """An unmatched push (brand-new device) still wins over the discovering poll.
+
+    The push arrives before the poll has ever seen the device, so there is no
+    stored datapoint to merge into — but the poll's snapshot of that new
+    device may predate the push just the same.
+
+    This doubles as the overlapping-polls regression: the unmatched push
+    immediately triggers a second refresh (request_refresh, immediate
+    debounce) while the first poll is still fetching. The overlay is shared
+    and refcounted across both; a naive per-poll dict was clobbered by the
+    second poll opening it, losing the recorded push.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []  # the device is not known yet
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [_switch_device("0")]
+
+    with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        coordinator._handle_websocket_message(
+            {
+                "type": "datapoint",
+                "data": {"id": "dp-1", "values": [{"key": "switch", "value": "1"}]},
+            }
+        )
+        release_fetch.set()
+        result = await poll
+
+    assert result[0]["datapoints"][0]["values"] == [{"key": "switch", "value": "1"}]
+    # Let the push-triggered second refresh finish, then drain the debouncer
+    # so its timer doesn't linger into teardown. The second refresh is the
+    # last poll out, so it closes the shared overlay.
+    await hass.async_block_till_done()
+    assert coordinator._poll_push_overlay is None
+    assert coordinator._polls_in_flight == 0
+    await coordinator.async_shutdown()
+
+
+async def test_poll_failure_discards_the_push_overlay(hass: HomeAssistant) -> None:
+    """A failed poll closes the overlay: nothing to re-apply, nothing leaks."""
+    coordinator = _coordinator(hass)
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_devices_from_api",
+            side_effect=aiohttp.ClientError("boom"),
+        ),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_update_data()
+    assert coordinator._poll_push_overlay is None
+
+
 async def test_reload_scheduled_when_device_ids_change(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     coordinator._device_ids = {"katilas": "idOLD"}

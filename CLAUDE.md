@@ -129,6 +129,9 @@ instead of re-deriving:
   poll-starvation P0). It sets `last_update_success` + `async_update_listeners`
   instead. The `functions`-broadcast path *does* use `async_set_updated_data`,
   correctly: it carries poll-equivalent data and only arrives on change.
+  Pushes that land while a poll is in flight are recorded and re-applied over
+  the poll's snapshot (`_poll_push_overlay`) — the snapshot predates them, so
+  adopting it as-is briefly reverted pushed/command-confirmed values.
 - **Availability**: entities key off `last_update_success` and never OR in
   `ws_connected` (a stale-True socket flag froze energy readings — issue
   #120); controllable entities additionally require the live WS because
@@ -228,20 +231,11 @@ them without new evidence wastes a session.
   to the target.
 - **Narrow the three broad excepts** in `coordinator.py` (#133): reconnect
   loop, frame-handler catch-all, WS send path.
-- **A REST poll in flight when a push lands can briefly revert the pushed
-  value** (poll snapshot predates the push). Small window, self-heals on the
-  next push/poll.
+- **A `functions` broadcast racing an in-flight poll can be overwritten by
+  the poll's older device list** (the per-datapoint overlay covers values,
+  not membership). Rare — the broadcast only fires on membership change —
+  and the next poll heals it.
 - **Reusable JSON device/API fixtures** (`tests/fixtures/`); tests build
   device dicts inline.
 - **Richer `zeroconf_confirm`** — show serial/model in the confirm dialog for
   multi-gateway networks.
-
-## History
-
-Two full audits (an 11-agent platinum review and a 2026-08-02 line-by-line
-review with disk-dump verification of every firmware claim — all of which
-held) produced the settled-decisions and backlog lists above. The audit
-documents themselves (`CLAUDE-review.md`, `CLAUDE-fable.md`) were local-only
-working files and have been deleted; everything durable from them lives in
-this file, in code comments at the relevant sites, and in the regression
-tests named after the bugs they pinned.
