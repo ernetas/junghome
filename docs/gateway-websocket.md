@@ -206,11 +206,22 @@ A rocker reports **only raw edges** — `"1"` on press, `"0"` on release — on
 There is no native click, double-click or hold. Two properties of the pipeline
 matter for anyone deriving gestures from these frames:
 
-**1. The gateway suppresses unchanged values.** `communicateToAPI`
-(`services/device_state_service.js`) returns early unless the incoming value or
-mode differs from the stored one, so a repeated `"1"` never reaches the
-WebSocket. A `datapoint` frame therefore always represents a genuine
-*transition* as the gateway saw it — the gateway never repeats itself.
+**1. The gateway suppresses a message only when *nothing* changed.**
+`communicateToAPI` (`services/device_state_service.js`) returns early unless
+`hasChanged`, and `hasChanged` is `isNewValue || isNewMode || isNewVisibility`
+(`device-states.js` `update`). A button state carries a **mode** as well as a
+value — `pushed`, `held` or `released` (`ButtonModes`) — so a *mode* change
+alone is enough to emit a frame. Because the API representation of a rocker
+datapoint carries only the value (`composeDatapointByState` adds extra keys for
+quantity/temperature/level datapoints, but not for button ones), **a mode-only
+change appears on the wire as a repeated identical value**. Archived gateway
+logs show exactly that, e.g. `pushed=1 held=1 pushed=0 released=0` — which
+reaches a client as `1, 1, 0, 0`.
+
+> The gateway therefore already classifies a tap versus a hold internally, but
+> **does not expose that classification over the API**. Any integration has to
+> re-derive from raw edge timing something the gateway knew and discarded. If
+> JUNG ever surfaced the mode, native hold detection would become trivial.
 
 **2. The device publishes each edge more than once, so a fast tap produces
 two press/release pairs.** BT-Mesh publish retransmissions carry their own
