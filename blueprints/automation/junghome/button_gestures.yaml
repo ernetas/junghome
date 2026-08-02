@@ -11,13 +11,12 @@ blueprint:
 
     Pick the `event.*` entity (or entities) for one physical button and fill in
     the actions you want for each gesture — leave a gesture empty to ignore it.
-    JUNG sometimes exposes a button as separate `up_request` and `down_request`
-    events. On some firmware, pressing the button echoes a spurious edge onto
-    the sibling channel, which this blueprint would misread as a second click —
-    if that's your gateway, select **only** the one channel that reliably
-    reports every gesture (check with a debug logger first; see
-    docs/example-button-automation.md in the repo). Only select both if your
-    button genuinely alternates channels per press with no echoes.
+    Known limitation on current JUNG device firmware (mid-2026): a quick tap
+    can be reported as TWO press/release pairs on the same channel, which makes
+    a single click indistinguishable from a double click here. If a measured
+    capture shows your buttons doing that (see
+    docs/example-button-automation.md in the repo), leave the double-click
+    action empty and use single + hold — hold detection is unaffected.
   domain: automation
   author: junghome
   source_url: https://github.com/ernetas/junghome/blob/main/blueprints/automation/junghome/button_gestures.yaml
@@ -25,15 +24,14 @@ blueprint:
     button:
       name: Button (event entities)
       description: >
-        The JUNG HOME event entity (or entities) for one physical button. JUNG
-        sometimes splits a single button into `up_request` and `down_request`
-        events. Some firmware echoes a spurious edge onto the sibling channel on
-        every press, which reads as a false second click here — if that's your
-        gateway, select only the one channel that reports every gesture
-        completely. Select both only if your button alternates channels per
-        press with no echoes. Find them under Developer Tools → States, filtered
-        by `event.`; the `event_type` attribute flips between `pressed` and
-        `depressed` when you press.
+        The JUNG HOME event entity (or entities) for one physical button side —
+        a rocker exposes one entity per side (`..._up` / `..._down`); select the
+        side(s) this automation should react to. Find them under Developer
+        Tools → States, filtered by `event.`; the `event_type` attribute flips
+        between `pressed` and `depressed` when you press. Note: on current JUNG
+        device firmware a quick tap can be reported twice on the same channel,
+        which reads as a double-click here — measure your buttons before
+        relying on the double action (docs/example-button-automation.md).
       selector:
         entity:
           multiple: true
@@ -92,8 +90,9 @@ max_exceeded: silent
 # Trigger on ANY change of the selected event entities, then keep only press
 # edges. We deliberately do NOT use `attribute: event_type` / `to: pressed`:
 # an event entity's state is a timestamp, so a `to:`-style trigger silently
-# misses repeated `pressed` event_types (e.g. JUNG alternating up/down), which
-# is what made double-clicks register as singles.
+# misses a repeated `pressed` (consecutive presses on one channel keep the
+# attribute at "pressed"), which is what made double-clicks register as
+# singles.
 triggers:
   - trigger: state
     entity_id: !input button
@@ -116,9 +115,9 @@ conditions:
 
 actions:
   # First press seen. Wait up to the hold time for the NEXT event of any kind.
-  # JUNG alternates a button between its up/down events and can report the second
-  # press *before* the first release, so we react to whatever comes next rather
-  # than assuming a release:
+  # Captured JUNG firmware has reported a second press both before and after
+  # the first release (and current device firmware doubles a tap's edges), so
+  # we react to whatever comes next rather than assuming a release:
   #   - nothing within hold_time  → still held              → HOLD
   #   - another 'pressed'         → a second click          → DOUBLE
   #   - a 'depressed' (release)   → maybe single / slow double → check below

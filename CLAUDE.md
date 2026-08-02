@@ -22,6 +22,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
+- `tools/ws-capture/capture_ws.py` — read-only WS capture + analysis tool.
+  Records frames **with timestamps** and walks the user through a scripted
+  gesture set (`--script rocker` / `cover`), then `analyze` derives per-gesture
+  edge sequences, channel-echo detection and the timing bounds the button
+  blueprint's defaults rest on. This is how the two evidence-blocked backlog
+  items get unblocked; the old `disk_dump/ws-capture*/` dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
   deriving single/double/hold from raw press/release edges. Imported by URL;
   **not** distributed by HACS (HACS only installs `custom_components/`).
@@ -46,8 +52,33 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `Socket` → switch + sensor; `Measurement` → sensor + binary_sensor;
   `Position`/`PositionAndAngle` → cover; `Thermostat` → climate;
   `RockerSwitch` → event + switch (status LED). Rockers report only raw
-  `pressed`/`depressed` edges and alternate between `up_request` and
-  `down_request` on consecutive presses.
+  `pressed`/`depressed` edges (`up_request` / `down_request`, one datapoint
+  per physical side — **not** alternating channels per press; that earlier
+  belief was refuted by a timestamped capture).
+- **On current DEVICE firmware, one tap is reported as TWO press/release
+  pairs — same channel; a hold as ONE.** Labelled capture (2026-08-02, 16
+  taps + 5 holds): tap pulse 0.40–0.53 s (near-constant — the device's
+  reporting granularity, not the finger), hold pulse 2.44–3.11 s, intra-burst
+  gap 0.11–1.03 s. Single vs double click is **indistinguishable** (both = 2
+  identical pairs, overlapping gap ranges); tap vs hold separates perfectly on
+  **pulse width** (5× empty band). **This is a regression**: the gateway's own
+  archived logs (2026-06-20→07-28, ~450 bursts) show 1.00 presses/burst on
+  the same buttons; gateway fw unchanged across the window, JUNG app went
+  2.1.0→2.2.0 (app 2.2.x updates device firmware — issue #66). Mechanism
+  unestablished — do NOT present it as BT-Mesh retransmission (gaps up to
+  1 s refute that); gesture logic must tolerate both one and two pairs per
+  tap. A duplicate-suppression window must be **≥ ~1.2 s** (earlier
+  0.15–0.25 s guidance came from a mis-segmented unlabelled capture —
+  refuted). Evidence + tables in docs/gateway-websocket.md.
+- **Every button gang exposes BOTH `up_request` and `down_request`**, even a
+  single-action one: the firmware's `JungHome_PushButton` model always creates
+  PushedUp + PushedDown + StatusLed states. The gateway knows the difference
+  (a `KeyMode` property) but that is category `manufacturer_property`, which
+  `getDatapointTypeByState` never turns into an API datapoint — and JUNG's own
+  code carries a `// TODO: set visibility here based on mode` for exactly
+  this. So a single-action gang unavoidably gets one dead event entity; there
+  is nothing on the wire to suppress it with. Multi-gang panels report each
+  gang as a **separate function**, hence a separate HA device.
 - A `quantity` datapoint whose label denotes presence/occupancy (empty unit,
   0/1 value — a BWM detector's `Presence Detected`) becomes an **occupancy
   binary_sensor**; other quantities become numeric sensors.
@@ -123,9 +154,10 @@ instead of re-deriving:
   by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
-  changes). Guard every such map with `duplicate_slugs()`; its three current
-  users are `_register_capability_reload`, the device-identifier migration and
-  `_reload_if_device_ids_changed`.
+  changes). Guard every such map with `duplicate_slugs()`; its two current
+  users are `_register_capability_reload` and `_reload_if_device_ids_changed`
+  (the device-identifier migration guards the same hazard differently — a
+  registry `async_get_device` clash check before each write).
 - **Entity naming.** `_attr_has_entity_name = True` with a short `_attr_name`
   (`None` for the device's main feature). The **device** carries the label;
   baking it into the entity name makes HA compose it twice (the old
@@ -343,6 +375,24 @@ or "clean — nothing above P3 survived verification."
   from `level` pushes today. Still needed before building it: a capture of a
   blind actually moving, to learn whether intermediate `level` pushes stream
   during travel (drives whether position can track live or only jump).
+  Capture it with `tools/ws-capture/capture_ws.py capture --script cover`.
+- **Button gesture handling must be rebuilt for double-reporting firmware**
+  — labelled capture done (see the rocker protocol bullet; numbers final).
+  On affected firmware every blueprint path is wrong: single fires twice
+  (or as double when the burst gap lands inside the 0.4 s window), double
+  fires single twice, only hold works. Since single-vs-double is provably
+  unrecoverable there, the plan (user decision pending on the double-click
+  strategy): (1) integration-level duplicate suppression in `event.py` —
+  fire on the FIRST press, ignore a press within ~1.2 s of the previous
+  release on the same datapoint; opt-in via options flow, covers device
+  triggers and hand-written automations, no added latency; (2) derived
+  `click`/`hold` event types classified on pulse width (taps ≤0.53 s, holds
+  ≥2.44 s — clean 5× band), replacing the blueprint's timing gymnastics;
+  (3) keep `double_action` for unaffected firmware, documented as such.
+  First: user checks the JUNG app for the button key-mode / device-fw
+  change and reports the regression upstream — a config fix at source
+  beats all of this. Verify any change on a second rocker before shipping
+  (all measurements so far are one button).
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —

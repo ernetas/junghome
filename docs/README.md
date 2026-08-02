@@ -19,6 +19,10 @@ live local API. None of this is required to *use* the integration.
 - **[matter-bridge.md](matter-bridge.md)** — getting JUNG devices into Matter
   (the gateway's built-in Matter is inactive; bridge from Home Assistant
   instead).
+- **[../tools/ws-capture/](../tools/ws-capture/README.md)** — read-only
+  WebSocket capture + analysis tool: timestamps every frame, walks a scripted
+  gesture session, and reports the per-gesture timings and burst shapes the
+  rocker/cover evidence in these docs comes from.
 
 Quick facts:
 
