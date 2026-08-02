@@ -52,8 +52,30 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `Socket` → switch + sensor; `Measurement` → sensor + binary_sensor;
   `Position`/`PositionAndAngle` → cover; `Thermostat` → climate;
   `RockerSwitch` → event + switch (status LED). Rockers report only raw
-  `pressed`/`depressed` edges and alternate between `up_request` and
-  `down_request` on consecutive presses.
+  `pressed`/`depressed` edges (`up_request` / `down_request`, one datapoint
+  per physical side — **not** alternating channels per press; that earlier
+  belief was refuted by a timestamped capture).
+- **A quick tap can be reported twice, on the same channel.** The device
+  publishes each edge more than once (BT-Mesh retransmissions carry their own
+  sequence numbers) and the gateway only suppresses a repeat whose value has
+  not changed (`communicateToAPI`, gated on `hasChanged`) — so during a *hold*
+  the repeat is swallowed, but after a fast *tap* it lands after the release
+  and is emitted as a fresh press. Measured: the duplicate follows its release
+  by ~0.078 s, while the fastest human gap is ≥0.52 s and an ordinary tap
+  reads as 0.37–0.50 s press-to-release (holds 2.4 s+). It is **intermittent**
+  (once in ~20 gestures in one capture, every tap in another). Consequence: a
+  single click can be indistinguishable from a double, so gesture logic needs
+  a ~0.15–0.25 s cooldown; the shipped blueprint does not yet have one (see
+  Backlog). Evidence + tables in docs/gateway-websocket.md.
+- **Every button gang exposes BOTH `up_request` and `down_request`**, even a
+  single-action one: the firmware's `JungHome_PushButton` model always creates
+  PushedUp + PushedDown + StatusLed states. The gateway knows the difference
+  (a `KeyMode` property) but that is category `manufacturer_property`, which
+  `getDatapointTypeByState` never turns into an API datapoint — and JUNG's own
+  code carries a `// TODO: set visibility here based on mode` for exactly
+  this. So a single-action gang unavoidably gets one dead event entity; there
+  is nothing on the wire to suppress it with. Multi-gang panels report each
+  gang as a **separate function**, hence a separate HA device.
 - A `quantity` datapoint whose label denotes presence/occupancy (empty unit,
   0/1 value — a BWM detector's `Presence Detected`) becomes an **occupancy
   binary_sensor**; other quantities become numeric sensors.
@@ -350,12 +372,18 @@ or "clean — nothing above P3 survived verification."
   blind actually moving, to learn whether intermediate `level` pushes stream
   during travel (drives whether position can track live or only jump).
   Capture it with `tools/ws-capture/capture_ws.py capture --script cover`.
-- **Rocker timing evidence** — the blueprint's `hold_time` (2 s) and
-  `double_click_window` (0.4 s) defaults and the sibling-channel-echo guidance
-  rest on field reports, not measurement; no capture contains a button press
-  (both ws-captures hold only idle `"0"` values). Capture it with
-  `tools/ws-capture/capture_ws.py capture --script rocker`, then `analyze`
-  prints the measured bounds and whether the defaults hold.
+- **Blueprint needs a duplicate-press cooldown** — measurement (see the
+  rocker bullet above) shows a single click can emit a second press ~78 ms
+  after its release, which lands inside the blueprint's 0.4 s
+  `double_click_window` and fires the *double* action for a *single* click.
+  Hold detection is unaffected. Fix: ignore a press arriving within
+  ~0.15–0.25 s of the previous release (docs already describe a
+  `last_triggered` cooldown for hand-written automations). Before changing
+  the shipped defaults, re-capture with `--script rocker` (the **guided**
+  script, so each gesture is labelled — a free-form capture cannot be
+  segmented reliably) and confirm the fastest genuine double-click gap on
+  real hardware, since the 0.4 s window may also be too *short*: the fastest
+  human press-to-press seen so far was 0.52 s.
 - **A `functions` broadcast racing an in-flight poll can be overwritten by
   the poll's older device list** (the per-datapoint overlay covers values,
   not membership). Rare — the broadcast only fires on membership change —

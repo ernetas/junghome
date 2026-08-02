@@ -199,6 +199,80 @@ Common `values` keys by device type:
 > any manually chosen target. The integration maps `""` to HA's `PRESET_NONE`
 > on read and never writes `"none"` (selecting "None" in HA is a local no-op).
 
+### Rocker buttons: what a press actually looks like on the wire
+
+A rocker reports **only raw edges** — `"1"` on press, `"0"` on release — on
+`up_request` / `down_request` (`trigger_request` for a single-action device).
+There is no native click, double-click or hold. Two properties of the pipeline
+matter for anyone deriving gestures from these frames:
+
+**1. The gateway suppresses unchanged values.** `communicateToAPI`
+(`services/device_state_service.js`) returns early unless the incoming value or
+mode differs from the stored one, so a repeated `"1"` never reaches the
+WebSocket. A `datapoint` frame therefore always represents a genuine
+*transition* as the gateway saw it — the gateway never repeats itself.
+
+**2. The device publishes each edge more than once, so a fast tap produces
+two press/release pairs.** BT-Mesh publish retransmissions carry their own
+sequence numbers, so replay protection does not drop them, and they are
+delivered as independent messages. Captured from real hardware (JUNG rocker,
+gateway 2.1.3):
+
+```jsonc
+// ONE physical quick click on the up side:
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
+
+// ONE physical press-and-hold, then release:
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
+```
+
+The asymmetry identifies the mechanism. During a **hold**, the repeat of
+`"1"` lands while the state is still `1` — no change, so rule 1 suppresses it,
+and the gesture yields exactly one pair. During a **quick tap**, the repeat of
+`"1"` lands *after* the first `"0"` has already been applied, so it reads as a
+brand-new press and is emitted. Same for the release repeat. The duplicate is
+on the **same** datapoint id, not the sibling channel.
+
+> **Consequence for gesture logic: a single click and a double click can be
+> byte-identical.** Both produce `1,0,1,0` on one channel. Any rule that treats
+> "a second `pressed` shortly after a release" as a double-click will report a
+> *single* click as a double. The only thing that separates them is the
+> **interval**: retransmission repeats follow the previous edge far faster than
+> a human can tap twice, so a minimum-gap filter is the fix — see the
+> integration note in `docs/example-button-automation.md`.
+
+**Measured on real hardware** (JUNG rocker, gateway 2.1.3, timestamped capture
+of ~20 gestures via `tools/ws-capture/capture_ws.py`):
+
+| Quantity | Observed |
+|---|---|
+| press → release, ordinary tap | 0.37 – 0.50 s |
+| press → release, deliberate hold | 2.38 – 2.51 s |
+| release → duplicate press (the artifact) | **0.078 s** |
+| release → next *human* press | ≥ 0.52 s |
+
+Two things follow. First, the duplicate is an order of magnitude closer to the
+preceding release than any human-produced gap, so a cooldown of roughly
+0.15–0.25 s separates them cleanly. Second, **the duplication is
+intermittent** — it appeared once in ~20 gestures in this capture, while an
+earlier hand-recorded sample showed it on every quick tap. That fits the
+retransmission explanation (whether the repeat lands before or after the
+release depends on radio timing and relaying) and means gesture logic cannot
+assume either behaviour: it must tolerate a duplicate that *may* appear.
+
+Note also that an ordinary tap holds for ~0.4 s as the gateway reports it,
+which is far longer than the physical contact time — so a hold threshold must
+sit well above 0.5 s (the shipped blueprint's 2 s is safe).
+
+Note also that a rocker's press datapoints are **read-only**
+(`writeable: false`, `UserPermission.ReadOnly` in `PushedUpState.js`) — nothing
+can inject a button edge over the API, so duplicated edges always originate at
+the device or the mesh, never from a client.
+
 ### Other command types
 
 | `type` | Behaviour |
