@@ -85,7 +85,11 @@ triggers:
     entity_id: event.living_room_r1_b_up
 conditions:
   - condition: template
-    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: >
+      {{ trigger is defined and trigger.to_state is not none
+         and trigger.from_state is not none
+         and trigger.from_state.state not in ('unavailable', 'unknown')
+         and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 actions:
   - action: light.toggle
     target:
@@ -105,6 +109,15 @@ The `trigger is defined` guard keeps Home Assistant from logging a
 *"'trigger' is undefined"* warning when it renders the condition outside a
 trigger context (e.g. when you save the automation or run it manually).
 
+The `from_state` guard matters just as much: an event entity **restores its
+last state** across a Home Assistant restart, an integration reload and a
+connection loss, so the `unavailable → <restored timestamp>` transition
+re-presents the stored `event_type` — and a button whose last recorded edge
+was `pressed` would toggle your lamp **on its own on every recovery**.
+Requiring a real previous state costs nothing: the first genuine press after
+a recovery still transitions timestamp → timestamp and fires normally. (The
+bundled blueprint applies the same guard.)
+
 > Want it to react to **either** side of the rocker? List both entities under
 > `entity_id:`.
 
@@ -122,8 +135,13 @@ triggers:
   - trigger: state
     entity_id: event.living_room_r1_b_up
 conditions:
+  # Same guards as Recipe 1: a press edge, from a real previous state.
   - condition: template
-    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: >
+      {{ trigger is defined and trigger.to_state is not none
+         and trigger.from_state is not none
+         and trigger.from_state.state not in ('unavailable', 'unknown')
+         and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 actions:
   - if:
       - condition: state
@@ -179,9 +197,15 @@ triggers:
       - event.living_room_r1_b_up
       - event.living_room_r1_b_down
 conditions:
-  # Only start on a press edge; ignore release ('depressed') state changes.
+  # Only start on a press edge — a real one. The from_state guard stops the
+  # restored-state transition after a restart/reload/connection loss from
+  # firing a phantom gesture (see Recipe 1).
   - condition: template
-    value_template: "{{ trigger is defined and trigger.to_state.attributes.event_type == 'pressed' }}"
+    value_template: >
+      {{ trigger is defined and trigger.to_state is not none
+         and trigger.from_state is not none
+         and trigger.from_state.state not in ('unavailable', 'unknown')
+         and trigger.to_state.attributes.get('event_type') == 'pressed' }}
 actions:
   # Wait up to 2 s for the NEXT event of any kind:
   #   nothing      → still held        → HOLD
@@ -195,11 +219,28 @@ actions:
     timeout: "00:00:02"
     continue_on_timeout: true
   - variables:
+      # Same guard as the trigger condition: a recovery landing inside the
+      # hold window must not read as the second press of a double-click.
       evt: >-
-        {{ wait.trigger.to_state.attributes.event_type
-           if wait.trigger is not none else none }}
+        {{ wait.trigger.to_state.attributes.get('event_type')
+           if (wait.trigger is not none and wait.trigger.to_state is not none
+               and wait.trigger.from_state is not none
+               and wait.trigger.from_state.state not in ('unavailable', 'unknown'))
+           else none }}
+      # The entity dropped mid-gesture (connection loss, reload): the press
+      # was never released as far as we can see, so any gesture is a guess.
+      aborted: >-
+        {{ wait.trigger is not none
+           and (wait.trigger.to_state is none
+                or wait.trigger.to_state.state in ('unavailable', 'unknown')) }}
 
   - choose:
+      # ---- ABORT: the entity went unavailable mid-gesture → do nothing ----
+      - conditions:
+          - "{{ aborted }}"
+        sequence:
+          - stop: Button entity became unavailable mid-gesture
+
       # ---- HOLD: nothing arrived in time → still held ----
       - conditions:
           - "{{ wait.trigger is none }}"
@@ -227,11 +268,15 @@ actions:
         timeout: "00:00:00.4"
         continue_on_timeout: true
       - choose:
-          # A second press arrived → DOUBLE
+          # A second press arrived → DOUBLE (same real-previous-state guard,
+          # so a recovery inside the window can't fake it)
           - conditions:
               - >
                 {{ wait.trigger is not none
-                   and wait.trigger.to_state.attributes.event_type == 'pressed' }}
+                   and wait.trigger.to_state is not none
+                   and wait.trigger.from_state is not none
+                   and wait.trigger.from_state.state not in ('unavailable', 'unknown')
+                   and wait.trigger.to_state.attributes.get('event_type') == 'pressed' }}
             sequence:
               - action: notify.pushover
                 data:

@@ -342,7 +342,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # return value before notifying listeners, so the counter is consistent
         # by dispatch time).
         self.data_generation += 1
-        # `async_set_updated_data` is automatically called with this.
+        # The base class adopts this return value as `self.data` directly (it
+        # does NOT route through `async_set_updated_data`) and then notifies
+        # listeners.
         return response
 
     @callback
