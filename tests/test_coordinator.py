@@ -13,6 +13,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
@@ -20,7 +21,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import DOMAIN, scene_unique_id
 from custom_components.junghome.coordinator import (
     INITIAL_RECONNECT_DELAY,
     MAX_RECONNECT_FAILURES,
@@ -74,6 +75,36 @@ async def test_no_reload_when_device_ids_stable(hass: HomeAssistant) -> None:
             [{"id": "idSAME", "label": "Katilas"}]
         )
     reload.assert_not_called()
+
+
+async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) -> None:
+    """Colliding slugs must be skipped from the id-change map entirely.
+
+    Two devices whose labels slug identically share one key in the slug->id
+    map; the gateway's list order decides which id "wins". Without the
+    duplicate_slugs guard, a mere order change between polls read as "the id
+    changed (firmware update?)" and scheduled a reload — on every flip,
+    forever. A non-colliding device's genuine id change must still reload.
+    """
+    coordinator = _coordinator(hass)
+    lamp_a = {"id": "idA", "label": "Lamp 1"}
+    lamp_b = {"id": "idB", "label": "Lamp-1"}  # both slug to lamp_1
+    other = {"id": "idC", "label": "Katilas"}
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator._reload_if_device_ids_changed([lamp_a, lamp_b, other])
+        coordinator._reload_if_device_ids_changed([lamp_b, lamp_a, other])
+        coordinator._reload_if_device_ids_changed([lamp_a, lamp_b, other])
+    reload.assert_not_called()
+    # The colliding slug is not tracked at all; the healthy device is.
+    assert "lamp_1" not in coordinator._device_ids
+    assert coordinator._device_ids == {"katilas": "idC"}
+
+    # A genuine id change on the non-colliding device still reloads.
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator._reload_if_device_ids_changed(
+            [lamp_b, lamp_a, {"id": "idNEW", "label": "Katilas"}]
+        )
+    reload.assert_called_once()
 
 
 def _coordinator_with_ws(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -184,6 +215,81 @@ async def test_scene_recall_fires_event(hass: HomeAssistant) -> None:
     assert len(events) == 1
     assert events[0].data["scene_id"] == "id0001"
     assert events[0].data["label"] == "Išjungti WC"
+
+
+async def test_scene_recall_event_carries_the_entity_id(
+    hass: HomeAssistant,
+) -> None:
+    """A recall for a label with a registered scene entity links to it.
+
+    The entity_id lets the logbook line deep-link and automations match on
+    the entity rather than the (locale-specific) label.
+    """
+    coordinator = _coordinator(hass)
+    entry = coordinator.config_entry
+    registered = er.async_get(hass).async_get_or_create(
+        "scene",
+        DOMAIN,
+        scene_unique_id(entry, "Movie Night"),
+        config_entry=entry,
+    )
+    events = []
+    hass.bus.async_listen(f"{DOMAIN}_scene_recalled", events.append)
+    coordinator._handle_websocket_message(
+        {"type": "scene", "data": {"id": "id0002", "label": "Movie Night"}}
+    )
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    assert events[0].data["entity_id"] == registered.entity_id
+
+
+async def test_unexpected_error_in_frame_handler_is_contained(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A bug raised while handling one frame is logged, never propagated.
+
+    The catch-all is the last line of defence for the WebSocket session: an
+    exception escaping _dispatch_text_frame would tear down an otherwise
+    healthy connection over a single bad frame.
+    """
+    coordinator = _coordinator(hass)
+    with patch.object(
+        coordinator, "_handle_websocket_message", side_effect=RuntimeError("boom")
+    ):
+        coordinator._dispatch_text_frame('{"type": "datapoint", "data": {}}')
+    assert any(
+        "Unexpected error handling WebSocket message" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_scenes_new_dedupes_by_label_keeping_newest(
+    hass: HomeAssistant,
+) -> None:
+    """A scenes-new delta re-keying a label to a new id drops the old entry.
+
+    Scene identity is the label; after a firmware update regenerates ids, the
+    old and new entries would otherwise sit side by side and activation could
+    resolve the dead id. Unlabeled scenes are kept (diagnostics only).
+    """
+    coordinator = _coordinator(hass)
+    coordinator.scenes = [
+        {"id": "old-id", "label": "Movie Night"},
+        {"id": "keep-id", "label": "Dinner"},
+    ]
+    coordinator._handle_websocket_message(
+        {
+            "type": "scenes-new",
+            "data": [
+                {"id": "new-id", "label": "Movie Night"},
+                {"id": "no-label"},
+            ],
+        }
+    )
+    by_label = {s.get("label"): s.get("id") for s in coordinator.scenes}
+    assert by_label["Movie Night"] == "new-id"
+    assert by_label["Dinner"] == "keep-id"
+    assert {"id": "no-label"} in coordinator.scenes
 
 
 async def test_scene_recall_without_id_is_ignored(hass: HomeAssistant) -> None:

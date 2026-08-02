@@ -132,6 +132,41 @@ async def test_mid_gesture_wait_ignores_recovery(
     assert _render(hass, evt, wait=real_second_press) == "pressed"
 
 
+async def test_mid_gesture_drop_aborts_instead_of_firing_single(
+    hass: HomeAssistant, blueprint: dict
+) -> None:
+    """The entity dropping to unavailable mid-gesture aborts the automation.
+
+    A WebSocket drop inside the hold window used to read as a release (the
+    unavailable state carries no event_type), firing a phantom SINGLE after
+    the double-click window — even while the user was still holding.
+    """
+    aborted = blueprint["actions"][1]["variables"]["aborted"]
+    # The abort branch must be the first choose branch, with a stop action.
+    first_branch = blueprint["actions"][2]["choose"][0]
+    assert first_branch["conditions"] == ["{{ aborted }}"]
+    assert "stop" in first_branch["sequence"][0]
+
+    drop = {
+        "trigger": {
+            "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
+            "to_state": State("event.button_a_up", "unavailable"),
+        }
+    }
+    assert _render(hass, aborted, wait=drop) is True
+
+    # A real release, a real second press, and a hold-window timeout all
+    # continue the gesture machine.
+    release = {
+        "trigger": {
+            "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
+            "to_state": _event("depressed"),
+        }
+    }
+    assert _render(hass, aborted, wait=release) is False
+    assert _render(hass, aborted, wait={"trigger": None}) is False
+
+
 async def test_slow_double_wait_ignores_recovery(
     hass: HomeAssistant, blueprint: dict
 ) -> None:

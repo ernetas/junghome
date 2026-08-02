@@ -73,6 +73,7 @@
       "register_failed": "Rejestracja nie została ukończona. Upewnij się, że zatwierdzasz żądanie w aplikacji."
     },
     "abort": {
+      "already_in_progress": "Konfiguracja jest już w toku.",
       "already_configured": "Ta bramka Jung Home jest już skonfigurowana.",
       "reauth_successful": "Ponowne uwierzytelnienie powiodło się.",
       "reconfigure_successful": "Adres bramki został zaktualizowany."

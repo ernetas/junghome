@@ -11,10 +11,7 @@ updates:
     schedule:
       interval: "daily"
 
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    ignore:
-      # Dependabot should not update Home Assistant as that should match the homeassistant key in hacs.json
-      - dependency-name: "homeassistant"
+  # pip is deliberately NOT listed: Renovate owns it (renovate.json). The
+  # pytest-homeassistant-custom-component stack must move as one group and is
+  # version-capped there; a Dependabot PR bumping pytest/phacc/syrupy alone
+  # bypassed both rules and produced unresolvable-conflict PRs.

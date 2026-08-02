@@ -73,6 +73,7 @@
       "register_failed": "등록이 완료되지 않았습니다. 앱에서 요청을 승인했는지 확인하세요."
     },
     "abort": {
+      "already_in_progress": "구성 흐름이 이미 진행 중입니다.",
       "already_configured": "이 Jung Home 게이트웨이는 이미 구성되어 있습니다.",
       "reauth_successful": "재인증에 성공했습니다.",
       "reconfigure_successful": "게이트웨이 주소가 업데이트되었습니다."

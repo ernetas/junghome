@@ -73,6 +73,7 @@
       "register_failed": "L'enregistrement n'a pas abouti. Assurez-vous d'approuver la demande dans l'application."
     },
     "abort": {
+      "already_in_progress": "La configuration est déjà en cours.",
       "already_configured": "Cette passerelle Jung Home est déjà configurée.",
       "reauth_successful": "La réauthentification a réussi.",
       "reconfigure_successful": "L'adresse de la passerelle a été mise à jour."

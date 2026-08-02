@@ -197,11 +197,13 @@ Any failure is returned as a `message` frame:
 - State updates arrive as `datapoint` broadcasts; the coordinator matches them to
   entities. Commands are sent as `datapoint` set frames.
 - The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
-  broadcasts to populate the scene platform (recall is REST-only). The singular
+  broadcasts to populate the scene platform (recall is REST-only), and the
+  `groups` broadcasts for room→area assignment and diagnostics. The singular
   `scene` recall frame is re-emitted as a `junghome_scene_recalled` HA event.
-  `groups` broadcasts are still ignored.
 - Reconnect on drop: the gateway sends the full `functions`/`groups`/`scenes`
   snapshot again on every new connection, so re-syncing is automatic.
-- Watch `functions` / `*-new` / `*-deleted` frames to pick up devices added or
-  removed at runtime (the integration also rediscovers on each coordinator
-  refresh).
+- The `functions` broadcast (the authoritative device list, sent on connect
+  and on change) is adopted by the coordinator exactly like a REST poll
+  result, so devices added or removed at runtime appear/prune push-driven;
+  the 60 s REST poll remains as the backstop. The lower-level `devices` /
+  `*-new` / `*-deleted` frames are not consumed.

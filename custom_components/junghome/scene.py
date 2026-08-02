@@ -15,35 +15,16 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import slugify
 
-from .const import DOMAIN, entry_scope
+# scene_slug/scene_unique_id live in const.py so the coordinator can resolve a
+# recalled scene's entity without importing this platform module.
+from .const import DOMAIN, scene_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 # Recalls are cheap async REST posts; don't serialise them.
 PARALLEL_UPDATES = 0
-
-
-def _scene_slug(label: str) -> str:
-    """Return a firmware-stable slug for a scene label."""
-    slug = slugify(label or "")
-    if slug and slug != "unknown":
-        return slug
-    return "scene"
-
-
-def scene_unique_id(entry: JungHomeConfigEntry, label: str) -> str:
-    """Return the firmware-stable, per-gateway unique_id for a scene.
-
-    Scoped by ``entry_scope`` because a scene has no backing device to make it
-    unique: the id used to be the scene label alone, so two gateways each with a
-    "Movie night" scene produced the same unique_id and Home Assistant rejected
-    the second entity. ``_migrate_scene_unique_ids`` in ``__init__`` re-keys
-    entities created under the old unscoped scheme.
-    """
-    return f"{entry_scope(entry)}_{_scene_slug(label)}_scene"
 
 
 async def async_setup_entry(
@@ -59,6 +40,11 @@ async def async_setup_entry(
     # construct a duplicate entity with the same unique_id while the old one is
     # still deregistering.
     removing: set[str] = set()
+    # Colliding uids already warned about. _discover_scenes runs on EVERY
+    # coordinator notification (each push and each poll), so without this a
+    # persisting label collision warned several times a minute, indefinitely
+    # (same once-guard as the capability watcher's `warned_collisions`).
+    warned_collisions: set[str] = set()
 
     async def _remove_scene(uid: str) -> None:
         try:
@@ -86,8 +72,13 @@ async def async_setup_entry(
                 # Two scenes whose labels slug identically collide on one uid, so
                 # only one entity can exist (same accepted limitation as devices —
                 # see const.device_slug). Surface the dropped one rather than
-                # letting it vanish silently.
-                if uid in current and current[uid] != label:
+                # letting it vanish silently — once, not on every refresh.
+                if (
+                    uid in current
+                    and current[uid] != label
+                    and uid not in warned_collisions
+                ):
+                    warned_collisions.add(uid)
                     _LOGGER.warning(
                         "Jung Home scenes %r and %r map to the same id %r; "
                         "only one scene entity will be created",

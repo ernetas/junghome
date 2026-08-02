@@ -48,15 +48,15 @@ _UNIT_MAP: dict[str, tuple[SensorDeviceClass | None, SensorStateClass, str]] = {
     "a": (SensorDeviceClass.CURRENT, _MEAS, UnitOfElectricCurrent.AMPERE),
     "hz": (SensorDeviceClass.FREQUENCY, _MEAS, UnitOfFrequency.HERTZ),
     "°c": (SensorDeviceClass.TEMPERATURE, _MEAS, UnitOfTemperature.CELSIUS),
+    # climate.py accepts a bare "c" for the ambient reading; accept it here too
+    # so the same gateway spelling maps consistently on both platforms.
+    "c": (SensorDeviceClass.TEMPERATURE, _MEAS, UnitOfTemperature.CELSIUS),
     "lux": (SensorDeviceClass.ILLUMINANCE, _MEAS, LIGHT_LUX),
     "lx": (SensorDeviceClass.ILLUMINANCE, _MEAS, LIGHT_LUX),
     # "%" is ambiguous (humidity, power factor, ...): keep the unit but assert no
     # device class rather than risk mislabelling.
     "%": (None, _MEAS, PERCENTAGE),
 }
-
-# Raw units we've already warned about, so each unmapped unit logs only once.
-_warned_units: set[str] = set()
 
 
 async def async_setup_entry(
@@ -156,8 +156,11 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
                     "measurement sensor",
                     label,
                 )
-            elif cleaned not in _warned_units:
-                _warned_units.add(cleaned)
+            elif cleaned not in coordinator.warned_quantity_units:
+                # Warn once per unit per entry (the set lives on the
+                # coordinator, so it resets on reload and is not shared
+                # between two gateways' entries).
+                coordinator.warned_quantity_units.add(cleaned)
                 _LOGGER.warning(
                     "Unmapped Jung Home quantity unit %r; exposing a unitless "
                     "measurement sensor",
@@ -193,7 +196,10 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         if datapoint:
             self._value = self._get_value_from_datapoint(datapoint)
             _LOGGER.debug("Updated state for quantity %s: %s", self._name, self._value)
-            self.async_write_ha_state()
+        # Write unconditionally (even when the datapoint is momentarily absent)
+        # so the entity's availability tracks the gateway on every coordinator
+        # update, matching the switch platform.
+        self.async_write_ha_state()
 
     def _get_value_from_datapoint(self, datapoint: Datapoint) -> str | None:
         """Extract the value of the quantity from its datapoint."""

@@ -52,9 +52,12 @@ PLATFORMS: list[Platform] = [
 # Home Assistant core integrations that prune do so on the *first* miss, but
 # they trust their hub's device list; this gateway is documented above as
 # occasionally returning a partial one, so the same confidence isn't available.
-# It is also not known whether the gateway omits an unreachable BT-Mesh device
-# from `/functions/`; if it does, a device that is merely out of range must not
-# be deleted for it.
+# (Verified against gateway firmware: the middleware maps every known device
+# into the function list with no `isOnline` filter — disk_dump sdc2
+# `function_helper_methods.js`, `createFunctionListByDevices` — so an
+# unreachable BT-Mesh device is NOT omitted from `/functions/`; it just
+# reports stale/`"NaN"` values. Absence therefore means deleted/relabelled,
+# or a partial poll — which is what this debounce rides out.)
 STALE_DEVICE_PRUNE_MISSES = 10
 
 # Failures the stable-id migration can realistically hit, and therefore the only

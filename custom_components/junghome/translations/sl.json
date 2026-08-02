@@ -73,6 +73,7 @@
       "register_failed": "Registracija ni bila dokončana. Poskrbite, da zahtevo odobrite v aplikaciji."
     },
     "abort": {
+      "already_in_progress": "Konfiguracija že poteka.",
       "already_configured": "Ta prehod Jung Home je že konfiguriran.",
       "reauth_successful": "Ponovno preverjanje pristnosti je uspelo.",
       "reconfigure_successful": "Naslov prehoda je bil posodobljen."

@@ -156,14 +156,18 @@ async def test_switch_echo_does_not_reset_brightness(
 async def test_plain_turn_on_waits_for_device_brightness(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A plain turn-on clears the optimistic brightness and waits for the device.
+    """A plain off->on clears optimistic brightness; an already-on keeps it.
 
-    Without an explicit brightness the device restores its own level; the
-    integration must not keep a stale/guessed value (which looked like the light
-    jumping to 100%) — it clears brightness and applies what the device reports.
+    Without an explicit brightness the device restores its own level on
+    power-on; the integration must not keep a stale/guessed value across that
+    transition (which looked like the light jumping to 100%) — it clears
+    brightness and applies what the device reports. But a plain turn_on
+    against an ALREADY-on dimmer changes nothing on the device and no push
+    follows, so the held value (the device's current level) must be kept —
+    clearing it left brightness unknown until the next poll for no reason.
     """
     coordinator = init_integration.runtime_data
-    # Set a high brightness via the slider (optimistic 200).
+    # Set a high brightness via the slider (optimistic 200); light is now on.
     await hass.services.async_call(
         "light",
         "turn_on",
@@ -172,7 +176,18 @@ async def test_plain_turn_on_waits_for_device_brightness(
     )
     assert hass.states.get("light.strip").attributes["brightness"] == 200
 
-    # A plain toggle-on must NOT keep 200; brightness is cleared, pending report.
+    # Plain turn_on while already on: nothing changes device-side, keep 200.
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").attributes["brightness"] == 200
+
+    # Off, then a plain on: this is the genuine power-on where the device
+    # restores its own level — brightness is cleared, pending the report.
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
     await hass.services.async_call(
         "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
     )
@@ -347,12 +362,13 @@ async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) 
         )
         == 0
     )
-    # Color temp outside the advertised 2000-6500 K window is clamped.
+    # Color temp outside the advertised 2000-6000 K window is clamped (the
+    # gateway middleware enforces the same range on writes — see light.py).
     assert (
         light._get_color_temp_from_datapoint(
             {"id": "x", "values": [{"key": "color_temperature", "value": "9000"}]}
         )
-        == 6500
+        == 6000
     )
     assert (
         light._get_color_temp_from_datapoint(
@@ -386,10 +402,10 @@ async def test_light_ignores_any_gateway_advertised_color_temp_range(
         {"id": "d1", "parent_groups": ["g1"]}
     ) == (2700, 4000)
     # ...but the light is unaffected, and does not clamp a read into it.
-    light = _color_light(coordinator, parent_groups=["g1"], color_temp="6500")
+    light = _color_light(coordinator, parent_groups=["g1"], color_temp="6000")
     assert light.min_color_temp_kelvin == 2000
-    assert light.max_color_temp_kelvin == 6500
-    assert light.color_temp_kelvin == 6500
+    assert light.max_color_temp_kelvin == 6000
+    assert light.color_temp_kelvin == 6000
 
 
 async def test_light_color_temp_range_uses_module_defaults(
@@ -464,7 +480,7 @@ async def test_colortemp_light_without_brightness(hass: HomeAssistant) -> None:
     assert light.color_mode == "color_temp"
     assert light.color_temp_kelvin == 3000
     assert light.min_color_temp_kelvin == 2000
-    assert light.max_color_temp_kelvin == 6500
+    assert light.max_color_temp_kelvin == 6000
 
 
 async def test_all_light_entities(

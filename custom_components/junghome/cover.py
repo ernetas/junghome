@@ -270,9 +270,12 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         value = datapoint_value(datapoint, "level")
         if value is None:
             return None
+        # OverflowError: float("1e999") parses to inf, which round() rejects
+        # with OverflowError, not ValueError (same rationale as the brightness
+        # parser in light.py — ValueError only covers NaN).
         try:
             return _to_ha(round(float(value)), inverted=self._inverted)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def _get_tilt_from_datapoint(self, datapoint: Datapoint | None) -> int | None:
@@ -283,6 +286,7 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         try:
             # Clamp to 0..100, mirroring the position guard in _to_ha: the
             # untrusted angle must satisfy HA's tilt-position contract.
+            # OverflowError covers an inf-parsing value, as in the level path.
             return max(0, min(100, round(float(value))))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None

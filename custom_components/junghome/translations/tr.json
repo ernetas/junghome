@@ -73,6 +73,7 @@
       "register_failed": "Kayıt tamamlanmadı. İsteği uygulamada onayladığınızdan emin olun."
     },
     "abort": {
+      "already_in_progress": "Yapılandırma zaten devam ediyor.",
       "already_configured": "Bu Jung Home ağ geçidi zaten yapılandırılmış.",
       "reauth_successful": "Yeniden kimlik doğrulama başarılı oldu.",
       "reconfigure_successful": "Ağ geçidinin adresi güncellendi."

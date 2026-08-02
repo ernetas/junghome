@@ -141,10 +141,11 @@ async def test_presence_binary_sensor_keeps_state_when_datapoint_gone(
 ) -> None:
     """A vanished datapoint holds the last state rather than resetting to off.
 
-    Unlike the switch/event platforms (which write unconditionally), presence
-    guards its write with ``if datapoint:`` — when the coordinator no longer
-    carries the datapoint, ``_handle_coordinator_update`` must return early,
-    leaving the previous reading untouched instead of writing ``None``/off.
+    When the coordinator no longer carries the datapoint,
+    ``_handle_coordinator_update`` must leave the previous reading untouched
+    instead of writing ``None``/off — but it still writes HA state, so the
+    entity's availability tracks the gateway on every update (matching the
+    switch platform).
     """
     coordinator = _bare_coordinator(hass)
     device = _presence_device("1")
@@ -155,7 +156,7 @@ async def test_presence_binary_sensor_keeps_state_when_datapoint_gone(
     coordinator.data = []  # device/datapoint dropped from the latest poll
     with patch.object(sensor, "async_write_ha_state") as write_state:
         sensor._handle_coordinator_update()  # must not raise
-    write_state.assert_not_called()
+    write_state.assert_called_once()  # availability still tracked
     assert sensor.is_on is True  # last-known state preserved, not cleared
 
 

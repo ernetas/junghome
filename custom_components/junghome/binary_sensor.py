@@ -119,7 +119,10 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
         datapoint = self._find_datapoint(self._datapoint_id)
         if datapoint:
             self._is_on = self._get_state_from_datapoint(datapoint)
-            self.async_write_ha_state()
+        # Write unconditionally (even when the datapoint is momentarily absent)
+        # so the entity's availability tracks the gateway on every coordinator
+        # update, matching the switch platform.
+        self.async_write_ha_state()
 
     def _get_state_from_datapoint(self, datapoint: Datapoint | None) -> bool | None:
         """Extract the boolean presence state from a quantity datapoint.

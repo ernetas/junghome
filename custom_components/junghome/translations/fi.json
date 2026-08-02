@@ -73,6 +73,7 @@
       "register_failed": "Rekisteröintiä ei viety loppuun. Varmista, että hyväksyt pyynnön sovelluksessa."
     },
     "abort": {
+      "already_in_progress": "Määritys on jo käynnissä.",
       "already_configured": "Tämä Jung Home -yhdyskäytävä on jo määritetty.",
       "reauth_successful": "Uudelleentodennus onnistui.",
       "reconfigure_successful": "Yhdyskäytävän osoite päivitettiin."

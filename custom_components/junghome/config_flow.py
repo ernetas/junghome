@@ -324,8 +324,11 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Create the config entry once a token has been obtained."""
+        # Carry the host in the title so two gateways are distinguishable in
+        # the entries list (every entry used to be titled just "Jung Home").
+        # Existing entries keep their title; this only affects new entries.
         return self.async_create_entry(
-            title="Jung Home",
+            title=f"Jung Home ({self._host})",
             data={CONF_HOST: self._host, CONF_TOKEN: self._token},
         )
 
@@ -352,8 +355,20 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Re-register with the gateway to obtain a fresh token."""
+        """Re-register with the gateway to obtain a fresh token.
+
+        Shows a confirm form before the first registration attempt: reauth
+        flows are created programmatically (the user has not even seen the
+        notification yet), and ``_async_register`` opens the gateway's one
+        180 s app-approval window the moment it runs — starting it unattended
+        burned that window before the user could possibly approve, so the
+        first attempt they actually saw was already the retry.
+        """
         if self._register_task is None:
+            if user_input is None:
+                return self.async_show_form(
+                    step_id="reauth_confirm", data_schema=vol.Schema({})
+                )
             self._register_task = self.hass.async_create_task(self._async_register())
 
         if not self._register_task.done():
@@ -386,7 +401,10 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Show the failure reason and allow retrying the reauth."""
         if user_input is not None:
-            return await self.async_step_reauth_confirm()
+            # Pass the (non-None) input through so the retry starts
+            # immediately — the user just pressed submit on the failure form;
+            # showing the confirm form again would be a pointless extra click.
+            return await self.async_step_reauth_confirm(user_input)
         return self.async_show_form(
             step_id="reauth_failed",
             data_schema=vol.Schema({}),
@@ -542,6 +560,13 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (TimeoutError, aiohttp.ClientError) as err:
             self._error = "cannot_connect"
             raise CannotRegister(str(err)) from err
+        except ValueError as err:
+            # A JSON-typed but malformed body: response.json() raises
+            # json.JSONDecodeError (a ValueError), not a ClientError — without
+            # this the flow died with "Unknown error occurred" instead of the
+            # register_failed form.
+            self._error = "register_failed"
+            raise CannotRegister(str(err)) from err
 
         token = data.get("token") if isinstance(data, dict) else None
         if not token:
@@ -574,6 +599,11 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = await response.json()
         except (TimeoutError, aiohttp.ClientError) as err:
             self._error = "cannot_connect"
+            raise CannotRegister(str(err)) from err
+        except ValueError as err:
+            # Same as _async_register: a malformed JSON body must land on the
+            # failure form, not crash the flow.
+            self._error = "register_failed"
             raise CannotRegister(str(err)) from err
 
         token = data.get("token") if isinstance(data, dict) else None

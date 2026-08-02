@@ -73,6 +73,7 @@
       "register_failed": "登録が完了しませんでした。アプリでリクエストを承認してください。"
     },
     "abort": {
+      "already_in_progress": "設定フローは既に進行中です。",
       "already_configured": "この Jung Home ゲートウェイはすでに設定されています。",
       "reauth_successful": "再認証に成功しました。",
       "reconfigure_successful": "ゲートウェイのアドレスを更新しました。"

@@ -73,6 +73,7 @@
       "register_failed": "Registration was not completed. Make sure you approve the request in the app."
     },
     "abort": {
+      "already_in_progress": "Configuration flow is already in progress.",
       "already_configured": "This Jung Home gateway is already configured.",
       "reauth_successful": "Re-authentication was successful.",
       "reconfigure_successful": "The gateway address was updated."

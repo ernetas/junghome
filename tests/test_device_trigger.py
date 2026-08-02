@@ -6,11 +6,21 @@ from homeassistant.components.device_automation import DeviceAutomationType
 from homeassistant.components.device_automation.exceptions import (
     InvalidDeviceAutomationConfig,
 )
-from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_PLATFORM, CONF_TYPE
+from homeassistant.const import (
+    CONF_DEVICE_ID,
+    CONF_DOMAIN,
+    CONF_HOST,
+    CONF_PLATFORM,
+    CONF_TOKEN,
+    CONF_TYPE,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import async_get_device_automations
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_get_device_automations,
+)
 
 from custom_components.junghome.const import CONF_SUBTYPE, DOMAIN
 from custom_components.junghome.device_trigger import async_validate_trigger_config
@@ -140,3 +150,68 @@ async def test_validate_accepts_config_for_unknown_device(
         CONF_SUBTYPE: "pressed",
     }
     assert await async_validate_trigger_config(hass, config) == config
+
+
+async def test_no_triggers_for_foreign_device(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A registry device with no junghome identifier resolves to no triggers.
+
+    ``_gateway_device`` must bail out before touching any config entry when
+    the device carries only another integration's identifiers.
+    """
+    foreign_entry = dr.async_get(hass).async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={("other_domain", "some-device")},
+    )
+    triggers = await async_get_device_automations(
+        hass, DeviceAutomationType.TRIGGER, foreign_entry.id
+    )
+    assert [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN] == []
+
+
+async def test_no_triggers_when_entry_not_loaded(hass: HomeAssistant) -> None:
+    """A junghome device whose entry is not loaded resolves to no triggers.
+
+    ``runtime_data`` only exists while the entry is loaded; the lookup must
+    skip such entries (and any non-junghome entries sharing the device)
+    rather than raise, so the automation UI degrades to an empty list.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="9.9.9.9",
+        data={CONF_HOST: "9.9.9.9", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)  # never set up: no runtime_data
+    other = MockConfigEntry(domain="other_domain", unique_id="x")
+    other.add_to_hass(hass)
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "button_b")},
+    )
+    registry.async_update_device(device.id, add_config_entry_id=other.entry_id)
+    triggers = await async_get_device_automations(
+        hass, DeviceAutomationType.TRIGGER, device.id
+    )
+    assert [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN] == []
+
+
+async def test_no_triggers_when_device_missing_from_poll(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A registered device the gateway no longer reports offers no triggers.
+
+    Covers the loop fall-through in ``_gateway_device``: the entry is loaded,
+    but no device in the coordinator's data matches the slug (e.g. it was
+    relabelled in the app and awaits pruning).
+    """
+    registry = dr.async_get(hass)
+    device = registry.async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={(DOMAIN, "vanished_rocker")},
+    )
+    triggers = await async_get_device_automations(
+        hass, DeviceAutomationType.TRIGGER, device.id
+    )
+    assert [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN] == []

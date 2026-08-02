@@ -26,8 +26,10 @@ jobs:
           python-version: "3.14"
           cache: "pip"
 
-      - name: Install requirements
-        run: python3 -m pip install -r requirements.txt
+      - name: Install ruff (pinned in requirements.txt)
+        # Only ruff is needed here; installing the full requirements pulled in
+        # all of Home Assistant just to lint.
+        run: python3 -m pip install "$(grep '^ruff==' requirements.txt)"
 
       - name: Lint
         run: python3 -m ruff check .

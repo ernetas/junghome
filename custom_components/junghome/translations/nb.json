@@ -73,6 +73,7 @@
       "register_failed": "Registreringen ble ikke fullført. Sørg for å godkjenne forespørselen i appen."
     },
     "abort": {
+      "already_in_progress": "Konfigurasjonen er allerede i gang.",
       "already_configured": "Denne Jung Home-gatewayen er allerede konfigurert.",
       "reauth_successful": "Ny autentisering var vellykket.",
       "reconfigure_successful": "Gatewayens adresse ble oppdatert."
