@@ -58,10 +58,15 @@ parameters use the **vendor model**.
 
 ## Sending commands
 
-The middleware sends every command **3×** (`publish_retransmissions`) at **15 ms**
-spacing (`publish_interval_ms`), with **50 ms** pause between datapoints
-(`request_pause_ms`), incrementing an 8-bit transaction id (`tid`) once per
-logical command.
+On current firmware (v2.1.3) the middleware sends each command **once, ACKed**
+(`flags = 1`), serialised through a publish mutex with a **50 ms** pause
+between datapoints (`request_pause_ms`), incrementing an 8-bit transaction id
+(`tid`) once per logical command (`util/device_state_helper.js`,
+`sendIntervalGenericClientSet`). Reliability lives one layer up: the command
+handler retries a failed publish up to 3 times, 3 s apart
+(`ip_event_handler.js`). The **previous** build (v2.0.0) instead blasted every
+command 3× at 15 ms spacing (`publish_retransmissions` /
+`publish_interval_ms` — those config keys no longer exist in v2.1.3).
 
 ### Generic / lighting (the common path)
 
@@ -74,7 +79,7 @@ model_id         = client model (e.g. 0x1001 OnOff, 0x1302 Lightness, 0x1003 Lev
 appkey_index     = 0
 tid              = transaction id (uint8, increments per command)
 transition_ms    = 0 (or 0xFFFE for "move")
-delay_ms         = staggered per retransmission
+delay_ms         = 0 (v2.0.0 staggered this per retransmission)
 flags            = 1
 type             = MeshModelSetKind (see table)
 parameters       = little-endian value, length bytes
@@ -133,7 +138,8 @@ Over the air this is a **vendor access message** (3-byte opcode = `0b11xxxxxx`
 | company `0x0527`) carrying the property id + value. On a non-Silabs stack you
 send/parse the vendor opcodes directly; the exact opcode bytes live in the EFR32
 NCP firmware, but the host-side framing above (from
-`btmesh_set_datapoint_service.js`) tells you the command/property/value fields.
+`util/device_state_helper.js`, `sendKeyStatus` — `commandId = 2` /
+`STATUS_LBC_PROP_SEND_ID`) tells you the command/property/value fields.
 
 Button **events** (`up_request`/`down_request`/`trigger_request`) are the device
 *publishing* vendor property status to a group; subscribe to that group to

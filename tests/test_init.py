@@ -248,6 +248,62 @@ async def test_stale_device_pruned(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
+async def test_non_poll_dispatches_do_not_consume_the_prune_debounce(
+    hass: HomeAssistant,
+) -> None:
+    """Only real device-list adoptions count toward the prune threshold.
+
+    Scenes broadcasts and the WS-drop notification also run every coordinator
+    listener (``async_update_listeners`` with the SAME device list), and
+    counting those as "polls" shrank the documented
+    ``STALE_DEVICE_PRUNE_MISSES``-poll debounce — a WebSocket flapping while a
+    device was transiently absent from one poll could burn the whole window in
+    seconds. The miss counter must advance only when the coordinator adopts a
+    fresh list (``data_generation``), and pruning at the threshold must still
+    work.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    stale = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "ghost_device")}
+    )
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=DEVICES),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+
+        # Twice the threshold in bare re-dispatches — what a scene-editing
+        # session or a WS drop/reconnect cycle produces. The ghost is absent
+        # from every one of them, yet none may count as a missed poll.
+        for _ in range(2 * STALE_DEVICE_PRUNE_MISSES):
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+        assert dev_reg.async_get(stale.id) is not None
+
+        # Real adoptions still prune at the documented threshold.
+        for _ in range(STALE_DEVICE_PRUNE_MISSES):
+            coordinator.async_set_updated_data(coordinator.data)
+            await hass.async_block_till_done()
+        assert dev_reg.async_get(stale.id) is None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_transiently_missing_device_survives_and_resets(
     hass: HomeAssistant,
 ) -> None:
@@ -1025,6 +1081,33 @@ async def test_area_for_device_resolves_group_name(hass: HomeAssistant) -> None:
     assert (
         coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) == "Bathroom"
     )
+
+
+async def test_area_for_device_tolerates_malformed_gateway_json(
+    hass: HomeAssistant,
+) -> None:
+    """Malformed groups/parents must not raise out of the _assign_areas listener.
+
+    Same hardening contract as ``color_temp_range_for_device``: an unhashable
+    group id or parent entry (a list, a dict) raised ``TypeError`` from dict
+    construction/lookup inside a coordinator listener — which would also skip
+    every listener queued after it in the same dispatch.
+    """
+    coordinator = bare_coordinator(hass)
+    coordinator.groups = [
+        "not-a-dict",
+        {"id": ["unhashable"], "name": "Broken"},
+        {"id": True, "name": "Bool"},
+        {"id": "g1", "name": "Kitchen"},
+        {"id": "g1", "name": "Duplicate"},  # first occurrence wins
+        {"id": "g2"},  # no name/label -> unusable
+    ]
+    device = {"id": "d", "parent_groups": [["unhashable"], {"also": "bad"}, "g1"]}
+    assert coordinator.area_for_device(device) == "Kitchen"
+    # A non-list parent_groups is rejected wholesale, not iterated as chars.
+    assert coordinator.area_for_device({"id": "d", "parent_groups": "g1"}) is None
+    # A parent resolving to a nameless group keeps looking / returns None.
+    assert coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) is None
 
 
 async def test_color_temp_range_for_device_reads_group_metadata(
@@ -1810,8 +1893,11 @@ async def test_pruning_a_device_is_logged(
         identifiers={(DOMAIN, "ghost_device")},
     )
     with caplog.at_level(logging.WARNING):
+        # Real device-list adoptions: bare async_update_listeners() dispatches
+        # deliberately no longer count toward the miss threshold (see
+        # test_non_poll_dispatches_do_not_consume_the_prune_debounce).
         for _ in range(STALE_DEVICE_PRUNE_MISSES):
-            coordinator.async_update_listeners()
+            coordinator.async_set_updated_data(coordinator.data)
             await hass.async_block_till_done()
 
     assert "removing device" in caplog.text

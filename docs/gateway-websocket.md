@@ -45,7 +45,7 @@ In order:
 | `scene` | object | A scene was recalled. |
 | `groups` / `groups-new` / `groups-deleted` | array | Full groups list / added / removed. |
 | `scenes` / `scenes-new` / `scenes-deleted` | array | Full scenes list / added / removed. |
-| `devices` / `devices-new` / `devices-deleted` | array | Lower-level device list / added / removed. |
+| `devices-new` / `devices-deleted` | array | Lower-level device ids added / removed. (A full `devices` list type exists in the server too, but its emit call is commented out on current firmware — only the deltas can arrive.) |
 | `config` | object | Configuration (currently not emitted). |
 
 The `*-new` / `*-deleted` variants are how the gateway signals that nodes,
@@ -120,12 +120,13 @@ Common `values` keys by device type:
 | Cover move / stop | `level_move` = `"1"` (closing/down) / `"-1"` (opening/up) / `"0"` (stop) |
 | Cover slat tilt | `angle` = `"0".."100"` |
 | Thermostat target | `temperature_ctrl` = °C, e.g. `"21.5"` (range 5..30) |
-| Thermostat preset | `temperature_ctrl_preset` = `none` / `frost` / `eco` / `comfort` |
+| Thermostat preset | `temperature_ctrl_preset` = `frost` / `eco` / `comfort` (write); reads report the matching preset or `""` — see note below |
 | Status LED (rocker) | `status_led` = `"0"` / `"1"` |
 | Rocker press (read-only events) | `up_request` / `down_request` / `trigger_request` = `"1"` |
 
 > **Cover `level` is percent-*closed* (confirmed from gateway firmware).** In the
-> middleware (`btmesh_set_datapoint_service.js` + `datapoint_helper_methods.js`) a
+> middleware (v2.1.3: `models/device_states/PositionState.js` `publishMode` —
+> the v2.0.0 build kept this in `btmesh_set_datapoint_service.js`) a
 > *close* maps to BT-Mesh "down" (`0x7FFF` ⇒ drives the Generic Level toward
 > 100 %) and an *open* to "up" (`0x8000` ⇒ toward 0 %). So `level` 100 = fully
 > closed, 0 = fully open, and the integration uses HA position = `100 - level`.
@@ -160,20 +161,43 @@ Common `values` keys by device type:
 > API as an ordinary `switch` = `"0"` / `"1"` datapoint with nothing to
 > distinguish it from a light's or a socket's. Internally it is a Generic OnOff
 > `0x1000` server state the gateway reads as `"manu"` (0) / `"auto"` (1)
-> (`btmesh_get_datapoint_service.js`), and the RTR scheduler property
+> (v2.1.3: `models/device_states/AutomaticModeState.js`; the v2.0.0 build's
+> `btmesh_get_datapoint_service.js`), and the RTR scheduler property
 > `LBC_PROP_RTR_SCHEDULER_ENABLE_ID` writes into that *same* state
-> (`handleThermostatAutomaticMode` in `btmesh_device_property_service.js`) — two
-> sources feeding one value. In the field it flips on its own several times an
-> hour, tracking the regulator's momentary heating output (these RTRs drive
-> heating with a ~15-minute PWM cycle) while setpoint, preset and ambient
+> (v2.1.3: `models/device_property_states/SchedulerEnableState.js`, bound
+> `scheduler_enable → automatic_mode`; v2.0.0's `handleThermostatAutomaticMode`)
+> — two sources feeding one value. In the field it flips on its own several
+> times an hour, tracking the regulator's momentary heating output (these RTRs
+> drive heating with a ~15-minute PWM cycle) while setpoint, preset and ambient
 > temperature stay unchanged — see
 > [issue #121](https://github.com/ernetas/junghome/issues/121). Nothing in the
-> state set switches a regulator off, either: `Property_RTR_SensorHVAC_Mode`
-> exists in the middleware but is commented out and never exposed, so the `frost`
-> preset is the closest equivalent. The integration therefore reads this datapoint
-> as HA's `hvac_action` (`heating` / `idle`) only, holds `hvac_mode` at `heat`, and
-> never writes it. Treating it as an on/off is what made every thermostat entity
-> flap between `off` and `heat`.
+> state set switches a regulator off, either: v2.1.3 carries an implemented
+> HVAC-mode property (`HvacModeState`, `LBC_PROP_RTR_HVACMODE_DISPLAY_ID`) but
+> it is read-only, display-oriented and category `manufacturer_property`, which
+> `getDatapointTypeByState` never maps to an API datapoint (v2.0.0's
+> `Property_RTR_SensorHVAC_Mode` was commented out entirely) — so the `frost`
+> preset remains the closest equivalent. The integration therefore reads this
+> datapoint as HA's `hvac_action` (`heating` / `idle`) only, holds `hvac_mode`
+> at `heat`, and never writes it. Treating it as an on/off is what made every
+> thermostat entity flap between `off` and `heat`.
+
+> **Thermostat presets: the API descriptor lies about `none`.**
+> `cdb_types_datapoints.json` (and `/apidoc`) advertise
+> `temperature_ctrl_preset` values `["none","frost","eco","comfort"]`, but the
+> implementation contradicts the descriptor in both directions. **Writes**: the
+> middleware routes any present `temperature_ctrl_preset` value to the preset
+> publisher, which throws "does not set a valid preset" for anything but
+> `frost`/`eco`/`comfort` — including `"none"` (`ip_event_handler.js` +
+> `SetPointState.publishMode`); the retry loop then re-throws after 3 attempts
+> and the client sees only an uncorrelated `error:` frame. **Reads**: a preset
+> is a *derived* fact — `getRTRTemperatureMode` compares the target temperature
+> against the device's three configured thresholds and returns the matching
+> name or the **empty string** (`property_helper_methods.js`; its own JSDoc
+> says "none" but the code returns `""`), which
+> `datapoint_helper_methods.js` forwards verbatim. So `""`, not `"none"`, is
+> what "no preset" looks like on the wire — it is the common steady state for
+> any manually chosen target. The integration maps `""` to HA's `PRESET_NONE`
+> on read and never writes `"none"` (selecting "None" in HA is a local no-op).
 
 ### Other command types
 

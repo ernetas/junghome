@@ -69,10 +69,15 @@ WS_SEND_TIMEOUT = 10
 # itself gives up waiting on the BT-Mesh node after
 # `config.btmesh.response_timeout_ms` = 3000 ms (config.json) before the set
 # rejects and the reply never comes, so this leaves comfortable headroom above
-# that mesh-level bound for the WS round trip. A rejected set produces only an
-# uncorrelated `error:` message frame (no message_id to match against — see
-# `_dispatch_text_frame`), so a rejection surfaces here as a timeout rather than
-# the gateway's specific error text.
+# that mesh-level bound for the WS round trip. Waiting longer would buy
+# nothing: the api-server abandons its middleware IPC call at
+# `middleware.command_timeout_ms` = 6000 ms (api-server config.json), and the
+# middleware's own retry loop (3 attempts, 3 s apart) means a set that did not
+# succeed on the first mesh attempt cannot answer inside that bound either —
+# so every reply that will ever arrive does so within ~3.5 s. A rejected set
+# produces only an uncorrelated `error:` message frame (no message_id to match
+# against — see `_dispatch_text_frame`), so a rejection surfaces here as a
+# timeout rather than the gateway's specific error text.
 COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
@@ -233,6 +238,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # (functions/groups/scenes/version) is always present in diagnostics even
         # when the rolling log above has churned past it on a busy gateway.
         self.ws_last_frame_by_type: dict[str, str] = {}
+        # Monotonic count of device-list adoptions: bumped by every successful
+        # REST poll and every `functions` broadcast — the only two events that
+        # can change device *membership*. Listeners that debounce on "consecutive
+        # polls" (the stale-device pruner) compare this instead of counting raw
+        # dispatches: pushes, scenes broadcasts and the WS-drop notification all
+        # call async_update_listeners too, and counting those shrank the
+        # pruner's 10-poll window during a WS flap or a scene-editing session
+        # while a device was transiently missing from one poll.
+        self.data_generation = 0
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
         # Per-platform (entity-domain -> unique_ids) sets shared with each
@@ -324,8 +338,27 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if overlay:
             self._apply_push_overlay(response, overlay)
         self._reload_if_device_ids_changed(response)
+        # A fresh device list is about to be adopted (the base class stores the
+        # return value before notifying listeners, so the counter is consistent
+        # by dispatch time).
+        self.data_generation += 1
         # `async_set_updated_data` is automatically called with this.
         return response
+
+    @callback
+    def async_set_updated_data(self, data: list[Device]) -> None:
+        """Adopt a fresh device list and notify listeners.
+
+        Overridden to advance ``data_generation``: every caller of this method
+        is adopting a poll-equivalent device list (the ``functions`` broadcast
+        is the production caller; the per-datapoint push path deliberately
+        avoids it — see ``_handle_websocket_message``), and the stale-device
+        pruner debounces on that count rather than on raw dispatches. The REST
+        poll adopts via the base class's ``self.data`` assignment instead, so
+        ``_async_update_data`` advances the counter itself.
+        """
+        self.data_generation += 1
+        super().async_set_updated_data(data)
 
     @staticmethod
     def _apply_push_overlay(
@@ -489,15 +522,34 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         Resolves the device's ``parent_groups`` ids against the groups list and
         returns the first group name found (a device is normally in one room).
         Returns ``None`` when the device has no group or none resolve to a name.
+
+        Hardened exactly like ``color_temp_range_for_device`` below: groups and
+        parent ids are untrusted gateway JSON, and an unhashable id (a list, a
+        dict) must not raise ``TypeError`` out of the ``_assign_areas``
+        coordinator listener — that would also skip every listener queued after
+        it in the same dispatch.
         """
         parents = device.get("parent_groups") or []
-        if not parents:
+        if not isinstance(parents, (list, tuple)) or not parents:
             return None
-        by_id = {g.get("id"): (g.get("name") or g.get("label")) for g in self.groups}
-        for parent in parents:
-            name = by_id.get(parent)
+        by_id: dict[Any, str] = {}
+        for group in self.groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            if not isinstance(group_id, (str, int)) or isinstance(group_id, bool):
+                continue
+            name = group.get("name") or group.get("label")
             if name:
-                return str(name)
+                # First occurrence wins on a duplicated id, matching the
+                # documented order in color_temp_range_for_device.
+                by_id.setdefault(group_id, str(name))
+        for parent in parents:
+            if not isinstance(parent, (str, int)) or isinstance(parent, bool):
+                continue
+            name = by_id.get(parent)
+            if name is not None:
+                return name
         return None
 
     def color_temp_range_for_device(self, device: Device) -> tuple[int, int] | None:
@@ -1325,7 +1377,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         )
 
     async def set_temperature_preset(self, datapoint_id: str, preset: str) -> None:
-        """Set a thermostat preset (``none`` / ``frost`` / ``eco`` / ``comfort``)."""
+        """Set a thermostat preset (``frost`` / ``eco`` / ``comfort``).
+
+        These three are the only values the firmware accepts — it throws for
+        anything else, including the ``none`` its own API descriptor
+        advertises (``SetPointState.publishMode``), which would surface here
+        as an uncorrelated error and a command-confirmation timeout.
+        """
         await self._send_datapoint_command(
             datapoint_id,
             "temperature_ctrl",
