@@ -108,13 +108,53 @@ async def test_cover_inverted_awning_position(hass: HomeAssistant) -> None:
     assert extended.is_closed is False
 
 
-async def test_cover_normal_device_class_is_blind(hass: HomeAssistant) -> None:
-    """A non-inverted cover keeps the blind device class."""
+async def test_cover_position_only_device_class_is_shutter(
+    hass: HomeAssistant,
+) -> None:
+    """A position-only cover is a roller shutter, not a blind.
+
+    No ``angle`` datapoint means no slats, so HA must not render it with the
+    slat-oriented blind icon/controls.
+    """
     coordinator = bare_coordinator(hass)
     dps = [{"id": "b-1", "type": "level", "values": [{"key": "level", "value": "0"}]}]
     device = {"id": "b", "type": "Position", "label": "Shutter", "datapoints": dps}
     cover = JungHomeCover(coordinator, device, dps[0])
+    assert cover.device_class == CoverDeviceClass.SHUTTER
+
+
+async def test_cover_with_tilt_device_class_is_blind(hass: HomeAssistant) -> None:
+    """A cover with an ``angle`` datapoint drives slats, so it stays a blind."""
+    coordinator = bare_coordinator(hass)
+    dps = [
+        {"id": "b-1", "type": "level", "values": [{"key": "level", "value": "0"}]},
+        {"id": "b-2", "type": "angle", "values": [{"key": "angle", "value": "0"}]},
+    ]
+    device = {
+        "id": "b",
+        "type": "PositionAndAngle",
+        "label": "Venetian",
+        "datapoints": dps,
+    }
+    cover = JungHomeCover(coordinator, device, dps[0])
     assert cover.device_class == CoverDeviceClass.BLIND
+
+
+async def test_cover_inverted_with_tilt_is_still_awning(hass: HomeAssistant) -> None:
+    """The inverted (awning) flag wins over the tilt-derived blind class."""
+    coordinator = bare_coordinator(hass)
+    dps = [
+        {"id": "b-1", "type": "level", "values": [{"key": "level", "value": "0"}]},
+        {"id": "b-2", "type": "angle", "values": [{"key": "angle", "value": "0"}]},
+    ]
+    device = {
+        "id": "b",
+        "type": "PositionAndAngle",
+        "label": "Awning",
+        "datapoints": dps,
+    }
+    cover = JungHomeCover(coordinator, device, dps[0], inverted=True)
+    assert cover.device_class == CoverDeviceClass.AWNING
 
 
 async def test_cover_inverted_commands_pass_through(hass: HomeAssistant) -> None:

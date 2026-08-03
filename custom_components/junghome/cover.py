@@ -6,6 +6,14 @@ Two function types map here:
 - ``PositionAndAngle`` — a ``level`` datapoint plus an ``angle`` datapoint
   (slat tilt).
 
+## Device class
+
+The gateway reports every cover as the same ``WindowCover``, so the HA device
+class is derived from the datapoints present (``_device_class``): an ``angle``
+datapoint means slats — a venetian blind (``blind``) — and position-only means a
+roller shutter (``shutter``). A cover the user flagged as inverted is an awning
+(``awning``); see below.
+
 ## Position convention (confirmed against gateway firmware)
 
 The gateway's ``level`` datapoint is a 0-100 ``%`` value (Generic Level model).
@@ -72,6 +80,26 @@ def _to_ha(device_level: int, *, inverted: bool = False) -> int:
 def _to_device(ha_position: int, *, inverted: bool = False) -> int:
     """Convert a Home Assistant position (% open) to a device level."""
     return ha_position if inverted else 100 - ha_position
+
+
+def _device_class(*, inverted: bool, has_tilt: bool) -> CoverDeviceClass:
+    """Pick the Home Assistant device class for a cover.
+
+    Gated on the datapoints present, never on the function-type name:
+
+    - ``inverted`` — the user flagged this cover as reading percent-*open*,
+      which is the awning (Markise) mounting (see the module docstring). An
+      awning has no slats, so this wins over the tilt check.
+    - ``has_tilt`` — an ``angle`` datapoint means the actuator drives slats, i.e.
+      a venetian blind (Jalousie): ``blind``.
+    - otherwise — position only, which is a roller shutter (Rollladen):
+      ``shutter``. This is the common JUNG case, and the reason the class is not
+      simply hard-coded to ``blind``: HA renders a ``blind`` with slat-oriented
+      controls and icons, so a roller shutter looked like something it is not.
+    """
+    if inverted:
+        return CoverDeviceClass.AWNING
+    return CoverDeviceClass.BLIND if has_tilt else CoverDeviceClass.SHUTTER
 
 
 async def async_setup_entry(
@@ -141,21 +169,15 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         self._level_datapoint_id = level_datapoint["id"]
         # Awning-style cover whose level is reported percent-open, not -closed.
         self._inverted = inverted
-        # An inverted cover is, by the gateway's own reasoning (see the module
-        # docstring), a Markise/awning: the motor's "extended" is what the user
-        # calls open. Reflect that in the device class so the UI shows an awning
-        # icon and the correct open/close semantics; every other cover stays a
-        # blind. (This is the same per-device flag users already set for the
-        # position inversion, so no extra configuration is introduced.)
-        self._attr_device_class = (
-            CoverDeviceClass.AWNING if inverted else CoverDeviceClass.BLIND
-        )
         self._angle_datapoint = next(
             (dp for dp in device.get("datapoints", []) if dp.get("type") == "angle"),
             None,
         )
         self._angle_datapoint_id = (
             self._angle_datapoint.get("id") if self._angle_datapoint else None
+        )
+        self._attr_device_class = _device_class(
+            inverted=inverted, has_tilt=self._angle_datapoint_id is not None
         )
         self._name = device.get("label", "Jung Cover")
         self._attr_unique_id = stable_unique_id(device, level_datapoint)
