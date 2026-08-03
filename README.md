@@ -16,6 +16,8 @@ is required.
   gateway.
 - **Sockets** — on/off plus their live meter readings (power, current, …).
 - **Blinds / shutters (covers)** — open/close/stop, position, and slat tilt.
+  Covers that expose slat tilt show up as blinds; position-only ones as roller
+  shutters, with the matching icons and controls.
   **Awnings** report position inverted (their motor mounts the opposite way);
   flag them under Settings → Devices & Services → Jung Home → **Configure**
   and they read correctly, with an awning icon.

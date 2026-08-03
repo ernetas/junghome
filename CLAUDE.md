@@ -104,6 +104,13 @@ JUNG HOME Gateway over its REST API and WebSocket.
   (`CONF_INVERTED_COVERS`), which switches that cover to an identity mapping.
   The single inversion point is `_to_ha`/`_to_device` in `cover.py`. Changing
   the flagged set reloads the entry (options snapshot in the coordinator).
+- **A cover's HA device class comes from its datapoints, not its function type**
+  (`_device_class` in `cover.py`): an `angle` datapoint means slats, so `blind`;
+  position only means a roller shutter, so `shutter`; a cover the user flagged
+  as inverted is an `awning` (that flag wins — an awning has no slats). The
+  gateway calls every cover a `WindowCover`, so there is nothing else to key on.
+  Don't hard-code `blind` again: it gave every roller shutter slat-oriented
+  controls and icons.
 - **Colour temperature is 2000–6000 K, enforced by the gateway**: the
   middleware hard-codes that range and clamps every tunable-white write (see
   the `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it.

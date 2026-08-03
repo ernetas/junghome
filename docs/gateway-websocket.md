@@ -151,6 +151,15 @@ Common `values` keys by device type:
 > toggled in the JUNG HOME app. The integration gates HA's tilt features on that
 > datapoint and reloads the entry when a device's datapoint set changes so the
 > capability is rebuilt (see `_register_capability_reload` in `__init__.py`).
+>
+> That datapoint is also the only thing the gateway offers to tell a venetian
+> blind from a roller shutter — the middleware calls both a `WindowCover`, and
+> neither the function `type` nor any datapoint carries a product hint. So the
+> integration derives HA's cover device class from it (`_device_class` in
+> `cover.py`): `angle` present ⇒ slats ⇒ `blind`; position only ⇒ `shutter`; and
+> a cover the user flagged as inverted ⇒ `awning` (that flag wins, an awning
+> having no slats). Hard-coding `blind`, as the integration first did, gave
+> every roller shutter slat-oriented controls and icons in the HA UI.
 
 > **A Thermostat's `switch` datapoint is *not* the regulator's on/off — and a room
 > regulator has no on/off at all.** The middleware builds a `Thermostat` from
