@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -125,11 +126,16 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
     stored datapoint to merge into — but the poll's snapshot of that new
     device may predate the push just the same.
 
-    This doubles as the overlapping-polls regression: the unmatched push
-    immediately triggers a second refresh (request_refresh, immediate
-    debounce) while the first poll is still fetching. The overlay is shared
-    and refcounted across both; a naive per-poll dict was clobbered by the
-    second poll opening it, losing the recorded push.
+    This also exercises the overlap-insurance path: the unmatched push
+    immediately requests a second refresh (request_refresh, immediate
+    debounce) while the first poll is still fetching. On the pinned HA that
+    second refresh SERIALIZES behind the first (every refresh path takes the
+    coordinator's debouncer lock — see the `_poll_push_overlay` comment), so
+    true overlap cannot occur in production; the shared, refcounted overlay
+    is retained as insurance against that private HA detail changing, and
+    this test drives `_async_update_data` directly enough to keep the join
+    logic honest (a naive per-poll dict was clobbered by the second poll
+    opening it, losing the recorded push).
     """
     coordinator = _coordinator(hass)
     coordinator.data = []  # the device is not known yet
@@ -1022,3 +1028,164 @@ async def test_connect_is_bounded_by_a_timeout(hass: HomeAssistant) -> None:
         pytest.raises(TimeoutError),
     ):
         await coordinator._run_websocket()
+
+
+def _fuzz_frames(rng: random.Random, count: int) -> list[str]:
+    """Adversarial frames: valid JSON of hostile shapes, plus raw junk.
+
+    Deterministic (seeded) so a failure is reproducible. Shapes chosen to bait
+    every parsing hazard the coordinator guards: huge integers (``float()``
+    raises OverflowError on them), NaN/Infinity literals, wrong-typed ids and
+    values (dict/list/bool where strings are expected), unhashable group ids,
+    deep nesting, and non-JSON byte junk.
+    """
+
+    def junk_value(depth: int = 0) -> object:
+        choices = [
+            lambda: rng.randint(-(10**400), 10**400),
+            lambda: rng.random() * 10**308,
+            lambda: "x" * rng.randint(0, 500),
+            lambda: None,
+            lambda: rng.choice([True, False]),
+            lambda: "\x00\U000107ff\U0001f600"[: rng.randint(0, 4)],
+        ]
+        if depth < 3:
+            choices += [
+                lambda: [junk_value(depth + 1) for _ in range(rng.randint(0, 4))],
+                lambda: {
+                    str(junk_value(depth + 1))[:20]: junk_value(depth + 1)
+                    for _ in range(rng.randint(0, 4))
+                },
+            ]
+        return rng.choice(choices)()
+
+    frame_types = [
+        "datapoint",
+        "scene",
+        "scenes",
+        "scenes-new",
+        "scenes-deleted",
+        "groups",
+        "functions",
+        "message",
+        "version",
+        "devices-new",
+        None,
+        junk_value,
+    ]
+    frames: list[str] = []
+    for _ in range(count):
+        kind = rng.choice(frame_types)
+        if callable(kind):
+            kind = kind()
+        frame: dict = {"type": kind, "data": junk_value()}
+        if rng.random() < 0.5:
+            frame["message_id"] = junk_value()
+        if kind == "datapoint" and rng.random() < 0.7:
+            frame["data"] = {
+                "id": rng.choice(["dp1", "", None, 42, ["x"], {"a": 1}]),
+                "type": junk_value(),
+                "values": rng.choice(
+                    [[{"key": junk_value(), "value": junk_value()}], junk_value(), []]
+                ),
+            }
+        try:
+            frames.append(json.dumps(frame, ensure_ascii=False))
+        except (TypeError, ValueError):
+            continue
+    frames += ["", "{", "null", "[1,", '"str"', "\x00\x01", "NaN", "Infinity"]
+    return frames
+
+
+async def test_fuzz_dispatch_never_raises_or_corrupts(hass: HomeAssistant) -> None:
+    """1 500 seeded adversarial frames: dispatch must never raise or corrupt.
+
+    ``_dispatch_text_frame`` is the containment boundary for everything the
+    wire can carry — this drives it with hostile shapes end to end, then
+    checks the coordinator's structural invariants and that the group/area
+    resolvers still cope with whatever the storm stored. The refresh paths
+    are stubbed: unmatched fuzz ids would otherwise fan out thousands of
+    debounced refresh tasks against a real socket.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [
+        {
+            "id": "dev1",
+            "type": "OnOff",
+            "label": "Dev",
+            "datapoints": [
+                {
+                    "id": "dp1",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                }
+            ],
+        }
+    ]
+    rng = random.Random(20260803)  # noqa: S311 - deterministic fuzz seed
+    with (
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        patch.object(
+            coordinator, "_fetch_devices_from_api", AsyncMock(return_value=[])
+        ),
+    ):
+        for raw in _fuzz_frames(rng, 1500):
+            coordinator._dispatch_text_frame(raw)  # must never raise
+
+    assert coordinator._polls_in_flight == 0
+    assert coordinator._poll_push_overlay is None
+    assert coordinator._pending_replies == {}
+    # The storm may have stored arbitrary garbage in groups/scenes; the
+    # resolvers must still tolerate it together with malformed devices.
+    for device in (
+        {"id": "d", "parent_groups": ["g1", ["x"], {"y": 1}, True]},
+        {"id": "d", "parent_groups": "not-a-list"},
+        {"id": "d"},
+    ):
+        coordinator.area_for_device(device)
+        coordinator.color_temp_range_for_device(device)
+    await coordinator.async_shutdown()
+
+
+async def test_command_futures_race_replies_and_session_drop(
+    hass: HomeAssistant,
+) -> None:
+    """Eight concurrent commands, half confirmed, half killed by a drop.
+
+    Every await must complete promptly with the truthful outcome — no command
+    may hang toward COMMAND_REPLY_TIMEOUT once the session is gone, and the
+    pending-reply registry must end empty either way.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [
+        {
+            "id": "dev1",
+            "label": "Dev",
+            "datapoints": [{"id": "dp1", "type": "switch", "values": []}],
+        }
+    ]
+    ws = AsyncMock()
+    ws.closed = False
+    coordinator.websocket = ws
+
+    async def run_one() -> str:
+        try:
+            await coordinator.turn_on_switch("dp1")
+        except HomeAssistantError:
+            return "failed"
+        return "ok"
+
+    tasks = [hass.async_create_task(run_one()) for _ in range(8)]
+    await asyncio.sleep(0)
+    for message_id in list(coordinator._pending_replies)[:4]:
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "datapoint", "data": {"id": "dp1"}, "message_id": message_id}
+            )
+        )
+    coordinator._fail_pending_replies()
+    outcomes = await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
+    assert outcomes.count("ok") == 4
+    assert outcomes.count("failed") == 4
+    assert coordinator._pending_replies == {}
+    await coordinator.async_shutdown()
