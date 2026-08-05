@@ -470,8 +470,8 @@ async def test_groups_broadcast_is_stored(hass: HomeAssistant) -> None:
 async def test_ws_frame_log_truncates_large_frames(hass: HomeAssistant) -> None:
     """The diagnostics frame log keeps recent frames and truncates large ones."""
     coordinator = bare_coordinator(hass)
-    coordinator._log_ws_frame("x" * 5000)
-    coordinator._log_ws_frame("short")
+    coordinator._log_ws_frame("x" * 5000, None)
+    coordinator._log_ws_frame("short", None)
     assert coordinator.ws_frame_log[-1] == "short"
     assert coordinator.ws_frame_log[0].endswith("…[truncated]")
     assert len(coordinator.ws_frame_log[0]) < 5000
@@ -484,9 +484,9 @@ async def test_ws_frame_log_keeps_latest_per_type(hass: HomeAssistant) -> None:
     # cap, but the per-type store keeps it complete for direct wire comparison.
     big = '{"type":"functions","data":[' + ",".join(['{"id":"x"}'] * 500) + "]}"
     assert len(big) > 2000
-    coordinator._log_ws_frame(big)
-    coordinator._log_ws_frame('{"type":"version","data":"1.5.0"}')
-    coordinator._log_ws_frame("not json")  # unparseable -> not keyed by type
+    coordinator._log_ws_frame(big, "functions")
+    coordinator._log_ws_frame('{"type":"version","data":"1.5.0"}', "version")
+    coordinator._log_ws_frame("not json", None)  # unparseable -> not keyed by type
     by_type = coordinator.ws_last_frame_by_type
     # Per-type store: full, untruncated.
     assert by_type["functions"] == big
@@ -494,3 +494,40 @@ async def test_ws_frame_log_keeps_latest_per_type(hass: HomeAssistant) -> None:
     assert set(by_type) == {"functions", "version"}
     # Rolling log: same large frame is truncated there.
     assert coordinator.ws_frame_log[0].endswith("…[truncated]")
+
+
+async def test_dispatch_parses_each_frame_once_and_logs_it(
+    hass: HomeAssistant,
+) -> None:
+    """One `json.loads` per frame, shared with the diagnostics frame log.
+
+    The frame logger used to decode every frame a second time just to read its
+    type — doubled JSON work on the hottest path the integration has (a chatty
+    gateway pushes several frames a second). The dispatcher's single parse now
+    feeds both routing and the per-type diagnostics store.
+    """
+    coordinator = bare_coordinator(hass)
+    frame = '{"type":"version","data":"1.5.0"}'
+    with patch(
+        "custom_components.junghome.coordinator.json.loads", wraps=json.loads
+    ) as loads:
+        coordinator._dispatch_text_frame(frame)
+    assert loads.call_count == 1
+    assert coordinator.ws_last_frame_by_type["version"] == frame
+    assert coordinator.gateway_version == "1.5.0"
+
+
+async def test_dispatch_logs_unparseable_and_untyped_frames(
+    hass: HomeAssistant,
+) -> None:
+    """Malformed or oddly-typed frames still reach the rolling diagnostics log.
+
+    An unparseable frame and a frame whose `type` is not a string must both be
+    visible in diagnostics (that is the log's whole point when debugging a
+    misbehaving gateway) without being keyed into the per-type store.
+    """
+    coordinator = bare_coordinator(hass)
+    coordinator._dispatch_text_frame("not json")  # must not raise
+    coordinator._dispatch_text_frame('{"type": 42, "data": {}}')
+    assert list(coordinator.ws_frame_log) == ["not json", '{"type": 42, "data": {}}']
+    assert coordinator.ws_last_frame_by_type == {}

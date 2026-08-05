@@ -645,6 +645,36 @@ async def test_value_only_change_does_not_reload_entry(
     reload.assert_not_called()
 
 
+async def test_capability_watch_runs_only_on_device_list_adoptions(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A push-style dispatch (same device list) must not re-fingerprint devices.
+
+    Datapoint types can only change when a fresh device list is adopted (a REST
+    poll or a `functions` broadcast, both of which advance `data_generation`),
+    so the watcher early-outs on every dispatch that re-presents the same list
+    — per-datapoint pushes, scenes broadcasts, the WS-drop notification —
+    instead of recomputing every device's signature on each of them. Proven by
+    mutating the stored list in place: a plain listener dispatch must not see
+    the change (the guard skipped the walk), while the next adoption of that
+    same list must still schedule the capability reload.
+    """
+    coordinator = init_integration.runtime_data
+    for device in coordinator.data:
+        if device["id"] == "idblind1":
+            device["datapoints"].append(
+                {"id": "idblind1-x", "type": "color_temperature", "values": []}
+            )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+    reload.assert_not_called()
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_set_updated_data(coordinator.data)
+        await hass.async_block_till_done()
+    reload.assert_called_once_with(init_integration.entry_id)
+
+
 async def test_entity_availability_tracks_connection(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -1569,6 +1599,61 @@ async def test_device_area_self_heals_when_groups_arrive_later(
         area_reg = ar.async_get(hass)
         assert area_reg.async_get_area(device_entry.area_id).name == "Living Room"
         assert "sofa_lamp" in entry.data[DATA_AREA_ASSIGNED]
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_area_placement_runs_only_on_device_list_adoptions(
+    hass: HomeAssistant,
+) -> None:
+    """A push-style dispatch (same device list) must not re-run area placement.
+
+    Every per-datapoint push notifies coordinator listeners, and the placement
+    walk is O(devices + registry) — so it early-outs unless a fresh device list
+    was adopted (`data_generation` advanced). Rooms that arrive *between*
+    adoptions (here: the WebSocket delivering groups the REST fetch missed)
+    therefore take effect on the next adoption, not on the next value push.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[_grouped_lamp()]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = entry.runtime_data
+        coordinator.groups = [{"id": "grp-living", "name": "Living Room"}]
+        # A push-style dispatch re-presents the same device list: the guard
+        # skips the walk, so the lamp is NOT placed yet.
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        dev_reg = dr.async_get(hass)
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry.area_id is None
+
+        # The next adoption (a poll or a `functions` broadcast) places it.
+        coordinator.async_set_updated_data([_grouped_lamp()])
+        await hass.async_block_till_done()
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry.area_id is not None
 
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
