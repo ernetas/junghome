@@ -151,6 +151,15 @@ Common `values` keys by device type:
 > toggled in the JUNG HOME app. The integration gates HA's tilt features on that
 > datapoint and reloads the entry when a device's datapoint set changes so the
 > capability is rebuilt (see `_register_capability_reload` in `__init__.py`).
+>
+> That datapoint is also the only thing the gateway offers to tell a venetian
+> blind from a roller shutter — the middleware calls both a `WindowCover`, and
+> neither the function `type` nor any datapoint carries a product hint. So the
+> integration derives HA's cover device class from it (`_device_class` in
+> `cover.py`): `angle` present ⇒ slats ⇒ `blind`; position only ⇒ `shutter`; and
+> a cover the user flagged as inverted ⇒ `awning` (that flag wins, an awning
+> having no slats). Hard-coding `blind`, as the integration first did, gave
+> every roller shutter slat-oriented controls and icons in the HA UI.
 
 > **A Thermostat's `switch` datapoint is *not* the regulator's on/off — and a room
 > regulator has no on/off at all.** The middleware builds a `Thermostat` from
@@ -198,6 +207,86 @@ Common `values` keys by device type:
 > what "no preset" looks like on the wire — it is the common steady state for
 > any manually chosen target. The integration maps `""` to HA's `PRESET_NONE`
 > on read and never writes `"none"` (selecting "None" in HA is a local no-op).
+
+### Rocker buttons: what a press actually looks like on the wire
+
+A rocker reports **only raw edges** — `"1"` on press, `"0"` on release — on
+`up_request` / `down_request` (`trigger_request` for a single-action device).
+There is no native click, double-click or hold. Two properties of the pipeline
+matter for anyone deriving gestures from these frames:
+
+**1. The gateway suppresses a message only when *nothing* changed.**
+`communicateToAPI` (`services/device_state_service.js`) returns early unless
+`hasChanged`, and `hasChanged` is `isNewValue || isNewMode || isNewVisibility`
+(`device-states.js` `update`). A button state carries a **mode** as well as a
+value — `pushed`, `held` or `released` (`ButtonModes`) — so a *mode* change
+alone is enough to emit a frame. Because the API representation of a rocker
+datapoint carries only the value (`composeDatapointByState` adds extra keys for
+quantity/temperature/level datapoints, but not for button ones), **a mode-only
+change appears on the wire as a repeated identical value**. Archived gateway
+logs show exactly that, e.g. `pushed=1 held=1 pushed=0 released=0` — which
+reaches a client as `1, 1, 0, 0`.
+
+> The gateway therefore already classifies a tap versus a hold internally, but
+> **does not expose that classification over the API**. Any integration has to
+> re-derive from raw edge timing something the gateway knew and discarded. If
+> JUNG ever surfaced the mode, native hold detection would become trivial.
+
+**2. On current DEVICE firmware, one physical tap is reported as TWO
+press/release pairs** — same channel, no sibling involvement. Measured with a
+labelled capture (`tools/ws-capture/capture_ws.py`, 2026-08-02, one rocker,
+gateway 2.1.3; each gesture group separated by silence so nothing is
+mis-attributed):
+
+| Gesture (labelled) | Pairs emitted | Pulse width (press→release) | Gap within the burst (release→press) |
+|---|---|---|---|
+| single click ×6 | **2** every time | 0.40 – 0.49 s | 0.11 – 0.95 s |
+| double click ×5 | **2** every time | 0.40 – 0.53 s | 0.73 – 1.03 s |
+| hold ~3 s ×5 | **1** every time | 2.44 – 3.11 s | — |
+
+```jsonc
+// ONE physical quick click on the up side arrives as:
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"1"}]}}
+{"type":"datapoint","data":{"id":"id...-00c","type":"up_request","values":[{"key":"up_request","value":"0"}]}}
+```
+
+Three facts follow, and they set the design space for any gesture logic:
+
+- **A single click and a double click are indistinguishable.** Both produce
+  two structurally identical pairs, and their intra-burst gap ranges overlap
+  (0.11–0.95 s vs 0.73–1.03 s). No threshold separates them; nothing recovers
+  the distinction after the fact.
+- **Tap vs hold separates perfectly — on pulse *width*, not gaps.** Tap
+  pulses top out at 0.53 s, hold pulses start at 2.44 s: a five-fold empty
+  band. (The tap pulse is ~0.42 s nearly regardless of physical contact time,
+  so it is the device's reporting granularity, not the finger.) A hold
+  threshold anywhere in ~1–2 s is safe; the shipped blueprint's 2 s is fine.
+- **A duplicate-suppression window must be ~1.2 s** (cover the 1.03 s worst
+  gap plus margin). Anything shorter lets some duplicates through; earlier
+  revisions of this doc suggested 0.15–0.25 s from a mis-segmented unlabelled
+  capture — refuted by the labelled one.
+
+**This is a regression, and the gateway's own logs prove it.** The gateway
+middleware logs every button state change, and the 2026-08-01 dump carries an
+archived support snapshot with logs from 2026-06-20 → 2026-07-28 (~900
+events, ~450 press bursts): **1.00 presses per burst** throughout — including
+the very button measured above, clean single pairs on every click. Between
+2026-07-29 and 2026-08-02 something changed it to 2.00. The gateway firmware
+did not change (the June and August dumps are byte-identical builds); the
+JUNG app went 2.1.0 → 2.2.0 in that window, and app 2.2.x is known to update
+*device* firmware / button behaviour (issue #66). The mechanism of the
+doubling is not established — plain BT-Mesh retransmission does not fit
+(gaps up to a second, and rule 1 would have to miss them) — so treat it as
+observed device-firmware behaviour, not an explained one. Gesture logic must
+tolerate BOTH reporting styles: one pair per tap (pre-regression) and two
+(current).
+
+Note also that a rocker's press datapoints are **read-only**
+(`writeable: false`, `UserPermission.ReadOnly` in `PushedUpState.js`) — nothing
+can inject a button edge over the API, so duplicated edges always originate at
+the device or the mesh, never from a client.
 
 ### Other command types
 

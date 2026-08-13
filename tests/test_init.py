@@ -1120,8 +1120,10 @@ async def test_area_for_device_tolerates_malformed_gateway_json(
 
     Same hardening contract as ``color_temp_range_for_device``: an unhashable
     group id or parent entry (a list, a dict) raised ``TypeError`` from dict
-    construction/lookup inside a coordinator listener — which would also skip
-    every listener queued after it in the same dispatch.
+    construction/lookup inside a coordinator listener. HA contains a raising
+    listener (each callback runs in its own try/except; the rest still
+    dispatch), but that logs a full traceback for merely-malformed gateway
+    data on every refresh, and area assignment silently stops for the device.
     """
     coordinator = bare_coordinator(hass)
     coordinator.groups = [

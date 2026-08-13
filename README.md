@@ -16,6 +16,8 @@ is required.
   gateway.
 - **Sockets** — on/off plus their live meter readings (power, current, …).
 - **Blinds / shutters (covers)** — open/close/stop, position, and slat tilt.
+  Covers that expose slat tilt show up as blinds; position-only ones as roller
+  shutters, with the matching icons and controls.
   **Awnings** report position inverted (their motor mounts the opposite way);
   flag them under Settings → Devices & Services → Jung Home → **Configure**
   and they read correctly, with an awning icon.
@@ -126,13 +128,12 @@ derived in an automation — a ready-made **blueprint** does this for you:
 
 Import the blueprint by URL (Settings → Automations & scenes → Blueprints →
 Import), select the button's event entity/entities, and assign actions for
-single / double / hold. **Which entities to select depends on your firmware**:
-some gateways echo a spurious edge onto the sibling up/down channel on every
-press, which reads as a false double-click — if that's yours, select **only**
-the one channel that reliably reports every gesture; select both only if your
-button genuinely alternates channels per press with no echoes. The
-[guide](docs/example-button-automation.md) shows how to check with a debug
-logger.
+single / double / hold. **One caveat before relying on double-click**: current
+JUNG device firmware (mid-2026) can report one quick tap as *two*
+press/release pairs on the same channel, which makes a single click
+indistinguishable from a double — the
+[guide](docs/example-button-automation.md) shows how to measure your buttons,
+and what stays fully reliable (single and hold) if yours are affected.
 
 ## Scenes
 

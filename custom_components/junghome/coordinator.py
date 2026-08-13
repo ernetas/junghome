@@ -224,12 +224,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # the poll's snapshot before it is adopted — the snapshot was generated
         # before the push, so adopting it as-is briefly reverted the pushed
         # (or command-confirmed) value until the next push or poll healed it.
-        # None outside a poll, so the steady state records nothing. Polls CAN
-        # overlap (DataUpdateCoordinator holds no lock: the 60 s schedule, the
-        # unmatched-push request_refresh and the connect-time resync are
-        # independent), so the dict is shared and refcounted via
-        # `_polls_in_flight` — replacing it per-poll would clobber pushes
-        # recorded for a poll still in flight.
+        # None outside a poll, so the steady state records nothing.
+        #
+        # On the pinned HA, polls can NOT actually overlap: every refresh path
+        # — the 60 s schedule (`_handle_refresh_interval`), a manual
+        # `async_refresh`, and the debounced `async_request_refresh` — takes
+        # the same `_debounced_refresh.async_lock()` before calling
+        # `_async_refresh` (verified in helpers/update_coordinator.py; an
+        # earlier revision of this comment claimed the opposite from reading
+        # `_async_refresh` alone and missing the lock in its callers). The
+        # `_polls_in_flight` refcount and the shared-dict join below are kept
+        # anyway as cheap insurance: the lock is a *private* HA implementation
+        # detail, and if it ever changes, a replaced-per-poll overlay would
+        # silently clobber pushes recorded for a still-running poll.
         self._poll_push_overlay: dict[str, dict[str, Any]] | None = None
         self._polls_in_flight = 0
         # Bounded log of recent raw WebSocket frames for diagnostics.
@@ -323,10 +330,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_placeholders={"error": str(err)},
             ) from err
         finally:
-            # Leave the overlay open while a concurrent poll is still fetching
-            # (this poll takes a snapshot copy — applied synchronously below,
-            # so the still-recording dict cannot mutate it mid-walk); the last
-            # poll out closes it. On the failure paths above the collected
+            # Insurance path (see the `_poll_push_overlay` comment in
+            # `__init__`: on the pinned HA every refresh path serializes on
+            # the debouncer lock, so `_polls_in_flight` never actually
+            # exceeds 1): should polls ever overlap again, leave the overlay
+            # open while another poll is still fetching (this poll takes a
+            # snapshot copy — applied synchronously below, so the
+            # still-recording dict cannot mutate it mid-walk); the last poll
+            # out closes it. On the failure paths above the collected
             # overlay is simply discarded: there is no snapshot to correct,
             # and a failed poll leaves `self.data` (with the pushes already
             # merged in) untouched.
@@ -531,8 +542,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         Hardened exactly like ``color_temp_range_for_device`` below: groups and
         parent ids are untrusted gateway JSON, and an unhashable id (a list, a
         dict) must not raise ``TypeError`` out of the ``_assign_areas``
-        coordinator listener — that would also skip every listener queued after
-        it in the same dispatch.
+        coordinator listener. (HA's ``async_update_listeners`` does contain a
+        raising listener — each callback runs in its own try/except and the
+        rest still dispatch — but that containment logs a full traceback for
+        what is merely malformed gateway data, on every refresh, and area
+        assignment for the device silently stops happening.)
         """
         parents = device.get("parent_groups") or []
         if not isinstance(parents, (list, tuple)) or not parents:
