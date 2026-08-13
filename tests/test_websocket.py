@@ -531,3 +531,22 @@ async def test_dispatch_logs_unparseable_and_untyped_frames(
     coordinator._dispatch_text_frame('{"type": 42, "data": {}}')
     assert list(coordinator.ws_frame_log) == ["not json", '{"type": 42, "data": {}}']
     assert coordinator.ws_last_frame_by_type == {}
+
+
+async def test_dispatch_contains_absurdly_nested_frames(
+    hass: HomeAssistant,
+) -> None:
+    """A frame that overflows the JSON parser's stack must not escape dispatch.
+
+    CPython's C parser raises ``RecursionError`` (not ``JSONDecodeError``) on
+    absurdly nested input — around a million brackets on 3.14. An uncaught
+    escape here would propagate into the receive loop and tear down a healthy
+    session, violating "a malformed frame must never tear down a healthy
+    session"; the frame must instead land (truncated) in the rolling
+    diagnostics log like any other unparseable frame.
+    """
+    coordinator = bare_coordinator(hass)
+    depth = 5_000_000  # far beyond any thread's stack, so it overflows everywhere
+    coordinator._dispatch_text_frame("[" * depth + "]" * depth)  # must not raise
+    assert coordinator.ws_frame_log[-1].endswith("…[truncated]")
+    assert coordinator.ws_last_frame_by_type == {}

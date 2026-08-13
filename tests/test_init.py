@@ -1661,6 +1661,190 @@ async def test_area_placement_runs_only_on_device_list_adoptions(
         await hass.async_block_till_done()
 
 
+async def test_runtime_added_device_is_placed_on_the_next_dispatch(
+    hass: HomeAssistant,
+) -> None:
+    """A device arriving in an adoption is placed on the NEXT dispatch.
+
+    No walk the adoption itself triggers can place the new device, because its
+    registry entry does not exist yet during any of them: the adoption
+    dispatch runs the assigner before the platforms' scheduled entity-add task,
+    and the refresh HA core requests while adding the entity
+    (``update_before_add`` → ``async_device_update`` →
+    ``async_request_refresh``) runs BEFORE the device is registered. The
+    assigner therefore leaves the generation unrecorded once, so the very next
+    dispatch — typically the new device's own first value pushes, seconds
+    away — retries the walk and places it, instead of waiting out the 60 s
+    poll.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    devices_mock = AsyncMock(return_value=[])
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", devices_mock
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=[{"id": "grp-living", "name": "Living Room"}]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+
+        # The gateway now reports a new device: a `functions` broadcast adopts
+        # it, and the entity-add-triggered refresh (which polls) agrees. Both
+        # of those adoptions walk before the device's registry entry exists —
+        # only the armed retry, consumed by a later dispatch, can place it.
+        devices_mock.return_value = [_grouped_lamp()]
+        coordinator.async_set_updated_data([_grouped_lamp()])
+        await hass.async_block_till_done()
+
+        # A push-style dispatch (no new adoption) is all it takes.
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        dev_reg = dr.async_get(hass)
+        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert device_entry is not None
+        assert device_entry.area_id is not None
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_area_placement_retry_is_bounded_for_unplaceable_devices(
+    hass: HomeAssistant,
+) -> None:
+    """The follow-up walk happens exactly once per adoption.
+
+    A grouped device no platform supports never gets a registry entry, so its
+    placement can never succeed. The retry must not keep the per-push walk
+    open for it: one follow-up dispatch re-walks, then the guard settles until
+    the next adoption.
+    """
+    unsupported = {
+        "id": "idmyst",
+        "type": "Mystery",
+        "label": "Mystery Box",
+        "parent_groups": ["grp-living"],
+        "datapoints": [],
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(return_value=[{"id": "grp-living", "name": "Living Room"}]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+
+        # No platform claims a "Mystery" device, so no entity-add refresh
+        # follows this adoption and the retry stays armed for the next
+        # dispatch.
+        coordinator.async_set_updated_data([unsupported])
+        await hass.async_block_till_done()
+
+        # The walk calls `area_for_device` once per device, so counting those
+        # calls counts the walks.
+        with patch.object(
+            coordinator, "area_for_device", wraps=coordinator.area_for_device
+        ) as walked:
+            coordinator.async_update_listeners()  # the one follow-up walk
+            await hass.async_block_till_done()
+            assert walked.call_count == 1
+            coordinator.async_update_listeners()  # settled: no walk
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+            assert walked.call_count == 1
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_area_placement_skips_colliding_slugs(
+    hass: HomeAssistant,
+) -> None:
+    """A slug shared by two devices is never placed; unique slugs still are.
+
+    Two labels that slug identically share ONE registry device, so which room
+    the shared slug would map to depends on device-list order — an arbitrary
+    choice between the two devices' rooms. The assigner skips colliding slugs
+    (mirroring the capability watcher's `duplicate_slugs` guard) instead of
+    placing the shared device in whichever room happened to come last.
+    """
+    lamp_a = _grouped_lamp()
+    lamp_b = _grouped_lamp()
+    lamp_b["id"] = "idlamp2"
+    lamp_b["label"] = "Sofa-Lamp"  # slugify -> sofa_lamp, same as lamp_a
+    lamp_b["parent_groups"] = ["grp-kitchen"]
+    desk = _grouped_lamp()
+    desk["id"] = "idlamp3"
+    desk["label"] = "Desk Lamp"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[lamp_a, lamp_b, desk]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            AsyncMock(
+                return_value=[
+                    {"id": "grp-living", "name": "Living Room"},
+                    {"id": "grp-kitchen", "name": "Kitchen"},
+                ]
+            ),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        dev_reg = dr.async_get(hass)
+        shared = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        assert shared is not None
+        assert shared.area_id is None  # ambiguous room: never auto-placed
+        placed = dev_reg.async_get_device(identifiers={(DOMAIN, "desk_lamp")})
+        assert placed.area_id is not None  # unique slugs are unaffected
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_gateway_connectivity_sensor(
     hass: HomeAssistant, init_integration
 ) -> None:

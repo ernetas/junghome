@@ -827,7 +827,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # runs for every frame a chatty gateway pushes).
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, RecursionError) as e:
+            # RecursionError included: the C parser overflows the stack on
+            # absurdly nested input (~1M brackets on CPython 3.14), and this
+            # except is all that stands between the parse and the receive
+            # loop — "a malformed frame must never tear down a healthy
+            # session" has to hold for that frame too.
             # Still recorded for diagnostics — the rolling log should show
             # exactly what the gateway sent — just never keyed by type.
             self._log_ws_frame(raw, None)
