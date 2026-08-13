@@ -265,9 +265,10 @@ them without new evidence wastes a session.
 - **No `services.py`** — exempt in `quality_scale.yaml`; reconsider only with
   a real use case.
 - **`JungHomeEntity.available` does not check the entity's own device against
-  `coordinator.data`** — deliberate: the pruner's 3-poll debounce bounds the
-  stale window, and a naive check would flap on every partial poll. Revisit
-  only by sharing the debounce counter.
+  `coordinator.data`** — deliberate: the pruner's 10-poll debounce
+  (`STALE_DEVICE_PRUNE_MISSES`) bounds the stale window, and a naive check
+  would flap on every partial poll. Revisit only by sharing the debounce
+  counter.
 - **A partial push cannot blank sibling `values` keys** — the merge is
   per-key, not a list replacement. `ws_last_frame_by_type` is bounded by the
   gateway's frame-type vocabulary.

@@ -123,11 +123,26 @@ def _register_capability_reload(
     capability_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
     warned_collisions: set[str] = set()
     reload_scheduled = False
+    # The last device-list adoption this watcher has fingerprinted, mirroring
+    # the stale-device pruner's guard. Capability signatures key on datapoint
+    # *types*, and those can only change when the coordinator adopts a fresh
+    # device list (a REST poll or a `functions` broadcast — both bump
+    # `data_generation`). Every other dispatch that reaches this listener
+    # (per-datapoint pushes, scenes broadcasts, the WS-drop notification)
+    # re-presents the SAME list, so re-fingerprinting every device on each of
+    # them was pure waste — on a gateway pushing power readings every second,
+    # a steady O(devices) burn for a comparison that could not change.
+    last_generation: int | None = None
 
     @callback
     def _reload_on_capability_change() -> None:
-        nonlocal reload_scheduled
-        if reload_scheduled or not coordinator.data:
+        nonlocal reload_scheduled, last_generation
+        if reload_scheduled:
+            return
+        if coordinator.data_generation == last_generation:
+            return  # same device list as last time; datapoint types unchanged
+        last_generation = coordinator.data_generation
+        if not coordinator.data:
             return
         # Two devices whose labels slug identically share ONE key in the map
         # below. Without this guard the second overwrote the first's signature
@@ -256,6 +271,85 @@ def _make_stale_device_pruner(
     return _prune_stale_devices
 
 
+def _make_area_assigner(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> Callable[[], None]:
+    """Build the callback that places devices in their gateway room's area."""
+    # The last device-list adoption this placer has walked, mirroring the
+    # stale-device pruner's guard: placement inputs (device membership and the
+    # rooms they map to) only change with an adopted list, so running the
+    # O(devices + registry) walk on every per-datapoint push was pure waste.
+    # The trade: a groups list that arrives *between* adoptions (the WS
+    # handshake delivering rooms the REST fetch missed) now places waiting
+    # devices on the next adoption — the connect-time refresh or, worst case,
+    # the next 60 s poll — instead of on the next unrelated push.
+    last_generation: int | None = None
+
+    @callback
+    def _assign_areas() -> None:
+        """Auto-place devices that have no area yet, once each.
+
+        Runs after the platforms have created their devices (and again on each
+        device-list adoption, so devices added at runtime are placed too). Two
+        rules keep this from ever disturbing an existing setup:
+
+        1. a device is placed only if it currently has **no** area, so an area
+           the user chose is never overwritten; and
+        2. every device is considered exactly **once** — the decision is
+           recorded in the entry so that a device whose area the user later
+           cleared on purpose is not silently re-placed on the next refresh.
+
+        Area lookup is by name, so a group matching an existing area links to
+        it rather than creating a duplicate.
+        """
+        nonlocal last_generation
+        if coordinator.data_generation == last_generation:
+            return  # same device list as last time; nothing new to place
+        last_generation = coordinator.data_generation
+        if not coordinator.data:
+            return  # nothing to place on an empty/failed poll
+        area_by_slug = {
+            device_slug(device): room
+            for device in coordinator.data
+            if (room := coordinator.area_for_device(device))
+        }
+        if not area_by_slug:
+            return  # gateway reports no rooms (or none could be resolved)
+
+        considered = set(entry.data.get(DATA_AREA_ASSIGNED, []))
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+        newly_considered: set[str] = set()
+        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            for domain, slug in device_entry.identifiers:
+                if domain != DOMAIN or slug in considered:
+                    continue
+                area_name = area_by_slug.get(slug)
+                if area_name is None:
+                    continue  # no room for this device; reconsider it later
+                if device_entry.area_id is None:
+                    area = area_reg.async_get_or_create(area_name)
+                    dev_reg.async_update_device(device_entry.id, area_id=area.id)
+                # Recorded either way: a device the user had already placed is
+                # settled too, and must not be auto-placed if later cleared.
+                newly_considered.add(slug)
+
+        if newly_considered:
+            # A data-only update; the entry's update listener ignores it (it
+            # acts on host/options changes), so this can't cause a reload loop.
+            hass.config_entries.async_update_entry(
+                entry,
+                data={
+                    **entry.data,
+                    DATA_AREA_ASSIGNED: sorted(considered | newly_considered),
+                },
+            )
+
+    return _assign_areas
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Jung Home integration."""
     return True
@@ -336,62 +430,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     entry.async_on_unload(coordinator.async_add_listener(_prune_stale_devices))
 
     # Place devices in the Home Assistant area matching their gateway group.
-    @callback
-    def _assign_areas() -> None:
-        """Auto-place devices that have no area yet, once each.
-
-        Runs after the platforms have created their devices (and again on each
-        refresh, so devices added at runtime are placed too). Two rules keep
-        this from ever disturbing an existing setup:
-
-        1. a device is placed only if it currently has **no** area, so an area
-           the user chose is never overwritten; and
-        2. every device is considered exactly **once** — the decision is
-           recorded in the entry so that a device whose area the user later
-           cleared on purpose is not silently re-placed on the next refresh.
-
-        Area lookup is by name, so a group matching an existing area links to
-        it rather than creating a duplicate.
-        """
-        if not coordinator.data:
-            return  # nothing to place on an empty/failed poll
-        area_by_slug = {
-            device_slug(device): room
-            for device in coordinator.data
-            if (room := coordinator.area_for_device(device))
-        }
-        if not area_by_slug:
-            return  # gateway reports no rooms (or none could be resolved)
-
-        considered = set(entry.data.get(DATA_AREA_ASSIGNED, []))
-        dev_reg = dr.async_get(hass)
-        area_reg = ar.async_get(hass)
-        newly_considered: set[str] = set()
-        for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-            for domain, slug in device_entry.identifiers:
-                if domain != DOMAIN or slug in considered:
-                    continue
-                area_name = area_by_slug.get(slug)
-                if area_name is None:
-                    continue  # no room for this device; reconsider it later
-                if device_entry.area_id is None:
-                    area = area_reg.async_get_or_create(area_name)
-                    dev_reg.async_update_device(device_entry.id, area_id=area.id)
-                # Recorded either way: a device the user had already placed is
-                # settled too, and must not be auto-placed if later cleared.
-                newly_considered.add(slug)
-
-        if newly_considered:
-            # A data-only update; the reload listener below ignores it (it acts
-            # on host/options changes), so this does not cause a reload loop.
-            hass.config_entries.async_update_entry(
-                entry,
-                data={
-                    **entry.data,
-                    DATA_AREA_ASSIGNED: sorted(considered | newly_considered),
-                },
-            )
-
+    _assign_areas = _make_area_assigner(hass, entry, coordinator)
     _assign_areas()
     entry.async_on_unload(coordinator.async_add_listener(_assign_areas))
 

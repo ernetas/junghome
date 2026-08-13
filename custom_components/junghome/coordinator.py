@@ -247,12 +247,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.ws_last_frame_by_type: dict[str, str] = {}
         # Monotonic count of device-list adoptions: bumped by every successful
         # REST poll and every `functions` broadcast — the only two events that
-        # can change device *membership*. Listeners that debounce on "consecutive
-        # polls" (the stale-device pruner) compare this instead of counting raw
-        # dispatches: pushes, scenes broadcasts and the WS-drop notification all
-        # call async_update_listeners too, and counting those shrank the
-        # pruner's 10-poll window during a WS flap or a scene-editing session
-        # while a device was transiently missing from one poll.
+        # can change device *membership*. Listeners whose work depends only on
+        # the adopted list (the stale-device pruner, the area assigner and the
+        # capability watcher in __init__.py) compare this instead of counting
+        # raw dispatches: pushes, scenes broadcasts and the WS-drop
+        # notification all call async_update_listeners too, and counting those
+        # shrank the pruner's 10-poll window during a WS flap or a
+        # scene-editing session while a device was transiently missing from
+        # one poll — and re-running the assigner/watcher's O(devices) walks on
+        # every push was steady waste on a chatty gateway.
         self.data_generation = 0
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
@@ -819,9 +822,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         otherwise healthy connection.
         """
         _LOGGER.debug("Received WebSocket message: %s", raw)
-        self._log_ws_frame(raw)
+        # Parse exactly once; the diagnostics logger below reuses this parse's
+        # frame type instead of decoding the frame a second time (this path
+        # runs for every frame a chatty gateway pushes).
         try:
             data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Still recorded for diagnostics — the rolling log should show
+            # exactly what the gateway sent — just never keyed by type.
+            self._log_ws_frame(raw, None)
+            _LOGGER.error("Error decoding WebSocket message: %s", e)
+            return
+        frame_type = data.get("type") if isinstance(data, dict) else None
+        self._log_ws_frame(raw, frame_type if isinstance(frame_type, str) else None)
+        try:
             # Every frame is `{"type": ..., "data": ...}`; a bare list or JSON
             # scalar ("hello", 42) is not a frame. Rejecting it here keeps it
             # a clean log line instead of an AttributeError in the catch-all.
@@ -857,8 +871,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     _LOGGER.debug("Received message frame: %s", data)
                 return
             self._handle_websocket_message(data)
-        except json.JSONDecodeError as e:
-            _LOGGER.error("Error decoding WebSocket message: %s", e)
         except Exception as e:
             _LOGGER.error("Unexpected error handling WebSocket message: %s", e)
             _LOGGER.error("Message content: %s", raw)
@@ -950,21 +962,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if not self._closing:
             self.async_update_listeners()
 
-    def _log_ws_frame(self, raw: str) -> None:
+    def _log_ws_frame(self, raw: str, frame_type: str | None) -> None:
         """Record a raw WebSocket frame for diagnostics.
 
+        ``frame_type`` is the frame's ``type`` field from the caller's single
+        ``json.loads`` (``_dispatch_text_frame``), or ``None`` for a frame that
+        is unparseable or carries no usable type — decoding the frame a second
+        time here doubled the JSON work on the hottest path the integration has.
         The per-type store keeps the latest frame of each type IN FULL — it holds
         at most one frame per type, so it cannot grow unbounded, and keeping the
         connect-time handshake (functions/groups/scenes/version/message) complete
         makes it directly comparable to the raw wire format. The rolling buffer,
         which fills with high-frequency datapoint pushes, stays truncated.
         """
-        frame_type = None
-        try:
-            frame_type = json.loads(raw).get("type")
-        except (json.JSONDecodeError, AttributeError):
-            pass
-        if isinstance(frame_type, str):
+        if frame_type is not None:
             self.ws_last_frame_by_type[frame_type] = raw
         if len(raw) > WS_FRAME_MAX_CHARS:
             raw = raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
