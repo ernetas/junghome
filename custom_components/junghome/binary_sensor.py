@@ -116,6 +116,8 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this detector changed
         datapoint = self._find_datapoint(self._datapoint_id)
         if datapoint:
             self._is_on = self._get_state_from_datapoint(datapoint)

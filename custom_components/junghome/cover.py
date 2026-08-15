@@ -272,6 +272,8 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this cover changed
         # Refresh position/tilt only from their own datapoint's push (see
         # JungHomeEntity._should_refresh) so a level echo can't momentarily reset
         # tilt to the stale snapshot value, and vice versa.

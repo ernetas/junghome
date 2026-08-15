@@ -13,6 +13,8 @@ their own ``_handle_coordinator_update`` write logic (which intentionally
 differs between platforms).
 """
 
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -151,3 +153,45 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         """
         pushed = self.coordinator.pushed_datapoint_id
         return pushed is None or pushed == datapoint_id
+
+    @callback
+    def _skip_foreign_device_push(self) -> bool:
+        """Whether this dispatch is another device's push and the write can be skipped.
+
+        Every coordinator dispatch notifies every entity, so on a gateway with
+        chatty per-datapoint pushes (a socket reporting power once a second)
+        each frame used to trigger a state-machine write for EVERY entity of
+        the entry — N writes for one changed value. A per-datapoint push
+        mutates exactly one datapoint dict of exactly one device, so entities
+        of every *other* device can skip their write — under one guard:
+
+        **Availability.** During a push dispatch the coordinator has just set
+        ``last_update_success = True``, and ``ws_connected`` is necessarily
+        True (the push arrived on the live session, and the flag is only
+        cleared when that session ends) — so ``available`` computes True for
+        every entity of this entry, controllable or not. A push therefore can
+        never make an entity UNavailable, but it can make one available again
+        (a failed poll marked everything unavailable; the push proves the
+        gateway alive). The skip is allowed only while the state machine
+        already shows this entity as available; an entity currently
+        unavailable — or not yet written at all — always writes, so the
+        recovery propagates on this very dispatch instead of waiting for the
+        next poll.
+
+        Scoped to the *device*, not to a set of the entity's own datapoint
+        ids, on purpose: entities read sibling datapoints beyond the ones
+        whose ids they store (climate refreshes its ambient temperature from
+        the device's ``quantity`` datapoint on every update), so an id-set
+        scope would wrongly starve those. Everything else fails open: poll,
+        ``functions``-broadcast, scenes and WS-drop dispatches carry no push
+        marker, and a pushed device without an ``id`` sets no marker either —
+        in all those cases every entity writes exactly as before. Entities
+        whose state is NOT a pure function of their device's datapoints plus
+        availability (the gateway connectivity sensor, scenes) do not inherit
+        from this base and are untouched.
+        """
+        pushed_device = self.coordinator.pushed_device_id
+        if pushed_device is None or pushed_device == self._device.get("id"):
+            return False
+        state = self.hass.states.get(self.entity_id)
+        return state is not None and state.state != STATE_UNAVAILABLE
