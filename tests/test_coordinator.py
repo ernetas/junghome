@@ -184,6 +184,97 @@ async def test_poll_failure_discards_the_push_overlay(hass: HomeAssistant) -> No
     assert coordinator._poll_push_overlay is None
 
 
+async def test_functions_broadcast_supersedes_a_racing_polls_membership(
+    hass: HomeAssistant,
+) -> None:
+    """A `functions` broadcast mid-poll must not be overwritten by the poll.
+
+    The broadcast is the authoritative device list, sent on membership change;
+    a poll whose fetch was already in flight carries an OLDER snapshot. The
+    per-datapoint overlay only re-applies *values*, so adopting that snapshot
+    used to resurrect removed devices and drop just-added ones until the next
+    poll healed it. The poll must discard its snapshot in favour of the
+    broadcast's list — including a value pushed for the new device after the
+    broadcast — and must not advance `data_generation` a second time for the
+    membership change listeners already counted.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [_switch_device("0")]  # snapshot without the new device
+
+    added_device = {
+        "id": "dev2",
+        "label": "New Socket",
+        "datapoints": [
+            {
+                "id": "dp-2",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "0"}],
+            }
+        ],
+    }
+    with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        # Membership changes mid-poll: the gateway broadcasts the full list.
+        coordinator._handle_websocket_message(
+            {"type": "functions", "data": [_switch_device("0"), added_device]}
+        )
+        generation_after_broadcast = coordinator.data_generation
+        # The new device pushes a value before the poll returns.
+        coordinator._handle_websocket_message(
+            {
+                "type": "datapoint",
+                "data": {"id": "dp-2", "values": [{"key": "switch", "value": "1"}]},
+            }
+        )
+        release_fetch.set()
+        result = await poll
+
+    # The poll's stale snapshot was discarded: the broadcast's membership (and
+    # the value pushed onto it) survive, and the generation did not advance a
+    # second time for the same membership change.
+    assert [d["id"] for d in result] == ["dev1", "dev2"]
+    assert result[1]["datapoints"][0]["values"] == [{"key": "switch", "value": "1"}]
+    assert coordinator.data_generation == generation_after_broadcast
+    # The overlay closed normally despite the discarded snapshot.
+    assert coordinator._poll_push_overlay is None
+
+
+async def test_a_broadcast_before_the_fetch_does_not_discard_the_poll(
+    hass: HomeAssistant,
+) -> None:
+    """Only a broadcast DURING the fetch supersedes it.
+
+    A broadcast that was fully adopted before the poll's fetch even started is
+    older than the fetch's snapshot, so the poll must adopt normally — the
+    counter is snapshotted at fetch start, not at scheduling time.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    coordinator._handle_websocket_message(
+        {"type": "functions", "data": [_switch_device("0")]}
+    )
+    generation_after_broadcast = coordinator.data_generation
+
+    with patch.object(
+        coordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(return_value=[_switch_device("1")]),
+    ):
+        result = await coordinator._async_update_data()
+
+    # The poll adopted its own (fresher) snapshot and advanced the generation.
+    assert result[0]["datapoints"][0]["values"] == [{"key": "switch", "value": "1"}]
+    assert coordinator.data_generation == generation_after_broadcast + 1
+
+
 async def test_reload_scheduled_when_device_ids_change(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     coordinator._device_ids = {"katilas": "idOLD"}
