@@ -257,6 +257,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # one poll — and re-running the assigner/watcher's O(devices) walks on
         # every push was steady waste on a chatty gateway.
         self.data_generation = 0
+        # Monotonic count of adopted `functions` broadcasts, bumped only by
+        # `_handle_functions_broadcast`. A poll snapshots it when its fetch
+        # starts; a change by the time the fetch returns means a fresher,
+        # authoritative membership was adopted mid-flight and the poll's older
+        # snapshot is discarded (see `_async_update_data`). Deliberately a
+        # separate counter from `data_generation`: polls bump that too, so
+        # comparing generations would make overlapping polls discard each
+        # other's (equally fresh) snapshots.
+        self._functions_broadcasts_seen = 0
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
         # Per-platform (entity-domain -> unique_ids) sets shared with each
@@ -292,6 +301,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def _async_update_data(self) -> list[Device]:
         """Fetch data from the API."""
         _LOGGER.debug("Fetching new device data from Jung Home API")
+        # Snapshot the broadcast counter at fetch start: if it moves while the
+        # HTTP request is in flight, a `functions` broadcast adopted a fresher
+        # authoritative device list mid-poll and this poll's older snapshot
+        # must not overwrite its membership (checked after the fetch below).
+        broadcasts_seen = self._functions_broadcasts_seen
         # Open the push overlay for the duration of the fetch: the response's
         # snapshot is generated before any push that races it, so those pushes
         # must win over the snapshot (see _apply_push_overlay). Joined, not
@@ -349,6 +363,36 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 overlay = dict(self._poll_push_overlay or {})
 
         _LOGGER.debug("API Response: %s", response)
+        if self._functions_broadcasts_seen != broadcasts_seen and self.data is not None:
+            # A `functions` broadcast adopted a fresher, authoritative device
+            # list while this fetch was in flight. The fetch started before
+            # the broadcast, so its snapshot predates the membership change —
+            # adopting it would resurrect removed devices and drop just-added
+            # ones until the next poll healed it (the per-datapoint overlay
+            # only covers *values*, not membership). Keep the broadcast's
+            # list instead: every value change since the snapshot was pushed,
+            # and the live merge path writes pushes into `self.data` (the
+            # broadcast's dicts) directly, so discarding the snapshot loses
+            # nothing. No `await` sits between the fetch completing and this
+            # check, so the counter comparison exactly covers the fetch
+            # window.
+            #
+            # Everything derived from the stale snapshot is skipped with it:
+            # the overlay re-apply (its targets are already current in
+            # `self.data`), the id-churn check (`_handle_functions_broadcast`
+            # already ran it against the broadcast list — running it on the
+            # OLD list here would false-flag the pre-broadcast ids as churn
+            # and schedule a needless reload), and the `data_generation`
+            # bump (listeners already counted this membership when the
+            # broadcast adopted it; advancing again would double-count one
+            # change as two polls in the pruner's miss debounce, and the
+            # no-op dispatch that follows is cheap because the
+            # generation-guarded listeners skip an unchanged generation).
+            _LOGGER.debug(
+                "A functions broadcast superseded this poll's snapshot; "
+                "keeping the broadcast's device list"
+            )
+            return self.data
         if overlay:
             self._apply_push_overlay(response, overlay)
         self._reload_if_device_ids_changed(response)
@@ -1120,6 +1164,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         devices = cast("list[Device]", [d for d in data if isinstance(d, dict)])
         _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
+        # Counted BEFORE the adoption so a poll returning between these lines
+        # cannot slip through: everything here runs synchronously on the event
+        # loop, but the ordering keeps the invariant obvious — by the time any
+        # poll can compare its snapshot, the broadcast is already counted. A
+        # poll whose fetch was in flight across this point discards its older
+        # snapshot in favour of this list (see `_async_update_data`).
+        self._functions_broadcasts_seen += 1
         self._unmatched_push_ids.clear()
         self._reload_if_device_ids_changed(devices)
         self.async_set_updated_data(devices)
