@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Indstillinger for Jung Home-gardiner",
-        "description": "Vælg de gardiner, hvis position rapporteres omvendt, for eksempel markiser. Deres position vendes om, så helt lukket vises som 0 procent (lukket) og helt åben som 100 procent (åben). Lad rullegardiner og persienner være uvalgte.",
+        "title": "Jung Home-indstillinger",
+        "description": "Polling-intervallet bestemmer, hvor ofte gatewayen genindlæses via REST — liveopdateringer ankommer fortsat via WebSocket, så et længere interval reducerer primært belastningen af gatewayen. Vælg de gardiner, hvis position rapporteres omvendt, for eksempel markiser. Deres position vendes om, så helt lukket vises som 0 procent (lukket) og helt åben som 100 procent (åben). Lad rullegardiner og persienner være uvalgte.",
         "data": {
+          "poll_interval": "Polling-interval (sekunder)",
           "inverted_covers": "Omvendte gardiner (markiser)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Der blev ikke fundet nogen gardiner på denne gateway, så der er intet at konfigurere."
     }
   },
   "device_automation": {

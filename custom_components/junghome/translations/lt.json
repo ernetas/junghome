@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "„Jung Home“ žaliuzių parinktys",
-        "description": "Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
+        "title": "Jung Home parinktys",
+        "description": "Apklausos intervalas nustato, kaip dažnai šliuzas iš naujo nuskaitomas per REST — tiesioginiai atnaujinimai ir toliau ateina per WebSocket, todėl ilgesnis intervalas visų pirma sumažina šliuzo apkrovą. Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
         "data": {
+          "poll_interval": "Apklausos intervalas (sekundėmis)",
           "inverted_covers": "Apverstos žaliuzės (markizės)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Šiame sietuve žaliuzių nerasta, todėl nėra ko konfigūruoti."
     }
   },
   "device_automation": {

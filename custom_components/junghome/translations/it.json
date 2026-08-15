@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opzioni tapparelle Jung Home",
-        "description": "Seleziona le tapparelle la cui posizione viene segnalata invertita, come le tende da sole. La loro posizione viene invertita in modo che completamente chiusa risulti 0 percento (chiusa) e completamente aperta 100 percento (aperta). Lascia deselezionate le tapparelle avvolgibili e le veneziane.",
+        "title": "Opzioni Jung Home",
+        "description": "L'intervallo di polling definisce la frequenza di rilettura del gateway via REST — gli aggiornamenti in tempo reale continuano ad arrivare via WebSocket, quindi un intervallo più lungo riduce soprattutto il carico del gateway. Seleziona le tapparelle la cui posizione viene segnalata invertita, come le tende da sole. La loro posizione viene invertita in modo che completamente chiusa risulti 0 percento (chiusa) e completamente aperta 100 percento (aperta). Lascia deselezionate le tapparelle avvolgibili e le veneziane.",
         "data": {
+          "poll_interval": "Intervallo di polling (secondi)",
           "inverted_covers": "Tapparelle invertite (tende da sole)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Non è stata trovata alcuna tapparella su questo gateway, quindi non c'è nulla da configurare."
     }
   },
   "device_automation": {

@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opcje rolet Jung Home",
-        "description": "Zaznacz rolety, których pozycja jest raportowana odwrotnie, na przykład markizy. Ich pozycja zostanie odwrócona, tak aby całkowicie zamknięta była pokazywana jako 0 procent (zamknięta), a całkowicie otwarta jako 100 procent (otwarta). Rolet zewnętrznych i żaluzji nie zaznaczaj.",
+        "title": "Opcje Jung Home",
+        "description": "Interwał odpytywania określa, jak często brama jest ponownie odczytywana przez REST — aktualizacje na żywo nadal przychodzą przez WebSocket, więc dłuższy interwał zmniejsza przede wszystkim obciążenie bramy. Zaznacz rolety, których pozycja jest raportowana odwrotnie, na przykład markizy. Ich pozycja zostanie odwrócona, tak aby całkowicie zamknięta była pokazywana jako 0 procent (zamknięta), a całkowicie otwarta jako 100 procent (otwarta). Rolet zewnętrznych i żaluzji nie zaznaczaj.",
         "data": {
+          "poll_interval": "Interwał odpytywania (sekundy)",
           "inverted_covers": "Rolety odwrócone (markizy)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Na tej bramce nie znaleziono żadnych rolet, więc nie ma nic do skonfigurowania."
     }
   },
   "device_automation": {

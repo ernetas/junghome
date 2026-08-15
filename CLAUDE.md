@@ -8,14 +8,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - `custom_components/junghome/` — the integration.
   - `__init__.py` — setup/unload, one-time stable-ID registry migrations,
     stale-device pruner, area auto-assignment, capability-change reload.
-  - `coordinator.py` — 60 s REST poll + WebSocket push and commands. The WS
+  - `coordinator.py` — REST poll (default 60 s, options-configurable) +
+    WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
     on change) is adopted exactly like a poll result, so device add/remove is
     push-driven; the poll is the backstop.
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
-    (inverted covers).
+    (REST poll interval, inverted covers).
   - `const.py` — `DOMAIN` and the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
     `scene_unique_id`, `is_presence_quantity`).

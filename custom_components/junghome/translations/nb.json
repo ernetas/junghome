@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Alternativer for Jung Home-persienner",
-        "description": "Velg persiennene som rapporterer posisjonen omvendt, for eksempel markiser. Posisjonen deres snus slik at helt lukket vises som 0 prosent (lukket) og helt åpen som 100 prosent (åpen). La rullegardiner og persienner stå uvalgt.",
+        "title": "Jung Home-alternativer",
+        "description": "Polling-intervallet bestemmer hvor ofte gatewayen leses på nytt via REST — direkteoppdateringer fortsetter å komme via WebSocket, så et lengre intervall reduserer først og fremst belastningen på gatewayen. Velg persiennene som rapporterer posisjonen omvendt, for eksempel markiser. Posisjonen deres snus slik at helt lukket vises som 0 prosent (lukket) og helt åpen som 100 prosent (åpen). La rullegardiner og persienner stå uvalgt.",
         "data": {
+          "poll_interval": "Polling-intervall (sekunder)",
           "inverted_covers": "Omvendte persienner (markiser)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Det ble ikke funnet noen persienner på denne gatewayen, så det er ingenting å konfigurere."
     }
   },
   "device_automation": {

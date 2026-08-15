@@ -22,14 +22,48 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.junghome.const import DOMAIN, scene_unique_id
+from custom_components.junghome.const import (
+    CONF_POLL_INTERVAL,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    DOMAIN,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
+    scene_unique_id,
+)
 from custom_components.junghome.coordinator import (
     INITIAL_RECONNECT_DELAY,
     MAX_RECONNECT_FAILURES,
     STABLE_SESSION_SECONDS,
     JungHomeDataUpdateCoordinator,
+    poll_interval_from_options,
 )
 from tests.conftest import _auto_reply_to_datapoint_commands
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        # Absent -> default; in-range values pass through (floats truncated,
+        # matching the int the options form stores).
+        ({}, DEFAULT_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: 300}, 300),
+        ({CONF_POLL_INTERVAL: 120.7}, 120),
+        ({CONF_POLL_INTERVAL: "90"}, 90),
+        # Out-of-range values are clamped, not trusted: a hand-edited 1 must
+        # not hammer the gateway, a huge value must not disable the backstop.
+        ({CONF_POLL_INTERVAL: 1}, MIN_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: 10**6}, MAX_POLL_INTERVAL_SECONDS),
+        # Junk falls back to the default rather than failing entry setup.
+        ({CONF_POLL_INTERVAL: "abc"}, DEFAULT_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: None}, DEFAULT_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: True}, DEFAULT_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: float("nan")}, DEFAULT_POLL_INTERVAL_SECONDS),
+        ({CONF_POLL_INTERVAL: [60]}, DEFAULT_POLL_INTERVAL_SECONDS),
+    ],
+)
+def test_poll_interval_from_options(stored: dict, expected: int) -> None:
+    """The stored option is defaulted, coerced and clamped defensively."""
+    assert poll_interval_from_options(stored) == expected
 
 
 def _coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:

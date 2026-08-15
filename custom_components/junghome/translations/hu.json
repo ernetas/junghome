@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Jung Home árnyékolók beállításai",
-        "description": "Válaszd ki azokat az árnyékolókat, amelyek a pozíciójukat fordítva jelentik, például a napellenzőket. A pozíciójuk megfordul, így a teljesen zárt állapot 0 százalékként (zárva), a teljesen nyitott pedig 100 százalékként (nyitva) jelenik meg. A redőnyöket és a zsalukat hagyd kijelöletlenül.",
+        "title": "Jung Home beállítások",
+        "description": "A lekérdezési időköz határozza meg, milyen gyakran olvassa be újra az átjárót a REST-en keresztül — az élő frissítések továbbra is a WebSocketen érkeznek, így a hosszabb időköz főleg az átjáró terhelését csökkenti. Válaszd ki azokat az árnyékolókat, amelyek a pozíciójukat fordítva jelentik, például a napellenzőket. A pozíciójuk megfordul, így a teljesen zárt állapot 0 százalékként (zárva), a teljesen nyitott pedig 100 százalékként (nyitva) jelenik meg. A redőnyöket és a zsalukat hagyd kijelöletlenül.",
         "data": {
+          "poll_interval": "Lekérdezési időköz (másodperc)",
           "inverted_covers": "Fordított árnyékolók (napellenzők)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Ezen az átjárón nem található árnyékoló, így nincs mit beállítani."
     }
   },
   "device_automation": {

@@ -44,7 +44,8 @@ PLATFORMS: list[Platform] = [
 # re-create them under whatever label the next poll reports, losing the user's
 # entity_id/customisations. Requiring persistence rides out a transient blip.
 #
-# The threshold is deliberately generous (10 polls ~ 10 minutes). Removal is
+# The threshold is deliberately generous (10 polls — about 10 minutes at
+# the default 60 s interval; the window scales with the configured one). Removal is
 # destructive and irreversible from the user's side — it takes the entity
 # registry entries with it, so custom names, areas and entity_ids are lost and
 # automations referencing them break — while the cost of removing late is only
