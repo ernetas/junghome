@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Jung Home Rollo-Optionen",
-        "description": "Wähle alle Rollos aus, deren Position invertiert gemeldet wird, zum Beispiel Markisen. Ihre Position wird umgekehrt, sodass vollständig geschlossen als 0 Prozent (geschlossen) und vollständig geöffnet als 100 Prozent (geöffnet) angezeigt wird. Lasse Rollläden und Jalousien nicht ausgewählt.",
+        "title": "Jung Home-Optionen",
+        "description": "Das Abfrageintervall legt fest, wie oft das Gateway per REST neu ausgelesen wird — Live-Updates kommen unabhängig davon weiter über den WebSocket, ein längeres Intervall verringert also vor allem die Gateway-Last. Wähle alle Rollos aus, deren Position invertiert gemeldet wird, zum Beispiel Markisen. Ihre Position wird umgekehrt, sodass vollständig geschlossen als 0 Prozent (geschlossen) und vollständig geöffnet als 100 Prozent (geöffnet) angezeigt wird. Lasse Rollläden und Jalousien nicht ausgewählt.",
         "data": {
+          "poll_interval": "Abfrageintervall (Sekunden)",
           "inverted_covers": "Invertierte Rollos (Markisen)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Auf diesem Gateway wurden keine Rollos gefunden, es gibt also nichts zu konfigurieren."
     }
   },
   "device_automation": {

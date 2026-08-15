@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Jung Home -verhojen asetukset",
-        "description": "Valitse verhot, joiden asento raportoidaan käänteisenä, kuten markiisit. Niiden asento käännetään, joten täysin suljettu näkyy arvona 0 prosenttia (suljettu) ja täysin avoin arvona 100 prosenttia (avoin). Jätä rullaverhot ja sälekaihtimet valitsematta.",
+        "title": "Jung Home -asetukset",
+        "description": "Kyselyväli määrittää, kuinka usein yhdyskäytävä luetaan uudelleen REST-rajapinnan kautta — live-päivitykset saapuvat edelleen WebSocketin kautta, joten pidempi väli lähinnä vähentää yhdyskäytävän kuormaa. Valitse verhot, joiden asento raportoidaan käänteisenä, kuten markiisit. Niiden asento käännetään, joten täysin suljettu näkyy arvona 0 prosenttia (suljettu) ja täysin avoin arvona 100 prosenttia (avoin). Jätä rullaverhot ja sälekaihtimet valitsematta.",
         "data": {
+          "poll_interval": "Kyselyväli (sekuntia)",
           "inverted_covers": "Käänteiset verhot (markiisit)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Tästä yhdyskäytävästä ei löytynyt verhoja, joten määritettävää ei ole."
     }
   },
   "device_automation": {

@@ -70,13 +70,14 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
     def available(self) -> bool:
         """Return if the device is available.
 
-        The REST poll (every 60 s, 30 s timeout) is an independent, bounded
-        reachability probe, and every WebSocket push also sets
-        ``last_update_success`` True directly (the push path deliberately does
-        NOT go through ``async_set_updated_data``, which would re-arm the poll
-        timer and starve the poll — see ``_handle_websocket_message``). So it
-        reads True while either the poll succeeds or pushes arrive, and flips
-        False within ~90 s once the gateway is truly gone.
+        The REST poll (default every 60 s — options-configurable — with a
+        30 s timeout) is an independent, bounded reachability probe, and every
+        WebSocket push also sets ``last_update_success`` True directly (the
+        push path deliberately does NOT go through ``async_set_updated_data``,
+        which would re-arm the poll timer and starve the poll — see
+        ``_handle_websocket_message``). So it reads True while either the poll
+        succeeds or pushes arrive, and flips False within about one poll
+        interval plus the 30 s timeout once the gateway is truly gone.
 
         Availability deliberately does *not* OR in ``ws_connected``: that flag
         can stay stale-True on a half-open socket the heartbeat hasn't torn down

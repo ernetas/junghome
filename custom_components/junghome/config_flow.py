@@ -20,12 +20,19 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from .const import (
     CONF_IDENTITY_ANCHOR,
     CONF_INVERTED_COVERS,
+    CONF_POLL_INTERVAL,
     CONF_SERIAL,
     DOMAIN,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
     entry_anchor,
     stable_unique_id,
 )
-from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .coordinator import (
+    JungHomeConfigEntry,
+    JungHomeDataUpdateCoordinator,
+    poll_interval_from_options,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,29 +132,25 @@ def _cover_choices(coordinator: JungHomeDataUpdateCoordinator) -> dict[str, str]
 
 
 class JungHomeOptionsFlow(config_entries.OptionsFlow):
-    """Options: flag covers whose reported position is inverted (e.g. awnings)."""
+    """Options: the REST poll interval, and covers whose position is inverted."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Show/persist the set of inverted covers."""
-        if user_input is not None:
-            return self.async_create_entry(
-                data={CONF_INVERTED_COVERS: user_input.get(CONF_INVERTED_COVERS, [])}
-            )
+    def _reconciled_cover_flags(self) -> tuple[dict[str, str], list[str]]:
+        """Return (selectable covers, currently flagged) reconciled with reality.
 
+        A flagged cover missing from the current poll may only be offline, so
+        keep it (labelled by its uid) if its entity still exists — saving must
+        not silently clear it. But a uid with no live cover *and* no registered
+        entity is orphaned: its device was removed or relabelled, which changes
+        the label-derived unique_id, so the platform registered a fresh cover
+        and the stale one was pruned. The old code resurrected such orphans as
+        a permanent, un-removable raw-slug row here; drop them so the list
+        matches the covers that actually exist. Used by both the form build
+        and the no-covers save path, so the two can never disagree about which
+        flags survive.
+        """
         entry: JungHomeConfigEntry = self.config_entry
         coordinator = getattr(entry, "runtime_data", None)
         choices = _cover_choices(coordinator) if coordinator is not None else {}
-        # Reconcile the stored flags against reality. A flagged cover missing from
-        # the current poll may only be offline, so keep it (labelled by its uid)
-        # if its entity still exists — saving must not silently clear it. But a
-        # uid with no live cover *and* no registered entity is orphaned: its
-        # device was removed or relabelled, which changes the label-derived
-        # unique_id, so the platform registered a fresh cover and the stale one
-        # was pruned. The old code resurrected such orphans as a permanent,
-        # un-removable raw-slug row here; drop them so the list matches the
-        # covers that actually exist.
         registered_covers = {
             registry_entry.unique_id
             for registry_entry in er.async_entries_for_config_entry(
@@ -164,27 +167,65 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
                 current.append(uid)
             # A uid in neither set is orphaned: intentionally left out of both
             # lists here, so it is removed from the stored option on save.
-        if not choices:
-            return self.async_abort(reason="no_covers")
+        return choices, current
 
-        options = [
-            selector.SelectOptionDict(value=uid, label=label)
-            for uid, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
-        ]
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_INVERTED_COVERS, default=current
-                ): selector.SelectSelector(
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show/persist the poll interval and the set of inverted covers."""
+        if user_input is not None:
+            new_options: dict[str, Any] = {
+                CONF_POLL_INTERVAL: int(user_input[CONF_POLL_INTERVAL]),
+            }
+            if CONF_INVERTED_COVERS in user_input:
+                new_options[CONF_INVERTED_COVERS] = user_input[CONF_INVERTED_COVERS]
+            else:
+                # The covers selector was not part of the form (no covers to
+                # flag — voluptuous fills the default for a shown-but-empty
+                # field, so a missing key can only mean it wasn't shown). Its
+                # absence is not a deselection: re-run the same reconciliation
+                # the form build uses, so saving the interval keeps exactly
+                # the flags the form would have offered — and still drops
+                # orphaned ones.
+                _, current = self._reconciled_cover_flags()
+                new_options[CONF_INVERTED_COVERS] = current
+            return self.async_create_entry(data=new_options)
+
+        choices, current = self._reconciled_cover_flags()
+        # The interval field is always shown — the covers selector only when
+        # there is a cover to flag. (This step used to abort with "no covers",
+        # which would now lock cover-less installs out of the poll interval.)
+        schema_fields: dict[Any, Any] = {
+            vol.Required(
+                CONF_POLL_INTERVAL,
+                default=poll_interval_from_options(self.config_entry.options),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_POLL_INTERVAL_SECONDS,
+                    max=MAX_POLL_INTERVAL_SECONDS,
+                    step=1,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+        }
+        if choices:
+            options = [
+                selector.SelectOptionDict(value=uid, label=label)
+                for uid, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
+            ]
+            schema_fields[vol.Optional(CONF_INVERTED_COVERS, default=current)] = (
+                selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=options,
                         multiple=True,
                         mode=selector.SelectSelectorMode.LIST,
                     )
                 )
-            }
+            )
+        return self.async_show_form(
+            step_id="init", data_schema=vol.Schema(schema_fields)
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

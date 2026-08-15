@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Options des volets Jung Home",
-        "description": "Sélectionnez les volets dont la position est signalée de manière inversée, comme les stores bannes. Leur position est inversée afin que la position entièrement fermée corresponde à 0 pour cent (fermé) et la position entièrement ouverte à 100 pour cent (ouvert). Laissez les volets roulants et les stores intérieurs non sélectionnés.",
+        "title": "Options Jung Home",
+        "description": "L'intervalle d'interrogation définit la fréquence de relecture de la passerelle via REST — les mises à jour en direct continuent d'arriver via le WebSocket, un intervalle plus long réduit donc surtout la charge de la passerelle. Sélectionnez les volets dont la position est signalée de manière inversée, comme les stores bannes. Leur position est inversée afin que la position entièrement fermée corresponde à 0 pour cent (fermé) et la position entièrement ouverte à 100 pour cent (ouvert). Laissez les volets roulants et les stores intérieurs non sélectionnés.",
         "data": {
+          "poll_interval": "Intervalle d'interrogation (secondes)",
           "inverted_covers": "Volets inversés (stores bannes)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Aucun volet n'a été trouvé sur cette passerelle, il n'y a donc rien à configurer."
     }
   },
   "device_automation": {

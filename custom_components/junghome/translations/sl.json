@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Možnosti senčil Jung Home",
-        "description": "Izberite senčila, katerih položaj se sporoča obrnjeno, na primer tende. Njihov položaj se obrne, tako da se popolnoma zaprto prikaže kot 0 odstotkov (zaprto), popolnoma odprto pa kot 100 odstotkov (odprto). Rolete in žaluzije pustite neizbrane.",
+        "title": "Možnosti Jung Home",
+        "description": "Interval poizvedovanja določa, kako pogosto se prehod znova prebere prek REST — posodobitve v živo še naprej prihajajo prek WebSocketa, zato daljši interval predvsem zmanjša obremenitev prehoda. Izberite senčila, katerih položaj se sporoča obrnjeno, na primer tende. Njihov položaj se obrne, tako da se popolnoma zaprto prikaže kot 0 odstotkov (zaprto), popolnoma odprto pa kot 100 odstotkov (odprto). Rolete in žaluzije pustite neizbrane.",
         "data": {
+          "poll_interval": "Interval poizvedovanja (sekunde)",
           "inverted_covers": "Obrnjena senčila (tende)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Na tem prehodu ni bilo najdenih senčil, zato ni ničesar za nastaviti."
     }
   },
   "device_automation": {
