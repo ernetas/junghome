@@ -187,6 +187,8 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this light changed
         _LOGGER.debug("Handling coordinator update for light %s", self._name)
         # Refresh each attribute only from its own datapoint's push, so a switch=on
         # echo arriving before the brightness echo can't momentarily reset the

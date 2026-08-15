@@ -72,6 +72,36 @@ async def test_climate_created(hass: HomeAssistant, init_integration) -> None:
     assert state.attributes["hvac_action"] == "heating"
 
 
+async def test_ambient_temperature_push_updates_current_temperature(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A push for the thermostat's ambient quantity must update the entity.
+
+    The climate entity refreshes ``current_temperature`` device-wide (it holds
+    no id for the quantity datapoint), which is exactly why the foreign-push
+    write skip is scoped to the DEVICE rather than to the entity's stored
+    datapoint ids — an id-set scope would silently starve this attribute of
+    its own device's pushes until the next poll.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idrtr1-010",
+                "values": [
+                    {"key": "quantity", "value": "22.5"},
+                    {"key": "quantity_label", "value": "Temperature "},
+                    {"key": "quantity_unit", "value": "°C"},
+                ],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get("climate.living_room")
+    assert state.attributes["current_temperature"] == 22.5
+
+
 async def test_climate_hvac_off_is_rejected(
     hass: HomeAssistant, init_integration
 ) -> None:
