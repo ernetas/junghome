@@ -161,10 +161,11 @@ instead of re-deriving:
   by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
-  changes). Guard every such map with `duplicate_slugs()`; its two current
-  users are `_register_capability_reload` and `_reload_if_device_ids_changed`
-  (the device-identifier migration guards the same hazard differently — a
-  registry `async_get_device` clash check before each write).
+  changes). Guard every such map with `duplicate_slugs()`; its three current
+  users are `_register_capability_reload`, `_reload_if_device_ids_changed`
+  and `_make_area_assigner` (the device-identifier migration guards the same
+  hazard differently — a registry `async_get_device` clash check before each
+  write).
 - **Entity naming.** `_attr_has_entity_name = True` with a short `_attr_name`
   (`None` for the device's main feature). The **device** carries the label;
   baking it into the entity name makes HA compose it twice (the old

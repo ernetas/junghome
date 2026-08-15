@@ -286,6 +286,14 @@ def _make_area_assigner(
     # devices on the next adoption — the connect-time refresh or, worst case,
     # the next 60 s poll — instead of on the next unrelated push.
     last_generation: int | None = None
+    # Adoptions granted their one follow-up walk (see the retry note at the
+    # end of `_assign_areas`): a device that arrives *in* an adoption has no
+    # registry entry during any walk the adoption itself can trigger — not
+    # this listener's (discovery has only *scheduled* entity creation), and
+    # not the one from the refresh HA core requests while adding the entity
+    # either (`update_before_add` runs that BEFORE registering the device) —
+    # so without a retry the placement would wait out the next 60 s poll.
+    retried_generation: int | None = None
 
     @callback
     def _assign_areas() -> None:
@@ -304,27 +312,40 @@ def _make_area_assigner(
         Area lookup is by name, so a group matching an existing area links to
         it rather than creating a duplicate.
         """
-        nonlocal last_generation
-        if coordinator.data_generation == last_generation:
+        nonlocal last_generation, retried_generation
+        generation = coordinator.data_generation
+        if generation == last_generation:
             return  # same device list as last time; nothing new to place
-        last_generation = coordinator.data_generation
         if not coordinator.data:
+            last_generation = generation
             return  # nothing to place on an empty/failed poll
+        # Two labels that slug identically share ONE registry device ("the
+        # second loses"), so which room such a slug would map to below depends
+        # on list order — meaningless either way. Skip colliding slugs rather
+        # than place the shared device in an arbitrary one of the two rooms;
+        # the capability watcher already warns the user about the collision.
+        collisions = duplicate_slugs(coordinator.data)
         area_by_slug = {
-            device_slug(device): room
+            slug: room
             for device in coordinator.data
             if (room := coordinator.area_for_device(device))
+            and (slug := device_slug(device)) not in collisions
         }
         if not area_by_slug:
+            last_generation = generation
             return  # gateway reports no rooms (or none could be resolved)
 
         considered = set(entry.data.get(DATA_AREA_ASSIGNED, []))
         dev_reg = dr.async_get(hass)
         area_reg = ar.async_get(hass)
         newly_considered: set[str] = set()
+        registered_slugs: set[str] = set()
         for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
             for domain, slug in device_entry.identifiers:
-                if domain != DOMAIN or slug in considered:
+                if domain != DOMAIN:
+                    continue
+                registered_slugs.add(slug)
+                if slug in considered:
                     continue
                 area_name = area_by_slug.get(slug)
                 if area_name is None:
@@ -335,6 +356,22 @@ def _make_area_assigner(
                 # Recorded either way: a device the user had already placed is
                 # settled too, and must not be auto-placed if later cleared.
                 newly_considered.add(slug)
+
+        # A placeable device with no registry entry yet is one that arrived in
+        # this very adoption: no walk the adoption itself can trigger sees it
+        # registered (see the factory comment above). Leave the generation
+        # unrecorded once, so the next dispatch — typically the new device's
+        # own first pushes, seconds away — retries the walk instead of waiting
+        # out the 60 s poll. Only once, though: a grouped device no platform
+        # supports never gets a registry entry, and retrying it forever would
+        # re-open the per-push walk this guard exists to close.
+        if (
+            set(area_by_slug) - considered - registered_slugs
+            and generation != retried_generation
+        ):
+            retried_generation = generation
+        else:
+            last_generation = generation
 
         if newly_considered:
             # A data-only update; the entry's update listener ignores it (it
@@ -372,8 +409,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # Expose the coordinator as runtime data for the platforms.
     entry.runtime_data = coordinator
 
-    # Fetch room groups before the platforms create entities, so each device can
-    # suggest its area at creation time. Best-effort: never blocks setup.
+    # Fetch room groups before the platforms create entities, so the area
+    # assigner's first pass (right after the platforms are set up below) can
+    # place devices immediately. Best-effort: never blocks setup.
     await coordinator.async_fetch_groups()
     # Same reasoning for scenes: they otherwise arrive only in the WebSocket
     # handshake, which happens after the platforms are set up.
