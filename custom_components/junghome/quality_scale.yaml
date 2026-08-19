@@ -102,7 +102,7 @@ rules:
     comment: >-
       A revoked token is handled by the reauthentication flow rather than a
       repair issue. Losing the WebSocket, however, degrades the integration
-      silently — states keep updating on the 60 s REST poll, so nothing looks
+      silently — states keep updating on the REST poll, so nothing looks
       broken, it just stops being live. After MAX_RECONNECT_FAILURES consecutive
       failed reconnects the coordinator raises a non-fixable warning issue
       (`websocket_push_failure`) and deletes it again on the next successful

@@ -200,7 +200,8 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
             _LOGGER.debug("Updated state for quantity %s: %s", self._name, self._value)
         # Write unconditionally (even when the datapoint is momentarily absent)
         # so the entity's availability tracks the gateway on every coordinator
-        # update, matching the switch platform.
+        # update that reaches here (see `_skip_foreign_device_push`), matching
+        # the switch platform.
         self.async_write_ha_state()
 
     def _get_value_from_datapoint(self, datapoint: Datapoint) -> str | None:

@@ -67,7 +67,7 @@
       "waiting_for_approval": "Patvirtinkite prieigos užklausą „Jung Home“ programėlėje: Nustatymai, Sietuvas, Prieigos teisės, Atviros užklausos."
     },
     "error": {
-      "different_gateway": "Adresas atsako, bet jis priklauso kitam Jung Home šliuzui nei šis įrašas.",
+      "different_gateway": "Adresas atsako, bet jis priklauso kitam Jung Home sietuvui nei šis įrašas.",
       "invalid_host": "Serveris netinkamas.",
       "cannot_connect": "Nepavyko prisijungti prie sietuvo.",
       "invalid_auth": "Sietuvas atmetė tinklo rakto slaptažodį.",
@@ -84,10 +84,13 @@
     "step": {
       "init": {
         "title": "Jung Home parinktys",
-        "description": "Apklausos intervalas nustato, kaip dažnai šliuzas iš naujo nuskaitomas per REST — tiesioginiai atnaujinimai ir toliau ateina per WebSocket, todėl ilgesnis intervalas visų pirma sumažina šliuzo apkrovą. Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
+        "description": "Apklausos intervalas nustato, kaip dažnai sietuvas iš naujo nuskaitomas per REST — tiesioginiai atnaujinimai ir toliau ateina per WebSocket, todėl ilgesnis intervalas visų pirma sumažina sietuvo apkrovą. Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
         "data": {
           "poll_interval": "Apklausos intervalas (sekundėmis)",
           "inverted_covers": "Apverstos žaliuzės (markizės)"
+        },
+        "data_description": {
+          "poll_interval": "Nuo 30 iki 3600 sekundžių (numatytoji reikšmė – 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "„Jung Home“ tiesioginiai atnaujinimai sustojo",
-      "description": "„Home Assistant“ {failures} kartus iš eilės nepavyko iš naujo prisijungti prie „Jung Home“ sietuvo adresu {host}. Įrenginių būsenos nebesiunčiamos akimirksniu ir dabar atnaujinamos tik kartą per minutę. Patikrinkite, ar sietuvas įjungtas ir pasiekiamas jūsų tinkle. Ši problema išnyks savaime, kai ryšys bus atkurtas."
+      "description": "„Home Assistant“ {failures} kartus iš eilės nepavyko iš naujo prisijungti prie „Jung Home“ sietuvo adresu {host}. Įrenginių būsenos nebesiunčiamos akimirksniu ir dabar atnaujinamos tik periodinės REST apklausos metu. Patikrinkite, ar sietuvas įjungtas ir pasiekiamas jūsų tinkle. Ši problema išnyks savaime, kai ryšys bus atkurtas."
     }
   }
 }

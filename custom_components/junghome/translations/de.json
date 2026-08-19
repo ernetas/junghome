@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Abfrageintervall (Sekunden)",
           "inverted_covers": "Invertierte Rollos (Markisen)"
+        },
+        "data_description": {
+          "poll_interval": "Zwischen 30 und 3600 Sekunden (Standard: 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Live-Aktualisierungen von Jung Home sind ausgefallen",
-      "description": "Home Assistant konnte sich {failures}-mal in Folge nicht wieder mit dem Jung Home Gateway unter {host} verbinden. Gerätezustände werden nicht mehr sofort übertragen und nur noch einmal pro Minute aktualisiert. Prüfe, ob das Gateway eingeschaltet und im Netzwerk erreichbar ist. Dieses Problem verschwindet von selbst, sobald die Verbindung wiederhergestellt ist."
+      "description": "Home Assistant konnte sich {failures}-mal in Folge nicht wieder mit dem Jung Home Gateway unter {host} verbinden. Gerätezustände werden nicht mehr sofort übertragen und nur noch beim regelmäßigen REST-Abruf aktualisiert. Prüfe, ob das Gateway eingeschaltet und im Netzwerk erreichbar ist. Dieses Problem verschwindet von selbst, sobald die Verbindung wiederhergestellt ist."
     }
   }
 }

@@ -317,3 +317,92 @@ async def test_the_gateway_echo_still_updates_the_socket(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.boiler").state == "off"
+
+
+async def test_push_markers_do_not_survive_their_dispatch(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The push markers must be cleared the moment the dispatch ends.
+
+    ``_skip_foreign_device_push`` reads ``pushed_device_id`` and skips the
+    state write for every entity of another device. That is only safe while
+    the marker lives for exactly one dispatch: a marker that leaked past it
+    would make every non-pushed device's entities stop writing state
+    altogether — poll values would freeze and, worse, they would never go
+    unavailable when the gateway died, because the availability guard only
+    rescues the unavailable -> available direction.
+
+    ``pushed_datapoint_id``'s reset is pinned by the event platform (a leaked
+    marker fires phantom presses); this pins its sibling, which shipped
+    without a guard of its own.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+    assert coordinator.pushed_device_id is None
+    assert coordinator.pushed_datapoint_id is None
+
+    # With the markers cleared, the next failed poll reaches every entity —
+    # including those of the device that pushed last.
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get("switch.boiler").state == "unavailable"
+    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+
+
+async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A sibling datapoint's push must not re-read this socket's switch value.
+
+    The device-scoped skip returns early for *other* devices, so the only
+    dispatches still reaching ``_should_refresh`` are this device's own — and a
+    socket has a sibling that pushes constantly: its power quantity.
+
+    A single-datapoint socket cannot actually reach a stale read today: the
+    command awaits the gateway's echo, and the reply falls through to the merge
+    path, so ``coordinator.data`` already holds the confirmed value by the time
+    the optimistic write runs. The divergent store is therefore *constructed*
+    below. The guard is kept, and pinned here, because the same dispatch is
+    genuinely reachable on a multi-datapoint entity — a light's brightness
+    still holds its pre-command value while the switch echo is being
+    dispatched, which is the flicker ``JungHomeEntity._should_refresh``
+    documents — and because dropping it from one platform and not the others
+    is exactly the asymmetry that hides the next regression.
+    """
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": "switch.boiler"}, blocking=True
+    )
+    assert hass.states.get("switch.boiler").state == "off"
+
+    coordinator = init_integration.runtime_data
+    boiler = next(d for d in coordinator.data if d["label"] == "Boiler")
+    switch_dp = next(dp for dp in boiler["datapoints"] if dp["type"] == "switch")
+    power_dp = next(dp for dp in boiler["datapoints"] if dp["type"] == "quantity")
+    # Re-open the pre-echo window: stored value back to the pre-command "on".
+    switch_dp["values"] = [{"key": "switch", "value": "1"}]
+
+    # The power reading pushes (same device, sibling datapoint).
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": power_dp["id"],
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "42.0"},
+                    {"key": "quantity_label", "value": "Power "},
+                    {"key": "quantity_unit", "value": "W"},
+                ],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state == "off"

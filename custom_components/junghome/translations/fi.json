@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Kyselyväli (sekuntia)",
           "inverted_covers": "Käänteiset verhot (markiisit)"
+        },
+        "data_description": {
+          "poll_interval": "30–3600 sekuntia (oletus 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Jung Homen reaaliaikaiset päivitykset ovat pysähtyneet",
-      "description": "Home Assistant ei onnistunut muodostamaan yhteyttä uudelleen Jung Home -yhdyskäytävään osoitteessa {host} {failures} kertaa peräkkäin. Laitteiden tiloja ei enää lähetetä välittömästi, vaan ne päivittyvät nyt vain kerran minuutissa. Tarkista, että yhdyskäytävä on käynnissä ja tavoitettavissa verkossasi. Tämä ongelma poistuu itsestään, kun yhteys palautuu."
+      "description": "Home Assistant ei onnistunut muodostamaan yhteyttä uudelleen Jung Home -yhdyskäytävään osoitteessa {host} {failures} kertaa peräkkäin. Laitteiden tiloja ei enää lähetetä välittömästi, vaan ne päivittyvät nyt vain säännöllisessä REST-kyselyssä. Tarkista, että yhdyskäytävä on käynnissä ja tavoitettavissa verkossasi. Tämä ongelma poistuu itsestään, kun yhteys palautuu."
     }
   }
 }

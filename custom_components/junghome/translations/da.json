@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Polling-interval (sekunder)",
           "inverted_covers": "Omvendte gardiner (markiser)"
+        },
+        "data_description": {
+          "poll_interval": "Mellem 30 og 3600 sekunder (standard 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Live-opdateringer fra Jung Home er stoppet",
-      "description": "Home Assistant kunne ikke oprette forbindelse til Jung Home-gatewayen på {host} {failures} gange i træk. Enhedstilstande sendes ikke længere med det samme og opdateres nu kun én gang i minuttet. Kontrollér, at gatewayen er tændt og kan nås på dit netværk. Dette problem forsvinder af sig selv, når forbindelsen er genoprettet."
+      "description": "Home Assistant kunne ikke oprette forbindelse til Jung Home-gatewayen på {host} {failures} gange i træk. Enhedstilstande sendes ikke længere med det samme og opdateres nu kun ved den periodiske REST-polling. Kontrollér, at gatewayen er tændt og kan nås på dit netværk. Dette problem forsvinder af sig selv, når forbindelsen er genoprettet."
     }
   }
 }

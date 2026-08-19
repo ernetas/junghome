@@ -246,7 +246,7 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
         await self.coordinator.move_level(self._level_datapoint_id, _MOVE_STOP)
         # A stop ends travel at an unknown position, so the optimistic
         # open/close/set_position write is now stale. Re-read the real level
-        # instead of waiting up to a minute for the next REST poll.
+        # instead of waiting out the next REST poll.
         await self.coordinator.async_request_refresh()
 
     async def async_open_cover_tilt(self, **kwargs: Any) -> None:

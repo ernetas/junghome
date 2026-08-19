@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Interval de sondeig (segons)",
           "inverted_covers": "Persianes invertides (tendals)"
+        },
+        "data_description": {
+          "poll_interval": "Entre 30 i 3600 segons (60 per defecte)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Les actualitzacions en directe de Jung Home s'han aturat",
-      "description": "Home Assistant no ha pogut tornar a connectar-se a la passarel·la Jung Home a {host} {failures} vegades seguides. Els estats dels dispositius ja no s'envien a l'instant i ara només s'actualitzen un cop per minut. Comprova que la passarel·la estigui engegada i sigui accessible a la teva xarxa. Aquest problema desapareixerà tot sol quan es restableixi la connexió."
+      "description": "Home Assistant no ha pogut tornar a connectar-se a la passarel·la Jung Home a {host} {failures} vegades seguides. Els estats dels dispositius ja no s'envien a l'instant i ara només s'actualitzen en el sondeig REST periòdic. Comprova que la passarel·la estigui engegada i sigui accessible a la teva xarxa. Aquest problema desapareixerà tot sol quan es restableixi la connexió."
     }
   }
 }

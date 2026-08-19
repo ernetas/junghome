@@ -84,10 +84,13 @@
     "step": {
       "init": {
         "title": "Jung Home 选项",
-        "description": "轮询间隔决定通过 REST 重新读取网关的频率——实时更新仍会通过 WebSocket 送达，因此更长的间隔主要用于降低网关负载。 选择位置报告相反的窗帘，例如遮阳篷。它们的位置会被翻转，因此完全关闭显示为 0%（关闭），完全打开显示为 100%（打开）。卷帘和百叶帘请不要选择。",
+        "description": "轮询间隔决定通过 REST 重新读取网关的频率——实时更新仍会通过 WebSocket 送达，因此更长的间隔主要用于降低网关负载。选择位置报告相反的窗帘，例如遮阳篷。它们的位置会被翻转，因此完全关闭显示为 0%（关闭），完全打开显示为 100%（打开）。卷帘和百叶帘请不要选择。",
         "data": {
           "poll_interval": "轮询间隔（秒）",
           "inverted_covers": "反向窗帘（遮阳篷）"
+        },
+        "data_description": {
+          "poll_interval": "30 到 3600 秒（默认 60）。"
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Jung Home 实时更新已停止",
-      "description": "Home Assistant 连续 {failures} 次未能重新连接到位于 {host} 的 Jung Home 网关。设备状态不再即时推送，现在每分钟才刷新一次。请检查网关是否已开启并可在您的网络中访问。连接恢复后，此问题将自动消失。"
+      "description": "Home Assistant 连续 {failures} 次未能重新连接到位于 {host} 的 Jung Home 网关。设备状态不再即时推送，现在仅在定期的 REST 轮询时刷新。请检查网关是否已开启并可在您的网络中访问。连接恢复后，此问题将自动消失。"
     }
   }
 }

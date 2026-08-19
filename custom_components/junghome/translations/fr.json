@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Intervalle d'interrogation (secondes)",
           "inverted_covers": "Volets inversés (stores bannes)"
+        },
+        "data_description": {
+          "poll_interval": "Entre 30 et 3600 secondes (60 par défaut)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Les mises à jour en direct de Jung Home se sont arrêtées",
-      "description": "Home Assistant n'a pas réussi à se reconnecter à la passerelle Jung Home à l'adresse {host} {failures} fois de suite. Les états des appareils ne sont plus transmis instantanément et ne se rafraîchissent plus qu'une fois par minute. Vérifiez que la passerelle est allumée et joignable sur votre réseau. Ce problème disparaîtra de lui-même dès que la connexion sera rétablie."
+      "description": "Home Assistant n'a pas réussi à se reconnecter à la passerelle Jung Home à l'adresse {host} {failures} fois de suite. Les états des appareils ne sont plus transmis instantanément et ne se rafraîchissent plus qu'à chaque interrogation REST périodique. Vérifiez que la passerelle est allumée et joignable sur votre réseau. Ce problème disparaîtra de lui-même dès que la connexion sera rétablie."
     }
   }
 }

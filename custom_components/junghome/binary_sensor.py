@@ -15,7 +15,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.const import EntityCategory, Platform
+from homeassistant.const import STATE_ON, EntityCategory, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -123,7 +123,8 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
             self._is_on = self._get_state_from_datapoint(datapoint)
         # Write unconditionally (even when the datapoint is momentarily absent)
         # so the entity's availability tracks the gateway on every coordinator
-        # update, matching the switch platform.
+        # update that reaches here (see `_skip_foreign_device_push`), matching
+        # the switch platform.
         self.async_write_ha_state()
 
     def _get_state_from_datapoint(self, datapoint: Datapoint | None) -> bool | None:
@@ -181,6 +182,28 @@ class JungHomeGatewayConnectivity(
     def is_on(self) -> bool:
         """Return True while the gateway WebSocket is connected."""
         return self.coordinator.ws_connected
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Write state, skipping the pushes that cannot possibly change it.
+
+        This sensor reports ``ws_connected``, and a per-datapoint push cannot
+        change that: the frame arrived on the live session, so the flag is True
+        for the whole dispatch. It is not a ``JungHomeEntity``, so it does not
+        inherit ``_skip_foreign_device_push`` — without a skip of its own, a
+        chatty gateway (a socket reporting power once a second) cost this
+        entity one state-machine write per frame, forever.
+
+        Skipped only while the state machine already agrees the link is up: a
+        push must still be able to flip a stale ``off`` back on — a reconnect
+        whose refresh the debouncer swallowed leaves exactly that — and the
+        recovery has to land on this very dispatch, not a poll later.
+        """
+        if self.coordinator.pushed_datapoint_id is not None:
+            state = self.hass.states.get(self.entity_id)
+            if state is not None and state.state == STATE_ON:
+                return
+        super()._handle_coordinator_update()
 
     @property
     def device_info(self) -> DeviceInfo:

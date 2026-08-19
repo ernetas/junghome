@@ -122,12 +122,18 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry": {
             "data": async_redact_data(entry.data, TO_REDACT),
+            # The options change observable timing by up to 60x (poll interval)
+            # and which covers read inverted, so a report about "stale states"
+            # or "a device took hours to disappear" is unreadable without them.
+            # Redacted through the same key set as `data` for symmetry; nothing
+            # in here is secret today, but a future option might be.
+            "options": async_redact_data(entry.options, TO_REDACT),
             "title": entry.title,
         },
         "gateway_version": coordinator.gateway_version,
         # Whether the live push link is currently up (mirrors the gateway
         # connectivity binary_sensor); a dump taken while it is False explains
-        # why state looks stale (it has fallen back to 1-minute REST polling).
+        # why state looks stale (it has fallen back to REST polling alone).
         "ws_connected": coordinator.ws_connected,
         # When the WebSocket last completed a connect, and the most recent
         # REST/WebSocket failure (if any) — together they show how long a dump

@@ -67,8 +67,11 @@ CONF_INVERTED_COVERS = "inverted_covers"
 # re-clamped when the coordinator reads the stored option (an option written by
 # an older version, or edited by hand, must not produce a torrent of requests
 # or an effectively-disabled backstop):
-# - The floor matches the fetch's own 30 s `asyncio.timeout` — a shorter
-#   interval could not complete a slow fetch before the next one is due.
+# - The floor is the fetch's own 30 s `asyncio.timeout`. Polls cannot overlap
+#   (Home Assistant arms the next one only after the previous finishes), so a
+#   shorter interval is not a correctness hazard — but asking for a re-read
+#   more often than a single fetch can take turns the backstop into
+#   near-continuous load on a slow gateway.
 # - The ceiling (1 h) keeps the pruner's debounce meaningful: it counts
 #   STALE_DEVICE_PRUNE_MISSES *polls*, so the stale-device window scales
 #   linearly with this interval.

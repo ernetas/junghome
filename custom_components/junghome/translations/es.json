@@ -67,7 +67,7 @@
       "waiting_for_approval": "Aprueba la solicitud de acceso en la aplicación Jung Home en Ajustes, Pasarela, Permisos de acceso, Solicitudes abiertas."
     },
     "error": {
-      "different_gateway": "La dirección responde, pero pertenece a una puerta de enlace Jung Home distinta de esta entrada.",
+      "different_gateway": "La dirección responde, pero pertenece a una pasarela Jung Home distinta de esta entrada.",
       "invalid_host": "El host no es válido.",
       "cannot_connect": "No se pudo conectar con la pasarela.",
       "invalid_auth": "La pasarela rechazó la contraseña de la clave de red.",
@@ -84,10 +84,13 @@
     "step": {
       "init": {
         "title": "Opciones de Jung Home",
-        "description": "El intervalo de sondeo define con qué frecuencia se vuelve a leer la puerta de enlace por REST; las actualizaciones en vivo siguen llegando por el WebSocket, por lo que un intervalo más largo reduce sobre todo la carga de la puerta de enlace. Selecciona las persianas cuya posición se comunique invertida, como los toldos. Su posición se invierte para que totalmente cerrada se indique como 0 por ciento (cerrada) y totalmente abierta como 100 por ciento (abierta). Deja sin seleccionar las persianas enrollables y las venecianas.",
+        "description": "El intervalo de sondeo define con qué frecuencia se vuelve a leer la pasarela por REST; las actualizaciones en vivo siguen llegando por el WebSocket, por lo que un intervalo más largo reduce sobre todo la carga de la pasarela. Selecciona las persianas cuya posición se comunique invertida, como los toldos. Su posición se invierte para que totalmente cerrada se indique como 0 por ciento (cerrada) y totalmente abierta como 100 por ciento (abierta). Deja sin seleccionar las persianas enrollables y las venecianas.",
         "data": {
           "poll_interval": "Intervalo de sondeo (segundos)",
           "inverted_covers": "Persianas invertidas (toldos)"
+        },
+        "data_description": {
+          "poll_interval": "Entre 30 y 3600 segundos (60 de forma predeterminada)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Las actualizaciones en directo de Jung Home se han detenido",
-      "description": "Home Assistant no ha podido volver a conectarse a la pasarela Jung Home en {host} {failures} veces seguidas. Los estados de los dispositivos ya no se envían al instante y ahora solo se actualizan una vez por minuto. Comprueba que la pasarela esté encendida y sea accesible en tu red. Este problema desaparecerá por sí solo cuando se restablezca la conexión."
+      "description": "Home Assistant no ha podido volver a conectarse a la pasarela Jung Home en {host} {failures} veces seguidas. Los estados de los dispositivos ya no se envían al instante y ahora solo se actualizan en el sondeo REST periódico. Comprueba que la pasarela esté encendida y sea accesible en tu red. Este problema desaparecerá por sí solo cuando se restablezca la conexión."
     }
   }
 }

@@ -106,9 +106,10 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
                 _LOGGER.debug(
                     "Updated state for socket %s: %s", self._name, self._is_on
                 )
-        # Write unconditionally (even when the datapoint is momentarily absent) so
-        # the entity's availability tracks the gateway on every coordinator update,
-        # matching JungHomeSwitch below.
+        # Write unconditionally (even when the datapoint is momentarily absent)
+        # so the entity's availability tracks the gateway on every coordinator
+        # update that reaches here (see `_skip_foreign_device_push` for the ones
+        # that don't), matching JungHomeSwitch below.
         self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -190,6 +191,7 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
             datapoint = self._find_datapoint(self._datapoint["id"])
             if datapoint is not None:
                 self._attr_is_on = self._get_state_from_datapoint(datapoint)
-        # Write unconditionally (even when the datapoint is momentarily absent) so
-        # the entity's availability tracks the gateway on every coordinator update.
+        # Write unconditionally (even when the datapoint is momentarily absent)
+        # so the entity's availability tracks the gateway on every coordinator
+        # update that reaches here (see `_skip_foreign_device_push`).
         self.async_write_ha_state()

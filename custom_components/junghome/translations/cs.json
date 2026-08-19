@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Interval dotazování (sekundy)",
           "inverted_covers": "Obrácené žaluzie (markýzy)"
+        },
+        "data_description": {
+          "poll_interval": "Mezi 30 a 3600 sekundami (výchozí 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Živé aktualizace Jung Home se zastavily",
-      "description": "Home Assistantu se {failures}× po sobě nepodařilo znovu připojit k bráně Jung Home na adrese {host}. Stavy zařízení už nejsou odesílány okamžitě a obnovují se pouze jednou za minutu. Zkontrolujte, zda je brána zapnutá a dostupná ve vaší síti. Tento problém zmizí sám, jakmile se připojení obnoví."
+      "description": "Home Assistantu se {failures}× po sobě nepodařilo znovu připojit k bráně Jung Home na adrese {host}. Stavy zařízení už nejsou odesílány okamžitě a obnovují se pouze při pravidelném dotazování přes REST. Zkontrolujte, zda je brána zapnutá a dostupná ve vaší síti. Tento problém zmizí sám, jakmile se připojení obnoví."
     }
   }
 }
