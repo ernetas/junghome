@@ -4,8 +4,8 @@ Analysis of the root partition microSD image (`disk_dump/jung/sdc2/`).
 
 **Platform:** Raspberry Pi Zero (armhf), Raspberry Pi OS Debian 13 Trixie
 **Firmware:** v2.1.3 Release (build 2840), built 2026-04-28 from GitLab CI (`lb-connect-gateway/lbc-gw-integration`)
-**Device serial:** `0000000084fb4b1b` · **MAC:** `00:22:d1:05:96:02`
-**mDNS hostname:** `junghome-0022d1059602.local`
+**Device serial:** `<redacted>` · **MAC:** `00:22:d1:xx:xx:xx` (JUNG OUI)
+**mDNS hostname:** `junghome-<mac without separators>.local`
 
 ---
 
@@ -185,7 +185,7 @@ Internet/LAN → :443 (nginx TLS) → :3000 (api-server HTTP)
 | Rescue static IP | `192.168.178.115/24`, gw `192.168.178.1` |
 | IPv6 | Disabled kernel-wide (`net.ipv6.conf.all.disable_ipv6=1`) |
 | mDNS | Avahi, eth0 + IPv4 only |
-| mDNS hostname | `junghome-0022d1059602.local` |
+| mDNS hostname | `junghome-<mac without separators>.local` |
 | Advertised services | `_junghome._tcp:443` and `_workstation._tcp:443` with TXT: version, serial, mac, manufacturer=JUNG |
 | Firewall | No persistent rules; iptables managed at runtime by `firewall.sh` |
 | NetworkManager | Not installed |

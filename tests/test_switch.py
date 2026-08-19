@@ -45,18 +45,24 @@ async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
     assert hass.states.get("switch.button_a_status_led").state == "on"
 
 
-async def test_socket_state_helper_defaults_off(hass: HomeAssistant) -> None:
-    """A socket datapoint without a switch value reads as off (helper fallback)."""
+async def test_socket_state_helper_reads_unknown_without_a_value(
+    hass: HomeAssistant,
+) -> None:
+    """A socket datapoint with no switch value reads unknown, not off.
+
+    Absent information is not "off": asserting off would put a fabricated state
+    in history and fire every ``to: "off"`` automation. Same contract as the
+    ``"NaN"`` case (see ``datapoint_bool``).
+    """
     coordinator = bare_coordinator(hass)
     device = {"id": "d", "type": "Socket", "label": "Sock", "datapoints": []}
-    # No "switch" key in values -> _get_state_from_datapoint returns False.
     socket = JungHomeSocket(coordinator, device, {"id": "d-1", "values": []})
-    assert socket.is_on is False
+    assert socket.is_on is None
 
-    # And the status-LED helper likewise defaults off without a status_led value.
+    # And the status-LED helper likewise.
     led_dev = {"id": "r", "type": "RockerSwitch", "label": "R", "datapoints": []}
     led = JungHomeSwitch(coordinator, led_dev, {"id": "r-1", "values": []})
-    assert led.is_on is False
+    assert led.is_on is None
 
 
 async def test_switch_led_handle_update_missing_device_noops(
@@ -406,3 +412,60 @@ async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.boiler").state == "off"
+
+
+async def test_nan_switch_reads_unknown_not_off(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A `"NaN"` switch value must read unknown, never off.
+
+    After three failed BT-Mesh reads the middleware's `onResponseFail` sets the
+    state's value to `NaN`, and `composeDatapointByState` stringifies every
+    value — so the literal `"NaN"` lands on the wire, and `/functions` keeps
+    serving it (the firmware's function assembly has no reachability filter).
+    Field-observed on a real gateway: a mesh outage produced summary lines
+    naming up to 24 unreachable devices at once, and every reboot leaves a
+    window before each node has been read for the first time.
+
+    Read as off, that is indistinguishable from someone switching the load off:
+    history and logbook record an off that never happened and every
+    `to: "off"` automation fires.
+    """
+    coordinator = init_integration.runtime_data
+    assert hass.states.get("switch.boiler").state == "on"
+
+    socket_dp = next(
+        dp["id"]
+        for d in coordinator.data
+        if d["label"] == "Boiler"
+        for dp in d["datapoints"]
+        if dp["type"] == "switch"
+    )
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": socket_dp, "values": [{"key": "switch", "value": "NaN"}]},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state == "unknown"
+
+
+async def test_nan_status_led_reads_unknown_not_off(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The status LED takes the same contract as the socket."""
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idrock1-00e",
+                "values": [{"key": "status_led", "value": "NaN"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.button_a_status_led").state == "unknown"

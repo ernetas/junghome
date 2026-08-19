@@ -9,7 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_value, stable_unique_id
+from .const import datapoint_bool, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
@@ -252,9 +252,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         self._is_on = False
         self.async_write_ha_state()
 
-    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
-        """Extract the state of the light from its datapoint."""
-        return datapoint_value(datapoint, "switch") == "1"
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
+        """Extract the state of the light from its datapoint.
+
+        ``None`` when the gateway reports ``"NaN"`` (it gave up reading the
+        node) — the light reads *unknown*, not off. See ``datapoint_bool``.
+        """
+        return datapoint_bool(datapoint, "switch")
 
     def _get_brightness_from_datapoint(self, datapoint: Datapoint | None) -> int:
         """Extract the brightness of the light from its datapoint."""

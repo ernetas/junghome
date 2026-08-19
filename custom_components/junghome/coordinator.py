@@ -1039,7 +1039,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if self._unavailable_logged:
             # Pair the single WARNING above with a matching recovery line, so an
             # outage has a visible end without trawling debug logs.
-            _LOGGER.warning("Jung Home WebSocket reconnected")
+            _LOGGER.info("Jung Home WebSocket reconnected")
             self._unavailable_logged = False
         ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
 

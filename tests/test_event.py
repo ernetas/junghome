@@ -128,3 +128,34 @@ async def test_all_event_entities(
     """
     entry = await init_platform(Platform.EVENT)
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+async def test_nan_button_state_is_not_an_edge(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A `"NaN"` button value must fire nothing at all.
+
+    The gateway sends it once it has given up reading the node. Treated as a
+    falsy value it became a `depressed` edge — a phantom release, on the entity
+    AND on the bus event that device triggers listen to. These states are
+    `POLL_ONCE`, and an empty value keeps them dirty, so a button that never
+    answers is re-polled every cycle: the phantom would repeat indefinitely.
+    """
+    coordinator = init_integration.runtime_data
+    events: list = []
+    hass.bus.async_listen("junghome_button_action", events.append)
+
+    before = hass.states.get("event.button_a_up").state
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idrock1-00c",
+                "values": [{"key": "up_request", "value": "NaN"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert events == []
+    assert hass.states.get("event.button_a_up").state == before

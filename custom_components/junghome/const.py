@@ -232,6 +232,12 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
         manufacturer=GATEWAY_MANUFACTURER,
         model=GATEWAY_MODEL,
         sw_version=sw_version,
+        # The hardware serial the entry already learned (mDNS TXT, or the
+        # gateway's own `config/parameter/system_serial`). Shown on the device
+        # page so a user with two gateways can tell them apart; it is not an
+        # identity field, so adding it never re-keys the device. Absent on a
+        # legacy entry that predates serial discovery.
+        serial_number=entry.data.get(CONF_SERIAL),
     )
 
 
@@ -247,6 +253,36 @@ def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
     for value in datapoint.get("values", []):
         if value.get("key") == key:
             return value.get("value")
+    return None
+
+
+def datapoint_bool(datapoint: Datapoint | None, key: str) -> bool | None:
+    """Return a boolean datapoint's value, or ``None`` when the gateway has none.
+
+    ``"1"`` -> True, ``"0"`` -> False, **anything else -> None (unknown)**.
+
+    The "anything else" that matters is ``"NaN"``. After
+    ``btmesh.state_acceptable_request_fails`` (3) failed reads of a BT-Mesh node,
+    the middleware's ``onResponseFail`` sets ``state.value = NaN`` and pushes it;
+    ``composeDatapointByState`` stringifies every value, so the literal
+    ``"NaN"`` lands on the wire, and ``/functions`` keeps serving it (the
+    firmware's function assembly has no reachability filter). It appears on a
+    mesh outage and, briefly, on every gateway reboot before each node has been
+    read for the first time.
+
+    A plain ``== "1"`` collapses that to False, which for a light or a socket is
+    indistinguishable from someone having switched it off — history, logbook and
+    every ``to: "off"`` automation see an off that never happened. The numeric
+    readers in every other platform already degrade to unknown on ``"NaN"``
+    (``cover``, ``sensor``, ``binary_sensor``, the brightness/colour-temperature
+    parsers, and ``climate``'s map of this very ``switch`` key); this is the same
+    contract for the boolean ones.
+    """
+    value = datapoint_value(datapoint, key)
+    if value == "1":
+        return True
+    if value == "0":
+        return False
     return None
 
 

@@ -549,15 +549,34 @@ async def test_host_change_triggers_reload(
     reload.assert_called_once_with(entry.entry_id)
 
 
-async def test_token_only_change_no_reload(
+async def test_token_only_change_reloads_entry(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A token-only update (host unchanged) must not trigger a reload."""
+    """A token-only update MUST reload — it is how reauth takes effect.
+
+    The reauth flow stores the fresh token with ``async_update_and_abort`` and
+    deliberately schedules no reload of its own (pairing a reloading flow helper
+    with an update listener is deprecated in HA 2026.6 and raises from 2026.12).
+    The coordinator caches its credentials at construction, so without this arm
+    the new token would sit in ``entry.data`` while the coordinator kept using
+    the rejected one — an endless reauth loop.
+    """
     entry = init_integration
     with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload:
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_TOKEN: "newtok"}
         )
+        await hass.async_block_till_done()
+    reload.assert_called_once()
+
+
+async def test_unchanged_update_does_not_reload(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """An update that changes nothing the coordinator cached must not reload."""
+    entry = init_integration
+    with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload:
+        hass.config_entries.async_update_entry(entry, data={**entry.data})
         await hass.async_block_till_done()
     reload.assert_not_called()
 
