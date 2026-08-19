@@ -89,6 +89,8 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this socket changed
         _LOGGER.debug("Handling coordinator update for socket %s", self._name)
         # Only re-read on a poll, or on a push for *this* datapoint (see
         # JungHomeEntity._should_refresh). Every push notifies every entity, so
@@ -179,6 +181,8 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this LED changed
         _LOGGER.debug("Updating switch for %s", self._attr_unique_id)
         # Same guard as the socket above: an unrelated push must not revert the
         # optimistic state written by turn_on/turn_off.

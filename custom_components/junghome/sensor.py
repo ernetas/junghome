@@ -191,6 +191,8 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this quantity changed
         _LOGGER.debug("Handling coordinator update for quantity %s", self._name)
         datapoint = self._find_datapoint(self._datapoint["id"])
         if datapoint:

@@ -161,6 +161,140 @@ async def test_unrelated_push_does_not_revert_optimistic_socket_state(
     )
 
 
+def _two_device_coordinator(hass: HomeAssistant):
+    """A bare coordinator holding two sockets, plus an entity for the first."""
+    coordinator = bare_coordinator(hass)
+    mine = {
+        "id": "dev-a",
+        "type": "Socket",
+        "label": "Mine",
+        "datapoints": [
+            {
+                "id": "dp-a",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            }
+        ],
+    }
+    other = {
+        "id": "dev-b",
+        "type": "Socket",
+        "label": "Other",
+        "datapoints": [
+            {
+                "id": "dp-b",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            }
+        ],
+    }
+    coordinator.data = [mine, other]
+    entity = JungHomeSocket(coordinator, mine, mine["datapoints"][0])
+    entity.hass = hass
+    entity.entity_id = "switch.mine"
+    return coordinator, entity
+
+
+async def test_foreign_device_push_skips_the_state_write(hass: HomeAssistant) -> None:
+    """Another device's push must not cost this entity a state-machine write.
+
+    Every push notifies every entity; the write is skipped only when the push
+    belongs to a different device AND this entity is already shown available
+    (see ``JungHomeEntity._skip_foreign_device_push``). The push markers are
+    set directly here, exactly as the coordinator holds them for the duration
+    of one dispatch.
+    """
+    coordinator, entity = _two_device_coordinator(hass)
+    hass.states.async_set("switch.mine", "on")
+
+    # Foreign device's push while shown available -> skipped.
+    coordinator.pushed_datapoint_id = "dp-b"
+    coordinator.pushed_device_id = "dev-b"
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_not_called()
+
+    # Own device's push -> writes.
+    coordinator.pushed_datapoint_id = "dp-a"
+    coordinator.pushed_device_id = "dev-a"
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_called_once()
+
+    # No push marker (poll / broadcast / WS-drop dispatch) -> writes.
+    coordinator.pushed_datapoint_id = None
+    coordinator.pushed_device_id = None
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_called_once()
+
+
+async def test_foreign_push_never_skipped_while_unavailable_or_unwritten(
+    hass: HomeAssistant,
+) -> None:
+    """The skip must fail open whenever it could hide an availability change.
+
+    A push proves the gateway alive (`last_update_success` was just set True),
+    so an entity currently shown unavailable must write on this very dispatch
+    to become available again — and an entity never written at all must take
+    its first write. A pushed device without an id sets no device marker, so
+    that also writes.
+    """
+    coordinator, entity = _two_device_coordinator(hass)
+    coordinator.pushed_datapoint_id = "dp-b"
+    coordinator.pushed_device_id = "dev-b"
+
+    # Not yet in the state machine -> writes.
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_called_once()
+
+    # Currently unavailable -> writes (the availability recovery).
+    hass.states.async_set("switch.mine", "unavailable")
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_called_once()
+
+    # Pushed device carries no id -> no device marker -> writes.
+    hass.states.async_set("switch.mine", "on")
+    coordinator.pushed_device_id = None
+    with patch.object(entity, "async_write_ha_state") as write:
+        entity._handle_coordinator_update()
+    write.assert_called_once()
+
+
+async def test_push_restores_availability_of_other_devices_entities(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A push must make ALL entities available again, not just the pushed one.
+
+    After a failed poll every entity reads unavailable. The next push sets
+    ``last_update_success`` back to True for the whole entry, so entities of
+    OTHER devices must write on that same dispatch too — the foreign-push skip
+    is only allowed while an entity is already shown available. Skipping here
+    would freeze them on "unavailable" until the next successful poll.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get("switch.boiler").state == "unavailable"
+    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+
+    # A push for the LIGHT (a different device) arrives and proves the gateway
+    # alive again.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state != "unavailable"
+    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+
+
 async def test_the_gateway_echo_still_updates_the_socket(
     hass: HomeAssistant, init_integration
 ) -> None:

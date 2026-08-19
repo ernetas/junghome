@@ -103,10 +103,16 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         edge fires exactly once — including rapid same-value taps that a level
         diff would coalesce — and a re-read never fires a phantom press.
         """
+        # Another device's push cannot be an edge on this button, and the write
+        # below would only re-publish the identical state (skipped while the
+        # entity is already shown available — see the base helper). Pushes for
+        # THIS device (its own edges, or its status LED) fall through.
+        if self._skip_foreign_device_push():
+            return
         # Fire only on a genuine WebSocket push for THIS datapoint. REST re-reads
-        # (marker is None) and pushes for other datapoints skip the fire but still
-        # write state below, so availability tracks the gateway connection without
-        # ever emitting a phantom press.
+        # (marker is None) and pushes for sibling datapoints skip the fire but
+        # still write state below, so availability tracks the gateway connection
+        # without ever emitting a phantom press.
         if self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
             datapoint = self._find_datapoint(self._datapoint["id"])
             if datapoint:

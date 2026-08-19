@@ -220,6 +220,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # set only for the duration of one synchronous `async_update_listeners`
         # dispatch, so REST re-reads (which leave it None) never fire events.
         self.pushed_datapoint_id: str | None = None
+        # The id of the device that owns that datapoint (same one-dispatch
+        # lifetime). Entities compare it against their own device to skip the
+        # state write for a push that cannot concern them — see
+        # ``JungHomeEntity._skip_foreign_device_push`` for the full contract.
+        # None when the owning device carries no id, which entities treat as
+        # "don't skip" (fail open).
+        self.pushed_device_id: str | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
         self.gateway_version: str | None = None
         # Scene list, populated from the WebSocket `scenes` broadcasts (full list
@@ -1040,85 +1047,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # spurious "no matching datapoint" warning.
                 self._handle_scene_recall(data)
                 return
-            datapoint_id = data.get("id")
-            if not datapoint_id:
-                _LOGGER.error(
-                    "Received WebSocket message without datapoint_id: %s", message
-                )
-                return
-            if self._poll_push_overlay is not None:
-                # A REST poll is in flight; record this push so the poll's
-                # (older) snapshot cannot revert it. Recorded before the match
-                # loop below on purpose: an unmatched push usually belongs to a
-                # device the in-flight poll is about to discover, and its
-                # snapshot values may predate this push just the same.
-                overlay = self._poll_push_overlay.setdefault(datapoint_id, {})
-                for key, value in data.items():
-                    if key != "id":
-                        overlay[key] = value
-            updated = False
-            for device in self.data or []:
-                for datapoint in device.get("datapoints", []):
-                    if datapoint.get("id") == datapoint_id:
-                        # Merge the pushed keys into the stored datapoint. The push
-                        # carries arbitrary keys (typically `values`), so mutate via
-                        # a dict view rather than the TypedDict.
-                        dp_dict = cast("dict[str, Any]", datapoint)
-                        for key, value in data.items():
-                            if key != "id":
-                                dp_dict[key] = value
-                        _LOGGER.debug(
-                            "Updated datapoint for device %s: %s",
-                            device.get("id"),
-                            datapoint,
-                        )
-                        updated = True
-                        break
-                if updated:
-                    break
-            if updated:
-                # Flag the pushed datapoint for the duration of this dispatch so
-                # event entities fire on the push itself. The dispatch below
-                # notifies listeners synchronously, so the flag is valid for
-                # exactly this push and is cleared immediately afterwards; REST
-                # polls never set it and therefore never fire phantom events.
-                self.pushed_datapoint_id = datapoint_id
-                try:
-                    # Deliberately NOT `async_set_updated_data`: that helper
-                    # cancels the scheduled refresh and re-arms it a full
-                    # `update_interval` from now, so a gateway that pushes more
-                    # often than once a minute would defer the REST poll forever.
-                    # The poll is the only thing that discovers new devices,
-                    # prunes removed ones, assigns areas and detects gateway id
-                    # churn, so starving it silently breaks all four.
-                    #
-                    # The merge above mutated the dicts already in `self.data`, so
-                    # there is no new object to store. Setting `last_update_success`
-                    # keeps the availability contract documented in `entity.py`
-                    # (a push counts as proof the gateway is alive), and
-                    # `async_update_listeners` gives the same synchronous
-                    # notification the helper would have.
-                    self.last_update_success = True
-                    self.async_update_listeners()
-                finally:
-                    self.pushed_datapoint_id = None
-            elif datapoint_id not in self._unmatched_push_ids:
-                # An unmatched push usually means a device was just added in
-                # the app and is pushing before the next poll has discovered
-                # it. Request a (debounced) refresh on the FIRST sighting of an
-                # unknown id — discovery then lands in seconds instead of up
-                # to a minute — and warn once per id rather than per frame (a
-                # new device pushing at 1 Hz used to warn 60 times before the
-                # poll caught up).
-                self._unmatched_push_ids.add(datapoint_id)
-                _LOGGER.warning(
-                    "No matching datapoint found for id %s; requesting a "
-                    "refresh (a device may have just been added)",
-                    datapoint_id,
-                )
-                self.hass.async_create_task(self.async_request_refresh())
-            else:
-                _LOGGER.debug("No matching datapoint found for id %s", datapoint_id)
+            self._handle_datapoint_push(message, data)
         elif isinstance(data, list):
             if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
                 self._handle_scenes_broadcast(msg_type, data)
@@ -1135,6 +1064,100 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             _LOGGER.warning(
                 "Received WebSocket message with unknown data type: %s", message
             )
+
+    def _handle_datapoint_push(
+        self, message: dict[str, Any], data: dict[str, Any]
+    ) -> None:
+        """Merge one pushed datapoint into the stored data and notify listeners.
+
+        Split out of ``_handle_websocket_message`` so that method stays a pure
+        frame router; the behaviour is unchanged.
+        """
+        datapoint_id = data.get("id")
+        if not datapoint_id:
+            _LOGGER.error(
+                "Received WebSocket message without datapoint_id: %s", message
+            )
+            return
+        if self._poll_push_overlay is not None:
+            # A REST poll is in flight; record this push so the poll's
+            # (older) snapshot cannot revert it. Recorded before the match
+            # loop below on purpose: an unmatched push usually belongs to a
+            # device the in-flight poll is about to discover, and its
+            # snapshot values may predate this push just the same.
+            overlay = self._poll_push_overlay.setdefault(datapoint_id, {})
+            for key, value in data.items():
+                if key != "id":
+                    overlay[key] = value
+        updated = False
+        pushed_device_id: str | None = None
+        for device in self.data or []:
+            for datapoint in device.get("datapoints", []):
+                if datapoint.get("id") == datapoint_id:
+                    # Merge the pushed keys into the stored datapoint. The push
+                    # carries arbitrary keys (typically `values`), so mutate via
+                    # a dict view rather than the TypedDict.
+                    dp_dict = cast("dict[str, Any]", datapoint)
+                    for key, value in data.items():
+                        if key != "id":
+                            dp_dict[key] = value
+                    _LOGGER.debug(
+                        "Updated datapoint for device %s: %s",
+                        device.get("id"),
+                        datapoint,
+                    )
+                    pushed_device_id = device.get("id")
+                    updated = True
+                    break
+            if updated:
+                break
+        if updated:
+            # Flag the pushed datapoint (and the device that owns it) for
+            # the duration of this dispatch so event entities fire on the
+            # push itself and unrelated entities can skip their write. The
+            # dispatch below notifies listeners synchronously, so the flags
+            # are valid for exactly this push and are cleared immediately
+            # afterwards; REST polls never set them and therefore never
+            # fire phantom events or suppress a full re-read.
+            self.pushed_datapoint_id = datapoint_id
+            self.pushed_device_id = pushed_device_id
+            try:
+                # Deliberately NOT `async_set_updated_data`: that helper
+                # cancels the scheduled refresh and re-arms it a full
+                # `update_interval` from now, so a gateway that pushes more
+                # often than once a minute would defer the REST poll forever.
+                # The poll is the only thing that discovers new devices,
+                # prunes removed ones, assigns areas and detects gateway id
+                # churn, so starving it silently breaks all four.
+                #
+                # The merge above mutated the dicts already in `self.data`, so
+                # there is no new object to store. Setting `last_update_success`
+                # keeps the availability contract documented in `entity.py`
+                # (a push counts as proof the gateway is alive), and
+                # `async_update_listeners` gives the same synchronous
+                # notification the helper would have.
+                self.last_update_success = True
+                self.async_update_listeners()
+            finally:
+                self.pushed_datapoint_id = None
+                self.pushed_device_id = None
+        elif datapoint_id not in self._unmatched_push_ids:
+            # An unmatched push usually means a device was just added in
+            # the app and is pushing before the next poll has discovered
+            # it. Request a (debounced) refresh on the FIRST sighting of an
+            # unknown id — discovery then lands in seconds instead of up
+            # to a minute — and warn once per id rather than per frame (a
+            # new device pushing at 1 Hz used to warn 60 times before the
+            # poll caught up).
+            self._unmatched_push_ids.add(datapoint_id)
+            _LOGGER.warning(
+                "No matching datapoint found for id %s; requesting a "
+                "refresh (a device may have just been added)",
+                datapoint_id,
+            )
+            self.hass.async_create_task(self.async_request_refresh())
+        else:
+            _LOGGER.debug("No matching datapoint found for id %s", datapoint_id)
 
     def _handle_functions_broadcast(self, data: list[Any]) -> None:
         """Adopt a pushed ``functions`` list as if a REST poll had returned it.

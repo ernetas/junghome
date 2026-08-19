@@ -192,6 +192,18 @@ instead of re-deriving:
   `ws_connected` (a stale-True socket flag froze energy readings — issue
   #120); controllable entities additionally require the live WS because
   commands only travel over it.
+- **Entities skip state writes for other devices' pushes — but only while
+  already shown available.** A per-datapoint push dispatch used to write
+  every entity of the entry; `JungHomeEntity._skip_foreign_device_push`
+  (fed by `coordinator.pushed_device_id`) skips entities of other devices.
+  Two load-bearing details: the scope is the *device*, not the entity's
+  stored datapoint ids (climate reads its ambient temperature from a sibling
+  `quantity` datapoint it holds no id for), and the skip is forbidden while
+  the state machine shows the entity unavailable — a push proves the gateway
+  alive, so it must be the thing that flips a post-failed-poll "unavailable"
+  back. Everything without a push marker fails open, and the connectivity
+  sensor/scenes (state not derived from device datapoints) don't inherit the
+  helper.
 - **Commands await the gateway's confirmation, not fire-and-forget.** Every
   datapoint set (`_send_datapoint_command` in `coordinator.py`) is tagged with
   a `message_id`; a successful set is answered with a `datapoint` reply

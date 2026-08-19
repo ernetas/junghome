@@ -245,6 +245,8 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; nothing about this thermostat changed
         device = self._current_device()
         if device is None:
             self.async_write_ha_state()
