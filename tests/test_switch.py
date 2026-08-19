@@ -317,3 +317,81 @@ async def test_the_gateway_echo_still_updates_the_socket(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.boiler").state == "off"
+
+
+async def test_push_markers_do_not_survive_their_dispatch(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The push markers must be cleared the moment the dispatch ends.
+
+    ``_skip_foreign_device_push`` reads ``pushed_device_id`` and skips the
+    state write for every entity of another device. That is only safe while
+    the marker lives for exactly one dispatch: a marker that leaked past it
+    would make every non-pushed device's entities stop writing state
+    altogether — poll values would freeze and, worse, they would never go
+    unavailable when the gateway died, because the availability guard only
+    rescues the unavailable -> available direction.
+
+    ``pushed_datapoint_id``'s reset is pinned by the event platform (a leaked
+    marker fires phantom presses); this pins its sibling, which shipped
+    without a guard of its own.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+    assert coordinator.pushed_device_id is None
+    assert coordinator.pushed_datapoint_id is None
+
+    # With the markers cleared, the next failed poll reaches every entity —
+    # including those of the device that pushed last.
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get("switch.boiler").state == "unavailable"
+    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+
+
+async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The ``_should_refresh`` guard still has a case after the device skip.
+
+    The device-scoped skip returns early for *other* devices, so the only
+    dispatches that still reach ``_should_refresh`` are this device's own — and
+    a socket has a sibling that pushes constantly: its power quantity. The
+    window this guards is between the optimistic write and the gateway's echo,
+    when the stored switch value is still the pre-command one. It is set up
+    explicitly here (the test socket's stored value is put back to "on" without
+    dispatching, exactly as the coordinator holds it before the echo lands),
+    because the fixture's WebSocket confirms every command instantly.
+    """
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": "switch.boiler"}, blocking=True
+    )
+    assert hass.states.get("switch.boiler").state == "off"
+
+    coordinator = init_integration.runtime_data
+    boiler = next(d for d in coordinator.data if d["label"] == "Boiler")
+    switch_dp = next(dp for dp in boiler["datapoints"] if dp["type"] == "switch")
+    power_dp = next(dp for dp in boiler["datapoints"] if dp["type"] == "quantity")
+    # Re-open the pre-echo window: stored value back to the pre-command "on".
+    switch_dp["values"] = [{"key": "switch", "value": "1"}]
+
+    # The power reading pushes (same device, sibling datapoint).
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": power_dp["id"],
+                "values": [{"key": "quantity", "value": "42.0"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("switch.boiler").state == "off"

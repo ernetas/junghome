@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Polling-interval (seconden)",
           "inverted_covers": "Omgekeerde zonwering (zonneschermen)"
+        },
+        "data_description": {
+          "poll_interval": "Tussen 30 en 3600 seconden (standaard 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Live-updates van Jung Home zijn gestopt",
-      "description": "Home Assistant kon {failures} keer achter elkaar geen verbinding maken met de Jung Home-gateway op {host}. Apparaatstatussen worden niet meer direct doorgestuurd en worden nu nog maar één keer per minuut vernieuwd. Controleer of de gateway aanstaat en bereikbaar is in je netwerk. Dit probleem verdwijnt vanzelf zodra de verbinding is hersteld."
+      "description": "Home Assistant kon {failures} keer achter elkaar geen verbinding maken met de Jung Home-gateway op {host}. Apparaatstatussen worden niet meer direct doorgestuurd en worden nu alleen nog bij de periodieke REST-polling vernieuwd. Controleer of de gateway aanstaat en bereikbaar is in je netwerk. Dit probleem verdwijnt vanzelf zodra de verbinding is hersteld."
     }
   }
 }

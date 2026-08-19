@@ -324,5 +324,6 @@ Any failure is returned as a `message` frame:
 - The `functions` broadcast (the authoritative device list, sent on connect
   and on change) is adopted by the coordinator exactly like a REST poll
   result, so devices added or removed at runtime appear/prune push-driven;
-  the 60 s REST poll remains as the backstop. The lower-level `devices` /
+  the REST poll (60 s by default, configurable in the options flow) remains
+  as the backstop. The lower-level `devices` /
   `*-new` / `*-deleted` frames are not consumed.

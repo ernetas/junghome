@@ -48,7 +48,7 @@ RECONNECT_JITTER = 0.5
 # convention of bounding push failures. Below this the backoff has waited well
 # under a minute in total, which an ordinary blip (gateway reboot, Wi-Fi hiccup)
 # rides out silently; past it the gateway has been unreachable long enough that
-# the user is unknowingly running on the 60 s REST poll and deserves to be told.
+# the user is unknowingly running on the REST poll alone and deserves to be told.
 MAX_RECONNECT_FAILURES = 5
 # How long a session must stay up before it counts as a genuine recovery rather
 # than a flap. Resetting the backoff at the moment of connect made the escalation
@@ -264,7 +264,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None outside a poll, so the steady state records nothing.
         #
         # On the pinned HA, polls can NOT actually overlap: every refresh path
-        # — the 60 s schedule (`_handle_refresh_interval`), a manual
+        # — the scheduled poll (`_handle_refresh_interval`), a manual
         # `async_refresh`, and the debounced `async_request_refresh` — takes
         # the same `_debounced_refresh.async_lock()` before calling
         # `_async_refresh` (verified in helpers/update_coordinator.py; an
@@ -842,7 +842,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     def _note_reconnect_failure(self) -> None:
         """Count a failed reconnect and, past the threshold, tell the user.
 
-        A dropped WebSocket degrades the integration to the 60 s REST poll: state
+        A dropped WebSocket degrades the integration to the REST poll: state
         still updates, so nothing looks broken, it just stops being live. Below
         ``MAX_RECONNECT_FAILURES`` that is an ordinary blip the backoff rides out
         silently. Past it, raise a repair issue so the degradation is visible
@@ -1169,7 +1169,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # Deliberately NOT `async_set_updated_data`: that helper
                 # cancels the scheduled refresh and re-arms it a full
                 # `update_interval` from now, so a gateway that pushes more
-                # often than once a minute would defer the REST poll forever.
+                # often than `update_interval` would defer the REST poll forever.
                 # The poll is the only thing that discovers new devices,
                 # prunes removed ones, assigns areas and detects gateway id
                 # churn, so starving it silently breaks all four.
@@ -1190,7 +1190,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # the app and is pushing before the next poll has discovered
             # it. Request a (debounced) refresh on the FIRST sighting of an
             # unknown id — discovery then lands in seconds instead of up
-            # to a minute — and warn once per id rather than per frame (a
+            # to a poll interval — and warn once per id rather than per frame (a
             # new device pushing at 1 Hz used to warn 60 times before the
             # poll caught up).
             self._unmatched_push_ids.add(datapoint_id)
@@ -1211,7 +1211,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         exactly). Treating it as a poll result makes device add/remove
         push-driven — discovery, pruning, area assignment and the capability
         watcher all run on it via their coordinator listeners — instead of
-        waiting up to a minute for the next poll.
+        waiting out the next poll interval.
 
         ``async_set_updated_data`` is correct HERE (and deliberately avoided in
         the per-datapoint push path above): this frame carries data as fresh
@@ -1224,15 +1224,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         devices = cast("list[Device]", [d for d in data if isinstance(d, dict)])
         _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
-        # Counted BEFORE the adoption so a poll returning between these lines
-        # cannot slip through: everything here runs synchronously on the event
-        # loop, but the ordering keeps the invariant obvious — by the time any
-        # poll can compare its snapshot, the broadcast is already counted. A
-        # poll whose fetch was in flight across this point discards its older
-        # snapshot in favour of this list (see `_async_update_data`).
-        self._functions_broadcasts_seen += 1
         self._unmatched_push_ids.clear()
         self._reload_if_device_ids_changed(devices)
+        # Counted immediately before the adoption, and never before it: a poll
+        # whose fetch was in flight across this point discards its own older
+        # snapshot in favour of this list (see `_async_update_data`), so the
+        # count must only rise once this list is actually adopted.
+        # `_reload_if_device_ids_changed` above can raise on a malformed frame
+        # (`device_slug` slugifies the label, which throws on a non-string) and
+        # `_dispatch_text_frame`'s catch-all swallows it — counting first would
+        # let that frame suppress a racing poll that carried the fresher list,
+        # leaving stale membership for a full poll interval. Nothing awaits
+        # between here and the adoption, so no poll can observe the gap.
+        self._functions_broadcasts_seen += 1
         self.async_set_updated_data(devices)
 
     def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:

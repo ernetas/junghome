@@ -492,3 +492,48 @@ async def test_scene_migration_isolates_a_per_entity_failure(
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_a_datapoint_push_does_not_rewrite_every_scene(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Scenes must skip the state write on a per-datapoint push.
+
+    A scene's state is its last activation timestamp and its availability is
+    ``last_update_success``; a device's datapoint push can change neither, so
+    the inherited unconditional write was pure cost — and it scales with the
+    user's scene count, once per push, on a gateway that pushes every second.
+
+    The skip must still fail open while the scene is shown unavailable: a push
+    proves the gateway alive after a failed poll, and that recovery has to land
+    on the push's own dispatch.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {"type": "scenes", "data": [{"id": "idscene1", "label": "Movie Night"}]}
+    )
+    await hass.async_block_till_done()
+    scene = next(
+        e
+        for e in hass.data["entity_components"]["scene"].entities
+        if e.entity_id == "scene.movie_night"
+    )
+
+    push = {
+        "type": "datapoint",
+        "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+    }
+    with patch.object(scene, "async_write_ha_state") as write:
+        coordinator._handle_websocket_message(push)
+        await hass.async_block_till_done()
+    write.assert_not_called()
+
+    # A failed poll makes it unavailable; the next push must write it back.
+    coordinator.last_update_success = False
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night").state == "unavailable"
+
+    coordinator._handle_websocket_message(push)
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night").state != "unavailable"

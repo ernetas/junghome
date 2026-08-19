@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Poll interval (seconds)",
           "inverted_covers": "Inverted covers (awnings)"
+        },
+        "data_description": {
+          "poll_interval": "Between 30 and 3600 seconds (default 60)."
         }
       }
     }
@@ -163,7 +166,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Jung Home live updates have stopped",
-      "description": "Home Assistant has failed to reconnect to the Jung Home gateway at {host} {failures} times in a row. Device states are no longer pushed instantly and now refresh only once a minute. Check that the gateway is powered on and reachable on your network. This issue disappears on its own once the connection is restored."
+      "description": "Home Assistant has failed to reconnect to the Jung Home gateway at {host} {failures} times in a row. Device states are no longer pushed instantly and now refresh only on the periodic REST poll. Check that the gateway is powered on and reachable on your network. This issue disappears on its own once the connection is restored."
     }
   }
 }

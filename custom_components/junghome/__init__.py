@@ -44,12 +44,13 @@ PLATFORMS: list[Platform] = [
 # re-create them under whatever label the next poll reports, losing the user's
 # entity_id/customisations. Requiring persistence rides out a transient blip.
 #
-# The threshold is deliberately generous (10 polls — about 10 minutes at
-# the default 60 s interval; the window scales with the configured one). Removal is
-# destructive and irreversible from the user's side — it takes the entity
-# registry entries with it, so custom names, areas and entity_ids are lost and
-# automations referencing them break — while the cost of removing late is only
-# that a device the user deleted in the app lingers for a few extra minutes.
+# The threshold is deliberately generous (10 polls — about 10 minutes at the
+# default 60 s interval; the window scales with the configured one, up to 10
+# hours at the 1 h ceiling). Removal is destructive and irreversible from the
+# user's side — it takes the entity registry entries with it, so custom names,
+# areas and entity_ids are lost and automations referencing them break — while
+# the cost of removing late is only that a device the user deleted in the app
+# lingers for a few extra polls.
 # Home Assistant core integrations that prune do so on the *first* miss, but
 # they trust their hub's device list; this gateway is documented above as
 # occasionally returning a partial one, so the same confidence isn't available.
@@ -285,7 +286,7 @@ def _make_area_assigner(
     # The trade: a groups list that arrives *between* adoptions (the WS
     # handshake delivering rooms the REST fetch missed) now places waiting
     # devices on the next adoption — the connect-time refresh or, worst case,
-    # the next 60 s poll — instead of on the next unrelated push.
+    # the next scheduled poll — instead of on the next unrelated push.
     last_generation: int | None = None
     # Adoptions granted their one follow-up walk (see the retry note at the
     # end of `_assign_areas`): a device that arrives *in* an adoption has no
@@ -293,7 +294,7 @@ def _make_area_assigner(
     # this listener's (discovery has only *scheduled* entity creation), and
     # not the one from the refresh HA core requests while adding the entity
     # either (`update_before_add` runs that BEFORE registering the device) —
-    # so without a retry the placement would wait out the next 60 s poll.
+    # so without a retry the placement would wait out the next scheduled poll.
     retried_generation: int | None = None
 
     @callback
@@ -363,7 +364,7 @@ def _make_area_assigner(
         # registered (see the factory comment above). Leave the generation
         # unrecorded once, so the next dispatch — typically the new device's
         # own first pushes, seconds away — retries the walk instead of waiting
-        # out the 60 s poll. Only once, though: a grouped device no platform
+        # out the scheduled poll. Only once, though: a grouped device no platform
         # supports never gets a registry entry, and retrying it forever would
         # re-open the per-push walk this guard exists to close.
         if (
@@ -709,8 +710,8 @@ async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
     Registered as an update listener. The coordinator caches the host and an
     options snapshot at construction, so a change to either only takes effect
-    after a reload (options drive cover inversion; the host drives the API/WS
-    target). Guard on an actual change so reauth's token-only update (which
+    after a reload (options drive the poll interval and cover inversion; the
+    host drives the API/WS target). Guard on an actual change so reauth's token-only update (which
     already reloads via ``async_update_reload_and_abort``) doesn't trigger a
     redundant second reload.
     """

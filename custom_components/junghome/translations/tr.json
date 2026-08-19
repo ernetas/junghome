@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Yoklama aralığı (saniye)",
           "inverted_covers": "Ters panjurlar (tenteler)"
+        },
+        "data_description": {
+          "poll_interval": "30 ile 3600 saniye arasında (varsayılan 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Jung Home canlı güncellemeleri durdu",
-      "description": "Home Assistant, {host} adresindeki Jung Home ağ geçidine art arda {failures} kez yeniden bağlanamadı. Cihaz durumları artık anında gönderilmiyor ve yalnızca dakikada bir yenileniyor. Ağ geçidinin açık ve ağınızda erişilebilir olduğundan emin olun. Bağlantı yeniden kurulduğunda bu sorun kendiliğinden ortadan kalkar."
+      "description": "Home Assistant, {host} adresindeki Jung Home ağ geçidine art arda {failures} kez yeniden bağlanamadı. Cihaz durumları artık anında gönderilmiyor ve yalnızca düzenli REST yoklamasında yenileniyor. Ağ geçidinin açık ve ağınızda erişilebilir olduğundan emin olun. Bağlantı yeniden kurulduğunda bu sorun kendiliğinden ortadan kalkar."
     }
   }
 }

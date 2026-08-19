@@ -192,9 +192,14 @@ instead of re-deriving:
   poll's fetch is in flight supersedes that poll — the poll discards its
   older snapshot (`_functions_broadcasts_seen` in `_async_update_data`),
   skipping the overlay re-apply, the id-churn check and the
-  `data_generation` bump with it (the broadcast already ran all three on the
-  fresher list; bumping again would double-count one membership change in
-  the pruner's poll-based debounce).
+  `data_generation` bump with it. The broadcast re-ran the latter two on the
+  fresher list (bumping again would double-count one membership change in
+  the pruner's poll-based debounce); the **overlay** it never touches — it
+  has nothing left to re-apply, because the gateway composes the broadcast
+  *after* every push already delivered on that same ordered session, so the
+  broadcast's own values postdate them. The counter is bumped immediately
+  before the adoption, never before the id-churn check that can raise on a
+  malformed frame.
 - **Availability**: entities key off `last_update_success` and never OR in
   `ws_connected` (a stale-True socket flag froze energy readings — issue
   #120); controllable entities additionally require the live WS because

@@ -281,3 +281,41 @@ async def test_all_binary_sensor_entities(
         Platform.BINARY_SENSOR, [*PRISTINE_DEVICES, PRESENCE_DEVICE]
     )
     await snapshot_platform(hass, entity_registry, snapshot, entry.entry_id)
+
+
+async def test_a_datapoint_push_does_not_rewrite_the_connectivity_sensor(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The gateway connectivity sensor must skip per-datapoint push writes.
+
+    Its state is ``ws_connected``, and a push arrived on the live session — so
+    the flag is True for the whole dispatch and the write could only republish
+    ``on``. On a socket reporting power once a second that was a state-machine
+    write per frame, forever.
+
+    The skip is allowed only while the state machine already says ``on``: a
+    reconnect whose refresh the debouncer swallowed leaves a stale ``off``,
+    and a push has to be able to flip it back on its own dispatch.
+    """
+    coordinator = init_integration.runtime_data
+    sensor = next(
+        e
+        for e in hass.data["entity_components"]["binary_sensor"].entities
+        if e.entity_id == "binary_sensor.jung_home_gateway_connection"
+    )
+    assert hass.states.get("binary_sensor.jung_home_gateway_connection").state == "on"
+
+    push = {
+        "type": "datapoint",
+        "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+    }
+    with patch.object(sensor, "async_write_ha_state") as write:
+        coordinator._handle_websocket_message(push)
+        await hass.async_block_till_done()
+    write.assert_not_called()
+
+    # A stale "off" in the state machine must still be repaired by a push.
+    hass.states.async_set("binary_sensor.jung_home_gateway_connection", "off")
+    coordinator._handle_websocket_message(push)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.jung_home_gateway_connection").state == "on"

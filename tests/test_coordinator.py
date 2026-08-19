@@ -309,6 +309,97 @@ async def test_a_broadcast_before_the_fetch_does_not_discard_the_poll(
     assert coordinator.data_generation == generation_after_broadcast + 1
 
 
+async def test_a_superseded_poll_does_not_re_flag_id_churn(
+    hass: HomeAssistant,
+) -> None:
+    """The superseded poll must skip the id-churn check, not just the adoption.
+
+    On a firmware update the `functions` broadcast carries regenerated ids: it
+    detects the churn, schedules the reload and rewrites `_device_ids` to the
+    NEW ids. A poll whose fetch was already in flight returns the PRE-update
+    list; running the churn check on it would detect "churn" a second time —
+    scheduling a redundant reload AND clobbering `_device_ids` back to the
+    stale ids, because the check overwrites the map with whatever list it is
+    handed.
+    """
+    coordinator = _coordinator(hass)
+    old_device = {"id": "idOLD", "label": "Lamp", "datapoints": []}
+    new_device = {"id": "idNEW", "label": "Lamp", "datapoints": []}
+    coordinator.data = [old_device]
+    coordinator._device_ids = {"lamp": "idOLD"}
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [dict(old_device)]  # the pre-update snapshot
+
+    with (
+        patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        coordinator._handle_websocket_message(
+            {"type": "functions", "data": [new_device]}
+        )
+        release_fetch.set()
+        await poll
+
+    reload.assert_called_once()
+    assert coordinator._device_ids == {"lamp": "idNEW"}
+
+
+async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
+    hass: HomeAssistant,
+) -> None:
+    """The broadcast counter must only rise once the list is actually adopted.
+
+    `_reload_if_device_ids_changed` runs before the adoption and can raise on a
+    malformed frame — `device_slug` slugifies the label, which throws on a
+    non-string — and `_dispatch_text_frame`'s catch-all swallows it. Counting
+    the broadcast before that point would let such a frame suppress a racing
+    poll that carried the fresher list, leaving stale membership for a full
+    poll interval.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+    added_device = {
+        "id": "dev2",
+        "label": "New Socket",
+        "datapoints": [
+            {
+                "id": "dp-2",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "0"}],
+            }
+        ],
+    }
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [_switch_device("0"), added_device]  # the fresher list
+
+    with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        # A malformed broadcast: the label is not a string, so slugify raises
+        # out of the id-churn check and the list is never adopted. Routed
+        # through `_dispatch_text_frame`, whose catch-all swallows it exactly
+        # as it would for a real frame off the wire.
+        coordinator._dispatch_text_frame(
+            json.dumps({"type": "functions", "data": [{"id": "dev1", "label": 7}]})
+        )
+        release_fetch.set()
+        result = await poll
+
+    assert [d["id"] for d in result] == ["dev1", "dev2"]
+
+
 async def test_reload_scheduled_when_device_ids_change(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     coordinator._device_ids = {"katilas": "idOLD"}

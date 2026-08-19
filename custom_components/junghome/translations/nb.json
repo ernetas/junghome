@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Polling-intervall (sekunder)",
           "inverted_covers": "Omvendte persienner (markiser)"
+        },
+        "data_description": {
+          "poll_interval": "Mellom 30 og 3600 sekunder (standard 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "Sanntidsoppdateringer fra Jung Home har stoppet",
-      "description": "Home Assistant klarte ikke å koble til Jung Home-gatewayen på {host} {failures} ganger på rad. Enhetstilstander sendes ikke lenger umiddelbart og oppdateres nå bare én gang i minuttet. Kontroller at gatewayen er slått på og kan nås på nettverket ditt. Dette problemet forsvinner av seg selv når forbindelsen er gjenopprettet."
+      "description": "Home Assistant klarte ikke å koble til Jung Home-gatewayen på {host} {failures} ganger på rad. Enhetstilstander sendes ikke lenger umiddelbart og oppdateres nå bare ved den periodiske REST-pollingen. Kontroller at gatewayen er slått på og kan nås på nettverket ditt. Dette problemet forsvinner av seg selv når forbindelsen er gjenopprettet."
     }
   }
 }

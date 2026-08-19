@@ -113,6 +113,22 @@ automatically — however the entry was added. On networks without mDNS (e.g.
 across VLANs) use **Reconfigure** to point the entry at the new address; it
 verifies the address actually belongs to *this* gateway before saving.
 
+## Options
+
+**Settings → Devices & Services → Jung Home → Configure:**
+
+- **Poll interval (seconds)** — how often the gateway's device list is re-read
+  over REST, between 30 seconds and 1 hour (default 60). This is only the
+  backstop: live state keeps arriving over the WebSocket regardless, so a
+  longer interval mainly reduces gateway load. It does stretch everything the
+  poll drives — a device added while the WebSocket is down appears up to one
+  interval later, and the ten-poll debounce before a removed device disappears
+  scales with it (ten hours at the maximum).
+- **Inverted covers (awnings)** — flag covers whose position is reported
+  backwards, as described under [What works](#what-works).
+
+Saving reloads the integration; entities, history and automations are kept.
+
 ## Button automations (rocker switches)
 
 Rocker buttons show up as Home Assistant **event entities** (one per up/down
@@ -169,9 +185,10 @@ The integration is **local push**: it holds a WebSocket to the gateway and
 applies state changes the moment the gateway broadcasts them, so device states
 update in real time. Devices added or removed in the app are push-driven too —
 the gateway broadcasts its device list on change and the integration adopts it
-immediately. A full REST re-fetch runs once a minute as a backstop, and on
-every WebSocket reconnect. If the WebSocket drops it reconnects automatically
-with backoff. No cloud and no account are involved.
+immediately. A full REST re-fetch runs every 60 seconds as a backstop — the
+interval is adjustable, see [Options](#options) — and on every WebSocket
+reconnect. If the WebSocket drops it reconnects automatically with backoff. No
+cloud and no account are involved.
 
 ## Removing the integration
 
@@ -203,8 +220,9 @@ immediately with no approval step.
 
 **"Live updates have stopped" repair notice.**
 The WebSocket that carries live push has been down for several consecutive
-reconnect attempts. The integration keeps working on a 60-second REST poll, so
-states stay correct but stop being instant, and controllable entities read
+reconnect attempts. The integration keeps working on the REST poll (60 seconds
+by default — see [Options](#options)), so states stay correct but stop being
+instant, and controllable entities read
 unavailable because commands only travel over the WebSocket. It clears itself
 once the connection is genuinely back. If it persists, check that the gateway
 is reachable and hasn't been rebooting.
@@ -223,9 +241,11 @@ to send a new access request, then approve it in the Jung Home app.
 
 **A device disappeared from Home Assistant.**
 The integration removes a device once the gateway has stopped reporting it for
-ten consecutive polls (about ten minutes) — that is how a device you delete in
-the JUNG HOME app also leaves Home Assistant. A removal is logged as a warning
-naming the device, so check the log if one goes unexpectedly. If the device is
+ten consecutive polls (about ten minutes at the default
+[poll interval](#options), longer if you raised it) — that is how a device you
+delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
+a warning naming the device, so check the log if one goes unexpectedly. If the
+device is
 still installed, make sure it is powered and in range of the mesh; it is
 re-added automatically once the gateway reports it again, though any custom
 name, area or `entity_id` you had set is not restored. You can also remove a
@@ -235,8 +255,9 @@ simply come straight back.
 
 **A device you added in the app doesn't show up.**
 New devices normally appear within seconds (the gateway pushes its device
-list on change), and within a minute at worst via the REST poll. If one still
-doesn't appear, download diagnostics (**⋮ → Download diagnostics** on the
+list on change), and within one [poll interval](#options) at worst — 60 seconds
+by default — via the REST poll. If one still doesn't appear, download
+diagnostics (**⋮ → Download diagnostics** on the
 entry) — `support_summary.unhandled_function_types` and
 `unhandled_datapoint_types` list anything the gateway reports that this
 integration doesn't yet map, which is exactly what an issue report needs.

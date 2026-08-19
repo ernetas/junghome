@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Intervalo de consulta (segundos)",
           "inverted_covers": "Persianas invertidas (toldos)"
+        },
+        "data_description": {
+          "poll_interval": "Entre 30 e 3600 segundos (60 por padrão)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "As atualizações em tempo real do Jung Home pararam",
-      "description": "O Home Assistant não conseguiu se reconectar ao gateway Jung Home em {host} {failures} vezes seguidas. Os estados dos dispositivos não são mais enviados instantaneamente e agora são atualizados apenas uma vez por minuto. Verifique se o gateway está ligado e acessível na sua rede. Este problema desaparece sozinho assim que a conexão for restabelecida."
+      "description": "O Home Assistant não conseguiu se reconectar ao gateway Jung Home em {host} {failures} vezes seguidas. Os estados dos dispositivos não são mais enviados instantaneamente e agora são atualizados apenas na consulta REST periódica. Verifique se o gateway está ligado e acessível na sua rede. Este problema desaparece sozinho assim que a conexão for restabelecida."
     }
   }
 }

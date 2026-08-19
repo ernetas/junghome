@@ -88,6 +88,9 @@
         "data": {
           "poll_interval": "Lekérdezési időköz (másodperc)",
           "inverted_covers": "Fordított árnyékolók (napellenzők)"
+        },
+        "data_description": {
+          "poll_interval": "30 és 3600 másodperc között (alapértelmezetten 60)."
         }
       }
     }
@@ -153,7 +156,7 @@
   "issues": {
     "websocket_push_failure": {
       "title": "A Jung Home élő frissítései leálltak",
-      "description": "A Home Assistant {failures} alkalommal egymás után nem tudott újracsatlakozni a(z) {host} címen lévő Jung Home átjáróhoz. Az eszközállapotok már nem érkeznek azonnal, csak percenként egyszer frissülnek. Ellenőrizd, hogy az átjáró be van-e kapcsolva és elérhető-e a hálózaton. Ez a probléma magától eltűnik, amint a kapcsolat helyreáll."
+      "description": "A Home Assistant {failures} alkalommal egymás után nem tudott újracsatlakozni a(z) {host} címen lévő Jung Home átjáróhoz. Az eszközállapotok már nem érkeznek azonnal, csak az időszakos REST-lekérdezéskor frissülnek. Ellenőrizd, hogy az átjáró be van-e kapcsolva és elérhető-e a hálózaton. Ez a probléma magától eltűnik, amint a kapcsolat helyreáll."
     }
   }
 }

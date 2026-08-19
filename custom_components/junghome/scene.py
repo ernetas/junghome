@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.scene import Scene as SceneEntity
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -144,6 +145,28 @@ class JungHomeScene(CoordinatorEntity[JungHomeDataUpdateCoordinator], SceneEntit
         the note on ``JungHomeEntity.available``).
         """
         return self.coordinator.last_update_success
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Write state, skipping the pushes that cannot possibly change it.
+
+        A scene's state is its last activation timestamp and its availability
+        is ``last_update_success``; neither is a function of any device's
+        datapoints, so a per-datapoint push can only re-publish the identical
+        state. Scenes are not ``JungHomeEntity`` (no backing device), so they
+        do not inherit ``_skip_foreign_device_push`` — and the cost scales with
+        the user's scene count: on a socket pushing once a second, every scene
+        took a write per frame.
+
+        Same guard as the base helper: never skipped while the entity is shown
+        unavailable (or not yet written), because a push proves the gateway
+        alive and must be what flips a post-failed-poll scene back.
+        """
+        if self.coordinator.pushed_datapoint_id is not None:
+            state = self.hass.states.get(self.entity_id)
+            if state is not None and state.state != STATE_UNAVAILABLE:
+                return
+        super()._handle_coordinator_update()
 
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the scene.
