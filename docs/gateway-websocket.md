@@ -325,5 +325,5 @@ Any failure is returned as a `message` frame:
   and on change) is adopted by the coordinator exactly like a REST poll
   result, so devices added or removed at runtime appear/prune push-driven;
   the REST poll (60 s by default, configurable in the options flow) remains
-  as the backstop. The lower-level `devices` /
-  `*-new` / `*-deleted` frames are not consumed.
+  as the backstop. The lower-level `devices` / `*-new` / `*-deleted` frames
+  are not consumed.

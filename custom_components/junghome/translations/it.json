@@ -90,7 +90,7 @@
           "inverted_covers": "Tapparelle invertite (tende da sole)"
         },
         "data_description": {
-          "poll_interval": "Tra 30 e 3600 secondi (60 come predefinito)."
+          "poll_interval": "Tra 30 e 3600 secondi (predefinito: 60)."
         }
       }
     }

@@ -222,10 +222,10 @@ immediately with no approval step.
 The WebSocket that carries live push has been down for several consecutive
 reconnect attempts. The integration keeps working on the REST poll (60 seconds
 by default — see [Options](#options)), so states stay correct but stop being
-instant, and controllable entities read
-unavailable because commands only travel over the WebSocket. It clears itself
-once the connection is genuinely back. If it persists, check that the gateway
-is reachable and hasn't been rebooting.
+instant, and controllable entities read unavailable because commands only
+travel over the WebSocket. It clears itself once the connection is genuinely
+back. If it persists, check that the gateway is reachable and hasn't been
+rebooting.
 
 **Entities are unavailable but the gateway is up.**
 Controllable entities (lights, sockets, covers, thermostats, status LEDs)
@@ -245,20 +245,19 @@ ten consecutive polls (about ten minutes at the default
 [poll interval](#options), longer if you raised it) — that is how a device you
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
-device is
-still installed, make sure it is powered and in range of the mesh; it is
-re-added automatically once the gateway reports it again, though any custom
-name, area or `entity_id` you had set is not restored. You can also remove a
-stale device yourself from its device page (**⋮ → Delete**); Home Assistant
-refuses this while the gateway is still reporting the device, since it would
-simply come straight back.
+device is still installed, make sure it is powered and in range of the mesh;
+it is re-added automatically once the gateway reports it again, though any
+custom name, area or `entity_id` you had set is not restored. You can also
+remove a stale device yourself from its device page (**⋮ → Delete**); Home
+Assistant refuses this while the gateway is still reporting the device, since
+it would simply come straight back.
 
 **A device you added in the app doesn't show up.**
 New devices normally appear within seconds (the gateway pushes its device
-list on change), and within one [poll interval](#options) at worst — 60 seconds
-by default — via the REST poll. If one still doesn't appear, download
-diagnostics (**⋮ → Download diagnostics** on the
-entry) — `support_summary.unhandled_function_types` and
+list on change), and within one [poll interval](#options) at worst — 60
+seconds by default — via the REST poll. If one still doesn't appear, download
+diagnostics (**⋮ → Download diagnostics** on the entry) —
+`support_summary.unhandled_function_types` and
 `unhandled_datapoint_types` list anything the gateway reports that this
 integration doesn't yet map, which is exactly what an issue report needs.
 

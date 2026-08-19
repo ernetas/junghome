@@ -711,9 +711,10 @@ async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     Registered as an update listener. The coordinator caches the host and an
     options snapshot at construction, so a change to either only takes effect
     after a reload (options drive the poll interval and cover inversion; the
-    host drives the API/WS target). Guard on an actual change so reauth's token-only update (which
-    already reloads via ``async_update_reload_and_abort``) doesn't trigger a
-    redundant second reload.
+    host drives the API/WS target). Guard on an actual change so reauth's
+    token-only update (which already reloads via
+    ``async_update_reload_and_abort``) doesn't trigger a redundant second
+    reload.
     """
     coordinator = entry.runtime_data
     host_changed = coordinator.config.get("host") != entry.data.get("host")

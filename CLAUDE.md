@@ -366,7 +366,7 @@ appear — including `""`, `"NaN"`, trailing-space labels and boundary
 numbers — and confirm the platform parses all of them.
 
 **Pass 3 — concurrency interleavings.** Enumerate the concurrent actors:
-60 s poll, unmatched-push debounced refresh, connect-time refresh,
+the REST poll, unmatched-push debounced refresh, connect-time refresh,
 `functions` broadcast, per-datapoint pushes, command sends + correlated
 replies, the reconnect loop, entry reload/unload. For each documented
 invariant (push-overlay refcount, pending replies failed on session end, no

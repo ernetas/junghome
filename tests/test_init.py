@@ -29,6 +29,8 @@ from custom_components.junghome import (
     async_unload_entry,
 )
 from custom_components.junghome.const import (
+    CONF_INVERTED_COVERS,
+    CONF_POLL_INTERVAL,
     DATA_AREA_ASSIGNED,
     DOMAIN,
     device_slug,
@@ -92,6 +94,14 @@ async def test_state_update_via_websocket(
 
 
 async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
+    # Options are dumped too: the poll interval changes observable timing by up
+    # to 60x, so a report about "stale states" or "a device took hours to
+    # disappear" is unreadable without it.
+    hass.config_entries.async_update_entry(
+        init_integration,
+        options={CONF_POLL_INTERVAL: 300, CONF_INVERTED_COVERS: ["awning_level"]},
+    )
+    await hass.async_block_till_done()
     coordinator = init_integration.runtime_data
     coordinator.scenes = [{"id": "s1", "label": "Movie"}]
     coordinator.groups = [{"id": "g1", "name": "Living room"}]
@@ -104,6 +114,10 @@ async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
     assert diag["ws_connected"] is True
     assert diag["entry"]["data"][CONF_TOKEN] == "**REDACTED**"
     assert diag["entry"]["data"][CONF_HOST] == "**REDACTED**"
+    assert diag["entry"]["options"] == {
+        "poll_interval": 300,
+        "inverted_covers": ["awning_level"],
+    }
     # Scenes are a separate coordinator data category, surfaced for debugging.
     assert diag["scene_count"] == 1
     assert diag["scenes"] == [{"id": "s1", "label": "Movie"}]

@@ -90,7 +90,7 @@
           "inverted_covers": "Apverstos žaliuzės (markizės)"
         },
         "data_description": {
-          "poll_interval": "Nuo 30 iki 3600 sekundžių (numatytoji – 60)."
+          "poll_interval": "Nuo 30 iki 3600 sekundžių (numatytoji reikšmė – 60)."
         }
       }
     }

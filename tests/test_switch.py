@@ -359,16 +359,22 @@ async def test_push_markers_do_not_survive_their_dispatch(
 async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """The ``_should_refresh`` guard still has a case after the device skip.
+    """A sibling datapoint's push must not re-read this socket's switch value.
 
     The device-scoped skip returns early for *other* devices, so the only
-    dispatches that still reach ``_should_refresh`` are this device's own — and
-    a socket has a sibling that pushes constantly: its power quantity. The
-    window this guards is between the optimistic write and the gateway's echo,
-    when the stored switch value is still the pre-command one. It is set up
-    explicitly here (the test socket's stored value is put back to "on" without
-    dispatching, exactly as the coordinator holds it before the echo lands),
-    because the fixture's WebSocket confirms every command instantly.
+    dispatches still reaching ``_should_refresh`` are this device's own — and a
+    socket has a sibling that pushes constantly: its power quantity.
+
+    A single-datapoint socket cannot actually reach a stale read today: the
+    command awaits the gateway's echo, and the reply falls through to the merge
+    path, so ``coordinator.data`` already holds the confirmed value by the time
+    the optimistic write runs. The divergent store is therefore *constructed*
+    below. The guard is kept, and pinned here, because the same dispatch is
+    genuinely reachable on a multi-datapoint entity — a light's brightness
+    still holds its pre-command value while the switch echo is being
+    dispatched, which is the flicker ``JungHomeEntity._should_refresh``
+    documents — and because dropping it from one platform and not the others
+    is exactly the asymmetry that hides the next regression.
     """
     await hass.services.async_call(
         "switch", "turn_off", {"entity_id": "switch.boiler"}, blocking=True
@@ -388,7 +394,12 @@ async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
             "type": "datapoint",
             "data": {
                 "id": power_dp["id"],
-                "values": [{"key": "quantity", "value": "42.0"}],
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "42.0"},
+                    {"key": "quantity_label", "value": "Power "},
+                    {"key": "quantity_unit", "value": "W"},
+                ],
             },
         }
     )
