@@ -188,6 +188,13 @@ instead of re-deriving:
   Pushes that land while a poll is in flight are recorded and re-applied over
   the poll's snapshot (`_poll_push_overlay`) — the snapshot predates them, so
   adopting it as-is briefly reverted pushed/command-confirmed values.
+  Membership is covered separately: a `functions` broadcast adopted while a
+  poll's fetch is in flight supersedes that poll — the poll discards its
+  older snapshot (`_functions_broadcasts_seen` in `_async_update_data`),
+  skipping the overlay re-apply, the id-churn check and the
+  `data_generation` bump with it (the broadcast already ran all three on the
+  fresher list; bumping again would double-count one membership change in
+  the pruner's poll-based debounce).
 - **Availability**: entities key off `last_update_success` and never OR in
   `ws_connected` (a stale-True socket flag froze energy readings — issue
   #120); controllable entities additionally require the live WS because
@@ -358,7 +365,7 @@ numbers — and confirm the platform parses all of them.
 `functions` broadcast, per-datapoint pushes, command sends + correlated
 replies, the reconnect loop, entry reload/unload. For each documented
 invariant (push-overlay refcount, pending replies failed on session end, no
-poll starvation, the membership-race backlog note), pick the pairwise
+poll starvation, broadcast-supersedes-racing-poll), pick the pairwise
 interleavings that could violate it and check the *code*, not the comment.
 
 **Pass 4 — identity & HA-contract invariants.** No unique_id or device
@@ -415,7 +422,3 @@ or "clean — nothing above P3 survived verification."
   change and reports the regression upstream — a config fix at source
   beats all of this. Verify any change on a second rocker before shipping
   (all measurements so far are one button).
-- **A `functions` broadcast racing an in-flight poll can be overwritten by
-  the poll's older device list** (the per-datapoint overlay covers values,
-  not membership). Rare — the broadcast only fires on membership change —
-  and the next poll heals it.
