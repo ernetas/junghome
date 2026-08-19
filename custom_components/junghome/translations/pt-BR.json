@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opções de persianas do Jung Home",
-        "description": "Selecione as persianas cuja posição é informada de forma invertida, como os toldos. A posição delas é invertida para que totalmente fechada apareça como 0 por cento (fechada) e totalmente aberta como 100 por cento (aberta). Deixe as persianas de enrolar e as venezianas sem seleção.",
+        "title": "Opções do Jung Home",
+        "description": "O intervalo de consulta define com que frequência o gateway é relido via REST — as atualizações ao vivo continuam chegando pelo WebSocket, então um intervalo maior reduz principalmente a carga do gateway. Selecione as persianas cuja posição é informada de forma invertida, como os toldos. A posição delas é invertida para que totalmente fechada apareça como 0 por cento (fechada) e totalmente aberta como 100 por cento (aberta). Deixe as persianas de enrolar e as venezianas sem seleção.",
         "data": {
+          "poll_interval": "Intervalo de consulta (segundos)",
           "inverted_covers": "Persianas invertidas (toldos)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Nenhuma persiana foi encontrada neste gateway, então não há nada para configurar."
     }
   },
   "device_automation": {

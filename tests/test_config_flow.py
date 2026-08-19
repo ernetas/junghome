@@ -1,6 +1,7 @@
 """Tests for the Jung Home config flow."""
 
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -23,7 +24,9 @@ from custom_components.junghome.config_flow import (
 from custom_components.junghome.const import (
     CONF_IDENTITY_ANCHOR,
     CONF_INVERTED_COVERS,
+    CONF_POLL_INTERVAL,
     CONF_SERIAL,
+    DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     entry_scope,
     gateway_device_id,
@@ -1039,10 +1042,53 @@ async def test_options_flow_lists_and_saves_inverted_covers(
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
     assert entry.options[CONF_INVERTED_COVERS] == ["awning_001"]
+    # The interval field was left untouched, so its default was stored.
+    assert entry.options[CONF_POLL_INTERVAL] == DEFAULT_POLL_INTERVAL_SECONDS
 
 
-async def test_options_flow_aborts_without_covers(hass: HomeAssistant) -> None:
-    """With no covers (and none previously flagged) the options flow aborts."""
+async def test_options_flow_saves_poll_interval_and_coordinator_applies_it(
+    hass: HomeAssistant,
+) -> None:
+    """A saved poll interval reaches the (rebuilt) coordinator's update_interval.
+
+    Saving options reloads the entry via the update listener, and the new
+    coordinator reads the stored interval at construction.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="gw", data={CONF_HOST: "gw", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    _, ws = _no_network()
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=_COVERS),
+        ),
+        ws,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.runtime_data.update_interval == timedelta(seconds=60)
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_POLL_INTERVAL: 300}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_POLL_INTERVAL] == 300
+    assert entry.runtime_data.update_interval == timedelta(seconds=300)
+
+
+async def test_options_flow_without_covers_still_offers_the_interval(
+    hass: HomeAssistant,
+) -> None:
+    """With no covers the flow no longer aborts: the interval stays reachable.
+
+    The step used to abort with "no covers", which would now lock cover-less
+    installs out of the poll interval; instead the form shows only the
+    interval field, and saving must not invent (or clear) cover flags.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN, unique_id="gw", data={CONF_HOST: "gw", CONF_TOKEN: "t"}
     )
@@ -1052,8 +1098,16 @@ async def test_options_flow_aborts_without_covers(hass: HomeAssistant) -> None:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "no_covers"
+        assert result["type"] == FlowResultType.FORM
+        # Only the interval is in the schema; there is no covers field to show.
+        assert list(result["data_schema"].schema) == [CONF_POLL_INTERVAL]
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_POLL_INTERVAL: 120}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_POLL_INTERVAL] == 120
+    assert entry.options[CONF_INVERTED_COVERS] == []
 
 
 async def test_options_flow_keeps_offline_flagged_cover(hass: HomeAssistant) -> None:
@@ -1148,10 +1202,18 @@ async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) ->
     with fetch, ws:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-        # Orphan dropped -> nothing left to configure -> abort (not a ghost row).
+        # Orphan dropped -> no covers field at all (not a ghost row), and a
+        # save through the covers-less form clears the orphaned flag rather
+        # than carrying it forward blindly.
         result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "no_covers"
+        assert result["type"] == FlowResultType.FORM
+        assert list(result["data_schema"].schema) == [CONF_POLL_INTERVAL]
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_POLL_INTERVAL: 60}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_INVERTED_COVERS] == []
 
 
 async def test_reconfigure_reloads_an_entry_stuck_in_setup_retry(

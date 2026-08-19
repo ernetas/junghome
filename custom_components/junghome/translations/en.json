@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Jung Home cover options",
-        "description": "Select any covers whose position is reported inverted, such as awnings. Their position is flipped so fully closed reads as 0 percent (closed) and fully open as 100 percent (open). Leave roller shutters and blinds unselected.",
+        "title": "Jung Home options",
+        "description": "The poll interval sets how often the gateway is re-read over REST — live updates keep arriving over the WebSocket regardless, so a longer interval mainly reduces gateway load. Select any covers whose position is reported inverted, such as awnings. Their position is flipped so fully closed reads as 0 percent (closed) and fully open as 100 percent (open). Leave roller shutters and blinds unselected.",
         "data": {
+          "poll_interval": "Poll interval (seconds)",
           "inverted_covers": "Inverted covers (awnings)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "No covers were found on this gateway, so there is nothing to configure."
     }
   },
   "device_automation": {

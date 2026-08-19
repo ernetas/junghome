@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Jung Home panjur seçenekleri",
-        "description": "Konumu ters bildirilen panjurları seçin, örneğin tenteler. Konumları ters çevrilir; böylece tamamen kapalı yüzde 0 (kapalı), tamamen açık ise yüzde 100 (açık) olarak görünür. Stor perdeleri ve jaluzileri seçili bırakmayın.",
+        "title": "Jung Home seçenekleri",
+        "description": "Yoklama aralığı, ağ geçidinin REST üzerinden ne sıklıkta yeniden okunacağını belirler — canlı güncellemeler WebSocket üzerinden gelmeye devam eder, bu nedenle daha uzun bir aralık esas olarak ağ geçidi yükünü azaltır. Konumu ters bildirilen panjurları seçin, örneğin tenteler. Konumları ters çevrilir; böylece tamamen kapalı yüzde 0 (kapalı), tamamen açık ise yüzde 100 (açık) olarak görünür. Stor perdeleri ve jaluzileri seçili bırakmayın.",
         "data": {
+          "poll_interval": "Yoklama aralığı (saniye)",
           "inverted_covers": "Ters panjurlar (tenteler)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Bu ağ geçidinde panjur bulunamadı, dolayısıyla yapılandırılacak bir şey yok."
     }
   },
   "device_automation": {

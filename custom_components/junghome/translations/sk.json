@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Možnosti žalúzií Jung Home",
-        "description": "Vyberte všetky žalúzie, ktorých poloha sa hlási obrátene, napríklad markízy. Ich poloha sa prevráti, takže úplne zatvorené sa zobrazí ako 0 percent (zatvorené) a úplne otvorené ako 100 percent (otvorené). Rolety a žalúzie nechajte nevybrané.",
+        "title": "Možnosti Jung Home",
+        "description": "Interval dopytovania určuje, ako často sa brána znova načítava cez REST — živé aktualizácie naďalej prichádzajú cez WebSocket, dlhší interval teda predovšetkým znižuje zaťaženie brány. Vyberte všetky žalúzie, ktorých poloha sa hlási obrátene, napríklad markízy. Ich poloha sa prevráti, takže úplne zatvorené sa zobrazí ako 0 percent (zatvorené) a úplne otvorené ako 100 percent (otvorené). Rolety a žalúzie nechajte nevybrané.",
         "data": {
+          "poll_interval": "Interval dopytovania (sekundy)",
           "inverted_covers": "Obrátené žalúzie (markízy)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Na tejto bráne sa nenašli žiadne žalúzie, takže nie je čo nastavovať."
     }
   },
   "device_automation": {

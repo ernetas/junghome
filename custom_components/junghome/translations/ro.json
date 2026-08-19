@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opțiuni pentru jaluzelele Jung Home",
-        "description": "Selectează jaluzelele a căror poziție este raportată inversat, cum ar fi copertinele. Poziția lor este inversată, astfel încât complet închis să apară ca 0 la sută (închis), iar complet deschis ca 100 la sută (deschis). Lasă rulourile și jaluzelele interioare neselectate.",
+        "title": "Opțiuni Jung Home",
+        "description": "Intervalul de interogare stabilește cât de des este recitit gateway-ul prin REST — actualizările live continuă să sosească prin WebSocket, așa că un interval mai lung reduce în principal sarcina gateway-ului. Selectează jaluzelele a căror poziție este raportată inversat, cum ar fi copertinele. Poziția lor este inversată, astfel încât complet închis să apară ca 0 la sută (închis), iar complet deschis ca 100 la sută (deschis). Lasă rulourile și jaluzelele interioare neselectate.",
         "data": {
+          "poll_interval": "Interval de interogare (secunde)",
           "inverted_covers": "Jaluzele inversate (copertine)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "Nu au fost găsite jaluzele pe acest gateway, așadar nu este nimic de configurat."
     }
   },
   "device_automation": {

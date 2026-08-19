@@ -58,6 +58,25 @@ GATEWAY_MODEL = "Gateway"
 # the gateway's function data, so the user marks them here. See cover.py.
 CONF_INVERTED_COVERS = "inverted_covers"
 
+# Options-flow key: how often the REST poll re-reads the gateway's device list,
+# in seconds. The poll is the backstop behind the WebSocket push (device
+# discovery, pruning, id-churn detection and the availability probe all ride on
+# it), so it stays mandatory — this only tunes its cadence. Lengthening it
+# mainly reduces gateway load; live value updates keep arriving over the
+# WebSocket regardless. The bounds are enforced in the options form AND
+# re-clamped when the coordinator reads the stored option (an option written by
+# an older version, or edited by hand, must not produce a torrent of requests
+# or an effectively-disabled backstop):
+# - The floor matches the fetch's own 30 s `asyncio.timeout` — a shorter
+#   interval could not complete a slow fetch before the next one is due.
+# - The ceiling (1 h) keeps the pruner's debounce meaningful: it counts
+#   STALE_DEVICE_PRUNE_MISSES *polls*, so the stale-device window scales
+#   linearly with this interval.
+CONF_POLL_INTERVAL = "poll_interval"
+DEFAULT_POLL_INTERVAL_SECONDS = 60
+MIN_POLL_INTERVAL_SECONDS = 30
+MAX_POLL_INTERVAL_SECONDS = 3600
+
 # Entry-data key: the gateway's hardware serial (from the mDNS TXT record or
 # the REST `config/parameter/system_serial` endpoint). Presence of this key
 # means the entry's identity is verified: `unique_id` equals this serial, a

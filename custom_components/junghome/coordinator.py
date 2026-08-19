@@ -6,6 +6,7 @@ import logging
 import math
 import random
 from collections import deque
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, cast
 from urllib.parse import quote
@@ -23,8 +24,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_POLL_INTERVAL,
+    DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_SCENE_RECALLED,
+    MAX_POLL_INTERVAL_SECONDS,
+    MIN_POLL_INTERVAL_SECONDS,
     device_slug,
     duplicate_slugs,
     scene_unique_id,
@@ -100,6 +105,31 @@ MAX_PLAUSIBLE_KELVIN = 20000
 
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
+
+
+def poll_interval_from_options(options: Mapping[str, Any]) -> int:
+    """Return the configured poll interval in seconds, defaulted and clamped.
+
+    The options form already bounds the value, but the stored option is still
+    re-validated here: an entry written by an older version has no value (use
+    the default), and one edited by hand or migrated oddly may hold anything.
+    A malformed value falls back to the default rather than raising out of
+    coordinator construction (which would fail the whole entry setup over a
+    tuning knob); a numeric one is clamped into
+    [MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS] so a hand-edited
+    ``1`` cannot hammer the gateway and a huge value cannot effectively
+    disable the poll backstop. ``bool`` is rejected explicitly (it is an
+    ``int`` subclass, and ``True`` is not an interval); ``int()`` on a
+    non-finite float raises ``ValueError``/``OverflowError``, both caught.
+    """
+    raw = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL_SECONDS)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return DEFAULT_POLL_INTERVAL_SECONDS
+    try:
+        seconds = int(float(raw))
+    except (ValueError, OverflowError):
+        return DEFAULT_POLL_INTERVAL_SECONDS
+    return max(MIN_POLL_INTERVAL_SECONDS, min(MAX_POLL_INTERVAL_SECONDS, seconds))
 
 
 def _as_kelvin(raw: Any) -> int | None:
@@ -281,7 +311,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             _LOGGER,
             config_entry=config_entry,
             name="Jung Home",
-            update_interval=timedelta(minutes=1),
+            # Options-configurable (default 60 s, clamped — see
+            # `poll_interval_from_options`). An options change reloads the
+            # entry via the update listener in __init__.py, so a new interval
+            # takes effect by rebuilding the coordinator; nothing re-reads the
+            # option mid-flight.
+            update_interval=timedelta(
+                seconds=poll_interval_from_options(config_entry.options)
+            ),
         )
 
     def _record_error(self, err: BaseException) -> None:

@@ -83,15 +83,13 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opcions de persianes de Jung Home",
-        "description": "Selecciona les persianes la posició de les quals s'informa invertida, com ara els tendals. La seva posició s'inverteix perquè totalment tancada es mostri com a 0 per cent (tancada) i totalment oberta com a 100 per cent (oberta). Deixa les persianes enrotllables i les venecianes sense seleccionar.",
+        "title": "Opcions de Jung Home",
+        "description": "L'interval de sondeig defineix amb quina freqüència es torna a llegir la passarel·la per REST — les actualitzacions en directe continuen arribant pel WebSocket, així que un interval més llarg redueix sobretot la càrrega de la passarel·la. Selecciona les persianes la posició de les quals s'informa invertida, com ara els tendals. La seva posició s'inverteix perquè totalment tancada es mostri com a 0 per cent (tancada) i totalment oberta com a 100 per cent (oberta). Deixa les persianes enrotllables i les venecianes sense seleccionar.",
         "data": {
+          "poll_interval": "Interval de sondeig (segons)",
           "inverted_covers": "Persianes invertides (tendals)"
         }
       }
-    },
-    "abort": {
-      "no_covers": "No s'ha trobat cap persiana en aquesta passarel·la, així que no hi ha res a configurar."
     }
   },
   "device_automation": {
