@@ -1644,3 +1644,34 @@ async def test_fetch_serial_over_rest(hass: HomeAssistant, aioclient_mock) -> No
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, exc=aiohttp.ClientError())
     assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+
+
+async def test_reauth_on_a_loaded_entry_reloads_via_the_listener(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Reauth must store the token and reload without HA's deprecated helper.
+
+    Only a *loaded* entry has update listeners, and that is the exact condition
+    under which `async_update_reload_and_abort` reports "has an update listener
+    and should use it for scheduling a reload" — deprecated in HA 2026.6, an
+    error from 2026.12. Every other reauth test uses a bare `MockConfigEntry`
+    that was never set up, so none of them can see it.
+
+    The autouse `fail_on_home_assistant_deprecation_reports` fixture is what
+    turns that report into a failure; this test is what provokes it.
+    """
+    entry = init_integration
+    assert entry.update_listeners  # the precondition the deprecation keys on
+
+    with patch(_REGISTER, AsyncMock(return_value="fresh-tok")):
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_TOKEN] == "fresh-tok"
+    # The listener owns the reload, so the rebuilt coordinator carries the new
+    # token — otherwise the next poll re-auth-fails in a loop.
+    assert entry.runtime_data.config["token"] == "fresh-tok"

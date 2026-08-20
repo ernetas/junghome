@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from copy import deepcopy
 from pathlib import Path
@@ -231,6 +232,32 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "real_serial_fetch: let the test run the real _async_fetch_serial "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
+
+
+@pytest.fixture(autouse=True)
+def fail_on_home_assistant_deprecation_reports(caplog: pytest.LogCaptureFixture):
+    """Fail any test that trips a Home Assistant deprecation report.
+
+    ``homeassistant.helpers.frame.report_usage`` **logs**; it never calls
+    ``warnings.warn``. So ``-W error::DeprecationWarning`` cannot see it, and a
+    dated removal ("breaks in Home Assistant 2026.12") sits inside a fully green
+    suite until the day it starts raising. That is exactly how pairing a
+    reloading config-flow helper with an update listener — deprecated in HA
+    2026.6 — survived unnoticed in the reauth path.
+
+    The reports name the integration, so this catches ours and stays quiet for
+    anything HA reports about itself.
+    """
+    yield
+    offenders = [
+        record.getMessage()
+        for record in caplog.get_records("call")
+        if record.name == "homeassistant.helpers.frame"
+        and record.levelno >= logging.WARNING
+    ]
+    assert not offenders, "Home Assistant deprecation report(s): " + "; ".join(
+        offenders
     )
 
 

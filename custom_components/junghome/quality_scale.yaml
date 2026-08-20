@@ -37,8 +37,14 @@ rules:
 
   # Silver
   action-exceptions:
-    status: exempt
-    comment: The integration registers no service actions.
+    status: done
+    comment: >-
+      No custom service actions are registered, but the rule explicitly covers
+      PLATFORM actions too (turning a light/switch on, moving a cover, setting a
+      thermostat). Every one of those raises a translated HomeAssistantError:
+      `cannot_send` when the WebSocket cannot carry the command, and
+      `command_timeout` when the gateway never confirms it (see
+      `_send_datapoint_command`); scene recall raises `scene_not_found`.
   config-entry-unloading: done
   docs-configuration-parameters: done
   docs-installation-parameters: done
@@ -105,8 +111,11 @@ rules:
       silently — states keep updating on the REST poll, so nothing looks
       broken, it just stops being live. After MAX_RECONNECT_FAILURES consecutive
       failed reconnects the coordinator raises a non-fixable warning issue
-      (`websocket_push_failure`) and deletes it again on the next successful
-      connect, since only the gateway or the network coming back resolves it.
+      (`websocket_push_failure`) and deletes it again on the next connect that
+      STAYS UP for STABLE_SESSION_SECONDS (a bare connect is not proof of
+      recovery — a flapping socket would clear and re-raise the issue forever),
+      and on unload. It is not user-fixable: only the gateway or the network
+      coming back resolves it.
   stale-devices: done
 
   # Platinum

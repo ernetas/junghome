@@ -11,7 +11,7 @@ from .const import (
     BUTTON_DATAPOINT_TYPES,
     CONF_SUBTYPE,
     EVENT_BUTTON_ACTION,
-    datapoint_value,
+    datapoint_bool,
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
@@ -115,12 +115,9 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         # without ever emitting a phantom press.
         if self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
             datapoint = self._find_datapoint(self._datapoint["id"])
-            if datapoint:
-                event_type = (
-                    "pressed"
-                    if self._get_state_from_datapoint(datapoint)
-                    else "depressed"
-                )
+            pressed = self._get_state_from_datapoint(datapoint)
+            if pressed is not None:
+                event_type = "pressed" if pressed else "depressed"
                 _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
                 self._trigger_event(event_type)
                 self._fire_bus_event(event_type)
@@ -151,9 +148,14 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
             },
         )
 
-    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
-        """Extract state from datapoint values. Returns True if pressed.
+    def _get_state_from_datapoint(self, datapoint: Datapoint | None) -> bool | None:
+        """Extract the edge from datapoint values. True if pressed.
 
         Scoped to this datapoint's own type so bundled request keys don't merge.
+        ``None`` when the datapoint is missing or the gateway reports ``"NaN"``
+        — it gave up reading the button after three failed requests, which is
+        not an edge. Firing ``depressed`` for it would be a phantom release,
+        and these states are ``POLL_ONCE``: a button that never answers is
+        re-polled every cycle, so it would repeat indefinitely.
         """
-        return datapoint_value(datapoint, self._datapoint.get("type", "")) == "1"
+        return datapoint_bool(datapoint, self._datapoint.get("type", ""))

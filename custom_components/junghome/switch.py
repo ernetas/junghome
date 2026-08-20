@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_value, stable_unique_id
+from .const import datapoint_bool, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
@@ -126,9 +126,13 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
         self._is_on = False
         self.async_write_ha_state()
 
-    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
-        """Extract the state of the socket from its datapoint."""
-        return datapoint_value(datapoint, "switch") == "1"
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
+        """Extract the state of the socket from its datapoint.
+
+        ``None`` when the gateway reports ``"NaN"`` (it gave up reading the
+        node) — the socket reads *unknown*, not off. See ``datapoint_bool``.
+        """
+        return datapoint_bool(datapoint, "switch")
 
 
 class JungHomeSwitch(JungHomeEntity, SwitchEntity):
@@ -156,8 +160,9 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
         self._attr_unique_id = stable_unique_id(device, datapoint, "switch")
         self._attr_is_on = self._get_state_from_datapoint(datapoint)
 
-    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool:
-        return datapoint_value(datapoint, "status_led") == "1"
+    def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
+        """``None`` when the gateway reports ``"NaN"``. See ``datapoint_bool``."""
+        return datapoint_bool(datapoint, "status_led")
 
     @property
     def is_on(self) -> bool | None:

@@ -9,7 +9,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DATA_AREA_ASSIGNED,
@@ -389,11 +388,6 @@ def _make_area_assigner(
     return _assign_areas
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Jung Home integration."""
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
     """Set up Jung Home from a config entry."""
     host = entry.data.get("host")
@@ -706,18 +700,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
-    """Reload when the stored host or the entry options change.
+    """Reload when the stored host, token or entry options change.
 
-    Registered as an update listener. The coordinator caches the host and an
-    options snapshot at construction, so a change to either only takes effect
-    after a reload (options drive the poll interval and cover inversion; the
-    host drives the API/WS target). Guard on an actual change so reauth's
-    token-only update (which already reloads via
-    ``async_update_reload_and_abort``) doesn't trigger a redundant second
-    reload.
+    Registered as an update listener. The coordinator caches the host, the
+    token and an options snapshot at construction, so a change to any of them
+    only takes effect after a reload (options drive the poll interval and cover
+    inversion; the host drives the API/WS target; the token authenticates
+    both). Guard on an actual change so an update that touches none of them
+    does not reload for nothing.
+
+    The token arm is what completes the reauth flow: that flow stores the fresh
+    token with ``async_update_and_abort`` and deliberately does NOT schedule its
+    own reload, because pairing a reloading flow helper with an update listener
+    is deprecated in HA 2026.6 and raises from 2026.12. Without this arm the new
+    token would sit in ``entry.data`` while the coordinator kept using the
+    rejected one it cached at construction — an endless reauth loop.
     """
     coordinator = entry.runtime_data
     host_changed = coordinator.config.get("host") != entry.data.get("host")
+    token_changed = coordinator.config.get("token") != entry.data.get("token")
     options_changed = coordinator.options_snapshot != dict(entry.options)
-    if host_changed or options_changed:
+    if host_changed or token_changed or options_changed:
         await hass.config_entries.async_reload(entry.entry_id)

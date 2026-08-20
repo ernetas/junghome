@@ -272,8 +272,8 @@ async def test_light_value_extractors_are_defensive(hass: HomeAssistant) -> None
     # No matching key -> defaults.
     assert light._get_brightness_from_datapoint({"id": "x", "values": []}) == 0
     assert light._get_color_temp_from_datapoint({"id": "x", "values": []}) is None
-    # State helper with no switch key -> off.
-    assert light._get_state_from_datapoint({"id": "x", "values": []}) is False
+    # State helper with no switch key -> unknown, not off (see datapoint_bool).
+    assert light._get_state_from_datapoint({"id": "x", "values": []}) is None
 
 
 async def test_light_set_without_datapoints_warns_and_noops(
@@ -528,3 +528,36 @@ async def test_unparseable_color_temp_is_none(hass: HomeAssistant, raw: str) -> 
     """An unusable Kelvin value yields None rather than raising."""
     light = _color_light(bare_coordinator(hass), color_temp=raw)
     assert light.color_temp_kelvin is None
+
+
+async def test_nan_switch_reads_unknown_not_off(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A `"NaN"` switch value must leave the light unknown, never off.
+
+    Same contract as the socket (see `datapoint_bool`): the gateway sends
+    `"NaN"` once it has given up reading a node, and reading that as off puts a
+    state the user never caused into history.
+    """
+    coordinator = init_integration.runtime_data
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": "idlight1-001", "values": [{"key": "switch", "value": "1"}]},
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.hall_light").state == "on"
+
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idlight1-001",
+                "values": [{"key": "switch", "value": "NaN"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("light.hall_light").state == "unknown"

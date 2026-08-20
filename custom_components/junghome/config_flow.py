@@ -501,8 +501,18 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_finish(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Store the fresh token on the existing entry and reload it."""
-        return self.async_update_reload_and_abort(
+        """Store the fresh token on the existing entry and let the listener reload.
+
+        Deliberately ``async_update_and_abort``, not the ``..._reload_...``
+        variant: the entry always carries an update listener (``__init__``
+        registers one on every setup), and combining the two is deprecated
+        since HA 2026.6 and raises from 2026.12 — the raise lands *before* the
+        scheduled reload, so the fresh token would be stored while the
+        coordinator kept the rejected one, looping reauth until a restart. The
+        reconfigure and zeroconf paths already update-and-let-the-listener-
+        reload; this was the last one that did not.
+        """
+        return self.async_update_and_abort(
             self._get_reauth_entry(),
             data_updates={CONF_TOKEN: self._token},
         )
