@@ -103,6 +103,12 @@ WS_FRAME_MAX_CHARS = 2000
 MIN_PLAUSIBLE_KELVIN = 1000
 MAX_PLAUSIBLE_KELVIN = 20000
 
+# The gateway state DB's declared defaults for the `version` topic: the
+# middleware ships these until the board controller has answered
+# `MSG_SW_VERSION_IND`, so they mean "not known yet", not "version 0".
+UNREAD_VERSION_RELEASE = "0.0.0"
+UNREAD_VERSION_BUILD = "0"
+
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
 
@@ -228,7 +234,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
         # Gateway firmware version, reported by the WebSocket "version" frame.
+        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
+        # over REST (`async_fetch_gateway_version`). This is what a device page
+        # should show as `sw_version`.
         self.gateway_version: str | None = None
+        # The REST/WebSocket API version the gateway implements, e.g. "1.5.0",
+        # announced in the WebSocket handshake's `version` frame. It is
+        # `api-junghome`'s own package version — a protocol number, NOT the
+        # firmware — so it is surfaced in diagnostics only. It was previously
+        # stamped on every device as `sw_version`, which reported "1.5.0" for a
+        # gateway running firmware 2.1.3.
+        self.api_version: str | None = None
         # Scene list, populated from the WebSocket `scenes` broadcasts (full list
         # on connect, `scenes-new` / `scenes-deleted` deltas on change). The scene
         # platform discovers from this; recall goes over REST because the
@@ -565,6 +581,78 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if not isinstance(data, list):
             return []
         return [g for g in data if isinstance(g, dict)]
+
+    async def _fetch_config_parameter(
+        self, host: str, token: str, parameter: str
+    ) -> str | None:
+        """Best-effort read of one gateway configuration parameter over REST.
+
+        ``GET /config/parameter/{name}`` returns the parameter's bare value as
+        JSON. The api-server derives the topic from the name's first underscore
+        segment (``version_release`` -> topic ``version``) and 404s on an
+        unknown topic or key, so an older firmware simply yields ``None``.
+
+        Every value the state DB can hold before the middleware has read it is
+        its declared default, so a caller must decide what counts as "not known
+        yet" for its own parameter — this helper only strips and rejects empty.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/config/parameter/{parameter}"
+        headers = {"token": f"{token}"}
+        try:
+            async with (
+                asyncio.timeout(30),
+                session.get(url, headers=headers) as response,
+            ):
+                if response.status != 200:
+                    return None
+                data = await response.json()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read gateway parameter %s: %s", parameter, err)
+            return None
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        return None
+
+    async def async_fetch_gateway_version(self) -> None:
+        """Populate ``gateway_version`` from the gateway's own software version.
+
+        The WebSocket handshake's ``version`` frame carries the *API* version
+        (``api-junghome``'s package version, "1.5.0"), which was being stamped
+        on the hub and on every device as ``sw_version`` — so a gateway running
+        firmware 2.1.3 build 2840 reported "1.5.0" on every device page.
+
+        The real value lives in the middleware's ``version`` topic, populated
+        from the board controller's ``MSG_SW_VERSION_IND`` (which reports e.g.
+        ``"2.1.3 Release (2840)"``; the middleware splits the parenthesised
+        build into ``version_build`` and keeps the rest as ``version_release``).
+        Both are read-only parameters, so this is a plain read.
+
+        Best-effort, like the groups and scenes fetches: a version string is not
+        worth failing setup over, and an older firmware without the parameter
+        just leaves the previous value in place. ``"0.0.0"`` is the state DB's
+        declared default and means the middleware has not read the board yet —
+        treated as unknown rather than published as a version.
+        """
+        release = await self._fetch_config_parameter(
+            self.config["host"], self.config["token"], "version_release"
+        )
+        if not release or release == UNREAD_VERSION_RELEASE:
+            _LOGGER.debug("Gateway software version not available yet")
+            return
+        build = await self._fetch_config_parameter(
+            self.config["host"], self.config["token"], "version_build"
+        )
+        version = (
+            f"{release} ({build})"
+            if build and build != UNREAD_VERSION_BUILD
+            else release
+        )
+        if version == self.gateway_version:
+            return
+        self.gateway_version = version
+        _LOGGER.info("Jung Home gateway software version: %s", self.gateway_version)
+        self._apply_gateway_version()
 
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
@@ -947,11 +1035,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # replaces the optimistic one HA already wrote.
                 self._resolve_pending_reply(message_id, data.get("data"))
             if data.get("type") == "version":
-                self.gateway_version = data.get("data")
-                _LOGGER.info(
-                    "Jung Home gateway firmware version: %s", self.gateway_version
-                )
-                self._apply_gateway_version()
+                # `api-junghome`'s package version (the API contract), not the
+                # gateway's software version — see `api_version` in __init__.
+                self.api_version = data.get("data")
+                _LOGGER.debug("Jung Home gateway API version: %s", self.api_version)
                 return
             if data.get("type") == "message":
                 text = data.get("data")
@@ -1036,6 +1123,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         self._reconnect_failures = 0
+        # A gateway software update reboots the gateway, so a session that has
+        # just proven stable is exactly when the version may have changed. Done
+        # here rather than on connect so a flapping socket cannot turn it into a
+        # request per reconnect; `async_fetch_gateway_version` is a no-op when
+        # the value is unchanged.
+        if self.config_entry is not None:
+            self.config_entry.async_create_background_task(
+                self.hass,
+                self.async_fetch_gateway_version(),
+                name="junghome_gateway_version",
+            )
         if self._unavailable_logged:
             # Pair the single WARNING above with a matching recovery line, so an
             # outage has a visible end without trawling debug logs.

@@ -1405,3 +1405,84 @@ async def test_command_futures_race_replies_and_session_drop(
     assert outcomes.count("failed") == 4
     assert coordinator._pending_replies == {}
     await coordinator.async_shutdown()
+
+
+@pytest.mark.real_version_fetch
+async def test_gateway_version_is_read_over_rest(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The device pages must show the GATEWAY's version, not the API's.
+
+    The WebSocket handshake's `version` frame carries `api-junghome`'s own
+    package version ("1.5.0"), which is the API contract — not the firmware.
+    Stamping it as `sw_version` reported "1.5.0" on every device page for a
+    gateway actually running 2.1.3 build 2840. The real value lives in the
+    middleware's `version` topic, populated from the board controller's
+    `MSG_SW_VERSION_IND`.
+    """
+    coordinator = _coordinator(hass)
+    base = "https://h/api/junghome/config/parameter"
+    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
+    aioclient_mock.get(f"{base}/version_build", json="2840")
+
+    await coordinator.async_fetch_gateway_version()
+
+    assert coordinator.gateway_version == "2.1.3 (2840)"
+    # The API version is a separate number and must not be confused with it.
+    assert coordinator.api_version is None
+
+
+@pytest.mark.real_version_fetch
+async def test_gateway_version_tolerates_missing_or_unread_parameters(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Anything short of a real reading must leave the version unset.
+
+    `"0.0.0"` / `"0"` are the state DB's declared defaults: the middleware ships
+    them until the board controller has answered, so they mean "not known yet",
+    not "version 0". Firmware without the parameter 404s. Neither is worth
+    failing setup over, and neither may be published as a version.
+    """
+    coordinator = _coordinator(hass)
+    base = "https://h/api/junghome/config/parameter"
+
+    # Older firmware: parameter unknown -> 404.
+    aioclient_mock.get(f"{base}/version_release", status=404)
+    await coordinator.async_fetch_gateway_version()
+    assert coordinator.gateway_version is None
+
+    # Middleware has not read the board yet -> the declared default.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{base}/version_release", json="0.0.0")
+    await coordinator.async_fetch_gateway_version()
+    assert coordinator.gateway_version is None
+
+    # A release with no build yet -> the release alone, not "2.1.3 (0)".
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
+    aioclient_mock.get(f"{base}/version_build", json="0")
+    await coordinator.async_fetch_gateway_version()
+    assert coordinator.gateway_version == "2.1.3"
+
+    # A transport failure leaves the previously known value in place.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{base}/version_release", exc=aiohttp.ClientError())
+    await coordinator.async_fetch_gateway_version()
+    assert coordinator.gateway_version == "2.1.3"
+
+    # A non-string body is not a version either.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{base}/version_release", json=213)
+    await coordinator.async_fetch_gateway_version()
+    assert coordinator.gateway_version == "2.1.3"
+
+    # Re-reading the same version writes nothing: `_apply_gateway_version`
+    # walks every registry row, and the stable-session hook calls this on
+    # every reconnect.
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
+    aioclient_mock.get(f"{base}/version_build", json="0")
+    with patch.object(coordinator, "_apply_gateway_version") as apply:
+        await coordinator.async_fetch_gateway_version()
+    apply.assert_not_called()
+    assert coordinator.gateway_version == "2.1.3"

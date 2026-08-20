@@ -115,6 +115,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - **Colour temperature is 2000–6000 K, enforced by the gateway**: the
   middleware hard-codes that range and clamps every tunable-white write (see
   the `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it.
+- **The WS handshake's `version` frame is the API version, not the firmware.**
+  It carries `api-junghome`'s own package version (`"1.5.0"`, matching
+  `apidoc.json` `info.version`); the gateway's *software* version is a REST
+  read, `GET /config/parameter/version_release` (+ `version_build`, e.g.
+  `"2.1.3"` / `"2840"`, populated from the board controller's
+  `MSG_SW_VERSION_IND`). The two were conflated, so every device page showed
+  `1.5.0` as its `sw_version`. `coordinator.api_version` holds the former
+  (diagnostics only); `gateway_version` holds the latter and is what reaches
+  `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
 - Scenes arrive over the WS `scenes` broadcasts (plus a setup-time REST fetch)
   and recall over REST `POST /scenes/{id}` — the WS `scene` *command* is
   unimplemented on the gateway. Scene identity is the **label** (ids

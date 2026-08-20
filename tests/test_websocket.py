@@ -82,7 +82,10 @@ async def test_run_websocket_processes_all_frame_types(hass: HomeAssistant) -> N
     ):
         await coordinator._run_websocket()
 
-    assert coordinator.gateway_version == "1.5.0"
+    # The handshake `version` frame carries the API contract version, not the
+    # gateway's software version (that is read over REST).
+    assert coordinator.api_version == "1.5.0"
+    assert coordinator.gateway_version is None
     # Lifecycle: ws_connected was True for the connect-time resync...
     assert seen["ws_connected"] is True
     # ...and is reset to False (with the socket cleared) in the finally block.
@@ -514,7 +517,7 @@ async def test_dispatch_parses_each_frame_once_and_logs_it(
         coordinator._dispatch_text_frame(frame)
     assert loads.call_count == 1
     assert coordinator.ws_last_frame_by_type["version"] == frame
-    assert coordinator.gateway_version == "1.5.0"
+    assert coordinator.api_version == "1.5.0"
 
 
 async def test_dispatch_logs_unparseable_and_untyped_frames(

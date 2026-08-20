@@ -25,7 +25,12 @@ Every frame is a JSON object of the form:
 In order:
 
 1. `{ "type": "message", "data": "Hello from JUNG HOME Gateway" }`
-2. `{ "type": "version", "data": "1.5.0" }`
+2. `{ "type": "version", "data": "1.5.0" }` — **the API version, not the
+   gateway's software version.** It is `api-junghome`'s own package version
+   (`packageJson.version`, matching `apidoc.json` `info.version`), so a gateway
+   running firmware 2.1.3 build 2840 announces `"1.5.0"` here. The software
+   version is a REST read: `GET /config/parameter/version_release` (+
+   `version_build`) — see [gateway-rest-api.md](gateway-rest-api.md).
 3. After ~1 s, the current state is pushed:
    - `{ "type": "functions", "data": [ ...all functions... ] }`
    - `{ "type": "groups", "data": [ ...all groups... ] }`
