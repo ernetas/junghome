@@ -130,7 +130,12 @@ async def async_get_config_entry_diagnostics(
             "options": async_redact_data(entry.options, TO_REDACT),
             "title": entry.title,
         },
+        # The gateway's own software version ("2.1.3 (2840)"), read over REST.
         "gateway_version": coordinator.gateway_version,
+        # The API contract version the gateway announces in the WebSocket
+        # handshake ("1.5.0") — a different number entirely, and the one
+        # protocol behaviour keys off. Worth having in a report next to it.
+        "api_version": coordinator.api_version,
         # Whether the live push link is currently up (mirrors the gateway
         # connectivity binary_sensor); a dump taken while it is False explains
         # why state looks stale (it has fallen back to REST polling alone).

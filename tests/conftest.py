@@ -233,6 +233,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "real_serial_fetch: let the test run the real _async_fetch_serial "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_version_fetch: let the test run the real _fetch_config_parameter "
+        "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -287,6 +292,27 @@ def mock_groups_fetch(request):
         JungHomeDataUpdateCoordinator,
         "_fetch_groups_from_api",
         AsyncMock(return_value=[]),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_version_fetch(request):
+    """Keep the setup-time REST gateway-version read off the network.
+
+    The mirror of ``mock_groups_fetch``: ``async_setup_entry`` also reads
+    ``config/parameter/version_release`` (and ``version_build``) before the hub
+    device is registered, so every device page carries the gateway's software
+    version. Defaults to "parameter unavailable", which is exactly what an older
+    firmware returns, so entity/lifecycle tests behave as they always did.
+    """
+    if request.node.get_closest_marker("real_version_fetch") is not None:
+        yield
+        return
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_config_parameter",
+        AsyncMock(return_value=None),
     ):
         yield
 

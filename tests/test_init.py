@@ -2273,3 +2273,48 @@ async def test_every_device_links_to_the_gateway_hub(
     assert others
     for device in others:
         assert device.via_device_id == hub.id, f"{device.name} is not linked to the hub"
+
+
+async def test_gateway_software_version_reaches_every_device_page(
+    hass: HomeAssistant,
+) -> None:
+    """The version read over REST must land on the hub and on every device.
+
+    End-to-end counterpart to the coordinator's unit tests: `device_info` is
+    only read when an entity is first added, so the value has to be known
+    before the platforms run (setup fetches it) and `_apply_gateway_version`
+    has to carry it into rows already written.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+
+    async def _parameter(_self, _host: str, _token: str, parameter: str) -> str | None:
+        return {"version_release": "2.1.3", "version_build": "2840"}.get(parameter)
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=copy.deepcopy(PRISTINE_DEVICES)),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_fetch_config_parameter", _parameter
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        dev_reg = dr.async_get(hass)
+        devices = dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+        assert devices
+        assert {device.sw_version for device in devices} == {"2.1.3 (2840)"}
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

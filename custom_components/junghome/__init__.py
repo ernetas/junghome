@@ -412,6 +412,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # Same reasoning for scenes: they otherwise arrive only in the WebSocket
     # handshake, which happens after the platforms are set up.
     await coordinator.async_fetch_scenes()
+    # The gateway's software version, before the hub device is registered below
+    # and before any platform builds a `device_info` — otherwise every device
+    # would carry no version until the next stable WebSocket session.
+    await coordinator.async_fetch_gateway_version()
 
     # One-time migration of registry entries from the gateway's volatile device
     # ids to firmware-stable, label-based ids. Must run while the gateway's ids
