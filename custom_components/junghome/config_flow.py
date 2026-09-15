@@ -501,21 +501,38 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_finish(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Store the fresh token on the existing entry and let the listener reload.
+        """Store the fresh token on the existing entry and get it reloaded.
 
         Deliberately ``async_update_and_abort``, not the ``..._reload_...``
-        variant: the entry always carries an update listener (``__init__``
-        registers one on every setup), and combining the two is deprecated
-        since HA 2026.6 and raises from 2026.12 — the raise lands *before* the
-        scheduled reload, so the fresh token would be stored while the
-        coordinator kept the rejected one, looping reauth until a restart. The
-        reconfigure and zeroconf paths already update-and-let-the-listener-
-        reload; this was the last one that did not.
+        variant: a loaded entry carries an update listener (``__init__``
+        registers one at the end of every successful setup), and combining
+        the two is deprecated since HA 2026.6 and raises from 2026.12 — the
+        raise lands *before* the scheduled reload, so the fresh token would be
+        stored while the coordinator kept the rejected one, looping reauth
+        until a restart. The reconfigure and zeroconf paths already
+        update-and-let-the-listener-reload; this was the last one that did not.
+
+        That listener only exists while the entry is LOADED, though. A token
+        rejected on the *first* refresh raises ``ConfigEntryAuthFailed`` before
+        setup ever reaches the line that registers it, leaving the entry in
+        SETUP_ERROR with no listener — so the update below changed
+        ``entry.data`` and nothing else, and the flow reported success while
+        the entry stayed dead until a restart. Schedule the reload explicitly
+        in that case, as reconfigure does for SETUP_RETRY; never for a loaded
+        entry, where it would stack a second reload on the listener's. The
+        state is read BEFORE the update: the listener is dispatched eagerly
+        from inside ``async_update_entry`` and has already moved a loaded
+        entry to UNLOAD_IN_PROGRESS by the time the update returns, so a
+        check afterwards mistakes the listener's own reload for "not loaded".
         """
-        return self.async_update_and_abort(
-            self._get_reauth_entry(),
-            data_updates={CONF_TOKEN: self._token},
+        entry = self._get_reauth_entry()
+        listener_will_reload = entry.state is ConfigEntryState.LOADED
+        result = self.async_update_and_abort(
+            entry, data_updates={CONF_TOKEN: self._token}
         )
+        if not listener_will_reload:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return result
 
     async def async_step_reauth_failed(
         self, user_input: dict[str, Any] | None = None
@@ -588,6 +605,12 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # let the `add_update_listener` reload the entry exactly
                     # once — async_update_reload_and_abort would schedule a
                     # second, redundant reload on top of the listener's.
+                    # Decide who reloads BEFORE the update: the listener runs
+                    # eagerly inside async_update_entry and has already moved
+                    # a loaded entry to UNLOAD_IN_PROGRESS when it returns,
+                    # so a state check afterwards reads the listener's own
+                    # reload as "not loaded" and schedules that second one.
+                    listener_will_reload = entry.state is ConfigEntryState.LOADED
                     new_data = {**entry.data, CONF_HOST: host}
                     if serial is not None:
                         # Freeze the anchor BEFORE the unique_id changes so
@@ -607,7 +630,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # (the usual reason to reconfigure) is in SETUP_RETRY, where
                     # there is no listener — schedule the reload explicitly; it
                     # also cancels the pending retry timer.
-                    if entry.state is not ConfigEntryState.LOADED:
+                    if not listener_will_reload:
                         self.hass.config_entries.async_schedule_reload(entry.entry_id)
                     return self.async_abort(reason="reconfigure_successful")
 

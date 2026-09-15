@@ -3,11 +3,11 @@
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
-from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -668,6 +668,12 @@ async def test_reconfigure_reloads_once_and_keeps_unique_id(
     The host-change update listener does the single reload; the flow must not
     also schedule one (the old double-reload), and it must keep the entry's
     existing unique_id (e.g. a zeroconf hostname) rather than overwrite it.
+
+    The reload is spied on, not stubbed out: a stub leaves the entry LOADED,
+    which hides the real interleaving — the listener runs eagerly inside
+    ``async_update_entry`` and has the entry in UNLOAD_IN_PROGRESS by the time
+    the flow's post-update ``is not LOADED`` check ran, so the flow scheduled a
+    second reload in production while this test (stubbed) counted one.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -680,7 +686,9 @@ async def test_reconfigure_reloads_once_and_keeps_unique_id(
     with fetch, run_ws:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-        with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload:
+        with patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload:
             result = await entry.start_reconfigure_flow(hass)
             result = await hass.config_entries.flow.async_configure(
                 result["flow_id"], {CONF_HOST: "5.6.7.8"}
@@ -1663,7 +1671,12 @@ async def test_reauth_on_a_loaded_entry_reloads_via_the_listener(
     entry = init_integration
     assert entry.update_listeners  # the precondition the deprecation keys on
 
-    with patch(_REGISTER, AsyncMock(return_value="fresh-tok")):
+    with (
+        patch(_REGISTER, AsyncMock(return_value="fresh-tok")),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
         result = await entry.start_reauth_flow(hass)
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
         result = await _advance_progress(hass, result)
@@ -1675,3 +1688,70 @@ async def test_reauth_on_a_loaded_entry_reloads_via_the_listener(
     # The listener owns the reload, so the rebuilt coordinator carries the new
     # token — otherwise the next poll re-auth-fails in a loop.
     assert entry.runtime_data.config["token"] == "fresh-tok"
+    # ...and it owns it alone: the flow's own reload (for an entry that never
+    # loaded, below) must not stack a second one on top of the listener's.
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_reauth_recovers_an_entry_whose_setup_failed_on_auth(
+    hass: HomeAssistant,
+) -> None:
+    """A token rejected at *setup* must be recovered by the reauth flow alone.
+
+    A 401 on the first refresh raises ``ConfigEntryAuthFailed`` before
+    ``async_setup_entry`` reaches the line that registers the update listener,
+    so the entry sits in SETUP_ERROR with no listener at all — the state a user
+    lands in after revoking Home Assistant in the app and restarting. Storing
+    the fresh token then changed ``entry.data`` and nothing else: the flow
+    reported success while the entry stayed SETUP_ERROR until a restart or a
+    manual reload. The flow must schedule that reload itself here, exactly as
+    reconfigure does for SETUP_RETRY.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "revoked"},
+    )
+    entry.add_to_hass(hass)
+
+    async def _gateway(
+        self: JungHomeDataUpdateCoordinator, host: str, token: str
+    ) -> list:
+        """Reject the revoked token; accept only the one reauth registers."""
+        if token != "fresh-tok":
+            raise aiohttp.ClientResponseError(Mock(), (), status=401)
+        return []
+
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", _gateway
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.SETUP_ERROR
+        assert not entry.update_listeners
+
+        # Drive the reauth flow Home Assistant itself opened on the auth
+        # failure — the one behind the notification the user actually clicks.
+        flow = next(entry.async_get_active_flows(hass, {SOURCE_REAUTH}))
+        with patch(_REGISTER, AsyncMock(return_value="fresh-tok")):
+            result = await hass.config_entries.flow.async_configure(flow["flow_id"], {})
+            result = await _advance_progress(hass, result)
+            await hass.async_block_till_done()
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        assert entry.data[CONF_TOKEN] == "fresh-tok"
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.runtime_data.config["token"] == "fresh-tok"
+        reload.assert_called_once_with(entry.entry_id)
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
