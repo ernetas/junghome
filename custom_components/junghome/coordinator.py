@@ -9,6 +9,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timedelta
+from types import MappingProxyType
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -36,7 +37,7 @@ from .const import (
     duplicate_slugs,
     scene_unique_id,
 )
-from .models import Device, Scene
+from .models import Device, NodeIdentity, Scene, parse_project_export
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +94,19 @@ WS_SEND_TIMEOUT = 10
 COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
+
+# Minimum spacing, in seconds, between two reads of the gateway's project
+# export (`GET /project/junghome`) after the one at setup. The export is read
+# again only when an adopted device list carries a function we hold no
+# hardware identity for — a device the user just added in the app — and
+# never more often than this: the document is the whole mesh project (every
+# node, group and scene, hundreds of kilobytes on a large installation) and
+# the app re-uploads it to the gateway a few seconds after each change, so a
+# fresh read a few minutes later catches the addition without re-reading the
+# project on every poll. A gateway whose firmware lacks the endpoint answers
+# 404 at this cadence for as long as unidentified functions exist — one small
+# request every ten minutes, logged at DEBUG.
+NODE_IDENTITY_REFETCH_INTERVAL = 600
 
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
@@ -334,6 +348,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._functions_broadcasts_seen = 0
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
+        # Gateway function id -> the hardware identity of the mesh element
+        # behind it (node UUID, Bluetooth address, unicast, location), parsed
+        # from `GET /project/junghome` at setup (`async_fetch_node_identities`)
+        # and re-read, debounced, when a device list carries an id with no
+        # entry here. Read-only: it is replaced wholesale, never mutated, and
+        # it never holds anything from the export beyond those fields — the
+        # export also carries the mesh keys, which are dropped with the
+        # document. Empty on firmware without the endpoint (< API 1.5.0).
+        self.node_identities: Mapping[str, NodeIdentity] = MappingProxyType({})
+        # `time.monotonic()` of the last export read (success or not); None
+        # until the setup-time read has run, which also gates the debounced
+        # re-reads below so an adoption during the first refresh cannot
+        # schedule a second read alongside it.
+        self._node_identity_fetched_at: float | None = None
+        # The in-flight debounced re-read, so adoptions arriving while one is
+        # running do not stack more.
+        self._node_identity_task: asyncio.Task[None] | None = None
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
         # device pruner clears a removed device's ids from them (see
@@ -477,6 +508,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if overlay:
             self._apply_push_overlay(response, overlay)
         self._reload_if_device_ids_changed(response)
+        self._schedule_node_identity_refetch(response)
         # A fresh device list is about to be adopted (the base class stores the
         # return value before notifying listeners, so the counter is consistent
         # by dispatch time).
@@ -728,6 +760,205 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # WebSocket handshake delivers it. Any other exception is a bug here
             # rather than a gateway problem, so it is left to propagate.
             _LOGGER.debug("Could not fetch Jung Home groups: %s", err)
+
+    async def async_config_entry_first_refresh(self) -> None:
+        """Run the first refresh, then read the hardware identities once.
+
+        Extends the base method rather than adding a call in ``__init__``'s
+        setup sequence so the read happens exactly where it belongs: after the
+        first ``/functions`` fetch has proven the token (a rejected token
+        raises out of the base call and never reaches the export) and before
+        the platforms build their first ``device_info``, which is when a
+        device's ``serial_number`` / ``connections`` are read. Best-effort like
+        the groups/scenes fetches — see ``async_fetch_node_identities``.
+        """
+        await super().async_config_entry_first_refresh()
+        await self.async_fetch_node_identities()
+
+    async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
+        """Read the gateway's project export (``GET /project/junghome``).
+
+        Returns the decoded JSON document, or ``None`` when the gateway has
+        none to give: a 404 (firmware before API 1.5.0 has no ``project/*``
+        routes), a 501, or any other non-200 — the export is an optional
+        enrichment, so every such answer means "no identities", not an error.
+
+        **The document carries the mesh NetKey, AppKeys and device keys.** It
+        is never logged (not even at DEBUG — every other fetch here logs its
+        response) and never stored; the caller parses the handful of identity
+        fields out of it and drops it.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        url = f"https://{host}/api/junghome/project/junghome"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers) as response,
+        ):
+            if response.status != 200:
+                _LOGGER.debug(
+                    "Gateway has no project export to read (HTTP %s)",
+                    response.status,
+                )
+                return None
+            return await response.json()
+
+    async def async_fetch_node_identities(self) -> None:
+        """Populate ``node_identities`` from the project export, best-effort.
+
+        Best-effort for the same reason as the groups and scenes fetches: a
+        hardware identity is an enrichment of the device page (serial number,
+        Bluetooth address, a stable join key for tooling), not something worth
+        failing setup over, and older firmware has no export at all. A
+        gateway that is unreachable, slow, or answers with a body that is not
+        JSON leaves the map as it was — an empty map at setup, the previous
+        map on a re-read (a transient failure must not strip identities the
+        registry already carries). Any other exception is a bug here rather
+        than a gateway problem and is left to propagate.
+
+        The parsed map replaces the old one only when it resolved something:
+        an export the parser cannot make sense of (a shape this code does not
+        know) reads as "nothing learned", and keeping the previous map is
+        strictly better than emptying it.
+        """
+        self._node_identity_fetched_at = time.monotonic()
+        try:
+            document = await self._fetch_project_export_from_api(
+                self.config["host"], self.config["token"]
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the Jung Home project export: %s", err)
+            return
+        if document is None:
+            return
+        identities = parse_project_export(document)
+        # Drop the document (and its keys) the moment the identities are out.
+        del document
+        if not identities:
+            _LOGGER.debug("Project export carried no usable node identities")
+            return
+        if identities == dict(self.node_identities):
+            return
+        self.node_identities = MappingProxyType(identities)
+        _LOGGER.debug(
+            "Resolved hardware identity for %d gateway functions", len(identities)
+        )
+        self._apply_node_identities()
+
+    def node_identity_for(self, device: Device) -> NodeIdentity | None:
+        """Return the hardware identity behind a gateway function, if known.
+
+        Keyed by the function's *volatile* id on purpose: that id is
+        ``function_id_for(node UUID, element location)``, i.e. it *is* the
+        hardware identity in hashed form, so it is the one join key the two
+        documents share. Nothing durable is derived from it — ``unique_id``s
+        and device identifiers stay label-based (see ``device_slug``).
+        """
+        device_id = device.get("id")
+        if not isinstance(device_id, str):
+            return None
+        return self.node_identities.get(device_id)
+
+    @callback
+    def _schedule_node_identity_refetch(self, devices: list[Device]) -> None:
+        """Re-read the export, debounced, if a device list has unknown functions.
+
+        Called on every device-list adoption (REST poll and ``functions``
+        broadcast). A function id with no identity means a node was added or
+        re-provisioned in the app since the last read — the app pushes the
+        updated project to the gateway within seconds of any change — so a
+        re-read resolves it. Never more often than
+        ``NODE_IDENTITY_REFETCH_INTERVAL``, never while a read is in flight,
+        and not before the setup-time read has run (an adoption during the
+        first refresh would otherwise schedule a second read alongside it).
+        The read runs as an entry background task so it neither delays the
+        adoption nor outlives the entry.
+        """
+        fetched_at = self._node_identity_fetched_at
+        if fetched_at is None:
+            return
+        task = self._node_identity_task
+        if task is not None and not task.done():
+            return
+        if not any(
+            isinstance(device_id := d.get("id"), str)
+            and device_id not in self.node_identities
+            for d in devices
+        ):
+            return
+        if time.monotonic() - fetched_at < NODE_IDENTITY_REFETCH_INTERVAL:
+            return
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
+            return
+        _LOGGER.debug("Device list carries unidentified functions; re-reading export")
+        self._node_identity_task = entry.async_create_background_task(
+            self.hass, self.async_fetch_node_identities(), name="junghome_identity"
+        )
+
+    @callback
+    def _apply_node_identities(self) -> None:
+        """Write the resolved identities onto devices already in the registry.
+
+        An entity's ``device_info`` is only read when it is first added, so a
+        device registered before its identity was known — every device on an
+        install upgraded to this version whose entities were added before a
+        re-read resolved them, or a device the gateway reported while the
+        export still lacked its node — would otherwise wait for a reload. The
+        values written mirror ``JungHomeEntity.device_info`` exactly: the
+        node's Bluetooth address as ``serial_number`` on every function of the
+        node, and as a ``CONNECTION_BLUETOOTH`` connection on the function at
+        the node's primary element only (a connection resolves devices in the
+        registry, so it must be unique per device — see ``NodeIdentity``).
+
+        A connection already held by *another* device — a device page another
+        integration keeps for the same radio — is left alone rather than
+        merged or collided with (``async_update_device`` raises on a
+        collision); the serial number is still written.
+
+        Colliding slugs are skipped (``duplicate_slugs``): two functions
+        sharing one registry device would otherwise take turns writing their
+        own node's address over each other on every adoption.
+        """
+        if not self.node_identities or self.config_entry is None:
+            return
+        devices = self.data or []
+        colliding = duplicate_slugs(devices)
+        by_slug = {
+            device_slug(d): d for d in devices if device_slug(d) not in colliding
+        }
+        registry = dr.async_get(self.hass)
+        for device_entry in dr.async_entries_for_config_entry(
+            registry, self.config_entry.entry_id
+        ):
+            identity = next(
+                (
+                    self.node_identity_for(by_slug[identifier])
+                    for domain, identifier in device_entry.identifiers
+                    if domain == DOMAIN and identifier in by_slug
+                ),
+                None,
+            )
+            if identity is None or identity.mac is None:
+                continue
+            changes: dict[str, Any] = {}
+            if device_entry.serial_number != identity.mac:
+                changes["serial_number"] = identity.mac
+            connection = (dr.CONNECTION_BLUETOOTH, identity.mac)
+            if identity.primary and connection not in device_entry.connections:
+                holder = registry.async_get_device(connections={connection})
+                if holder is None:
+                    changes["merge_connections"] = {connection}
+                else:
+                    _LOGGER.debug(
+                        "Not linking %s to Bluetooth address %s: already held by "
+                        "device %s",
+                        device_entry.name,
+                        identity.mac,
+                        holder.id,
+                    )
+            if changes:
+                registry.async_update_device(device_entry.id, **changes)
 
     def area_for_device(self, device: Device) -> str | None:
         """Return the room/area name for a device from its parent groups.
@@ -1408,6 +1639,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # between here and the adoption, so no poll can observe the gap.
         self._functions_broadcasts_seen += 1
         self.async_set_updated_data(devices)
+        self._schedule_node_identity_refetch(devices)
 
     def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:
         """Update the cached scene list from a WebSocket scenes broadcast.
@@ -1537,6 +1769,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             except asyncio.CancelledError:
                 pass
             self._ws_task = None
+        if (task := self._node_identity_task) is not None and not task.done():
+            # Entry unload cancels its background tasks itself; a full HA
+            # shutdown reaches here without an unload, so cancel explicitly.
+            task.cancel()
+        self._node_identity_task = None
         if self.websocket is not None and not self.websocket.closed:
             await self.websocket.close()
         self.websocket = None

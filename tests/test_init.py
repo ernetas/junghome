@@ -1,8 +1,11 @@
 """Integration setup / entity / lifecycle tests for Jung Home."""
 
+import asyncio
+import base64
 import copy
 import json
 import logging
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -39,6 +42,7 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import (
+    NODE_IDENTITY_REFETCH_INTERVAL,
     JungHomeDataUpdateCoordinator,
     _parse_color_temp_range,
 )
@@ -51,6 +55,7 @@ from custom_components.junghome.diagnostics import (
 )
 from custom_components.junghome.entity import JungHomeEntity
 from custom_components.junghome.event import JungHomeEventEntity
+from custom_components.junghome.models import function_id_for
 from tests.conftest import (
     DEVICES,
     PRISTINE_DEVICES,
@@ -2441,6 +2446,10 @@ async def test_device_registry_entries(
                 "sw_version": device.sw_version,
                 "area_id": device.area_id,
                 "entry_type": device.entry_type,
+                # Hardware identity from the project export; the fixture setup
+                # serves none, so these pin the "older firmware" baseline.
+                "connections": sorted(device.connections),
+                "serial_number": device.serial_number,
                 # Resolved, because the raw id is random per run.
                 "via_device": by_id.get(device.via_device_id),
             }
@@ -2522,3 +2531,515 @@ async def test_gateway_software_version_reaches_every_device_page(
 
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+# --- Hardware identity (GET /project/junghome) -------------------------------
+#
+# Two synthetic nodes: NODE_A is a 2-gang push button backing a load (primary
+# element, location 1) and a rocker (location 0x40); NODE_B a socket. Their
+# function ids are computed the way the gateway computes them, so the device
+# list below and the export below agree the way a real gateway's do. Keys are
+# synthetic repeating patterns.
+NODE_A = "AABBCCFF-FE01-0203-0000-000000000000"
+MAC_A = "AA:BB:CC:01:02:03"
+NODE_B = "DDEEFFFF-FE0A-0B0C-0000-000000000000"
+MAC_B = "DD:EE:FF:0A:0B:0C"
+NET_KEY = "0123456789ABCDEF0123456789ABCDEF"
+APP_KEY = "FEDCBA9876543210FEDCBA9876543210"
+DEV_KEY = "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
+HALL_LIGHT_ID = function_id_for(NODE_A, 1)
+HALL_BUTTON_ID = function_id_for(NODE_A, 0x40)
+DESK_SOCKET_ID = function_id_for(NODE_B, 1)
+
+
+def _project_export() -> dict:
+    """The app's ExportDto as the gateway serves it (Base64 CDB + meta)."""
+    cdb = {
+        "netKeys": [{"index": 0, "key": NET_KEY}],
+        "appKeys": [{"index": 0, "key": APP_KEY}],
+        "nodes": [
+            {
+                "UUID": NODE_A,
+                "deviceKey": DEV_KEY,
+                "unicastAddress": "00CF",
+                "pid": "0002",
+                "elements": [
+                    {"index": 0, "location": "0001", "models": []},
+                    {"index": 1, "location": "0040", "models": []},
+                ],
+            },
+            {
+                "UUID": NODE_B,
+                "deviceKey": DEV_KEY,
+                "unicastAddress": "0148",
+                "pid": "0003",
+                "elements": [{"index": 0, "location": "0001", "models": []}],
+            },
+        ],
+    }
+    return {
+        "version": "1.1",
+        "meta": {
+            "devices": [
+                {
+                    "name": "Hall Light",
+                    "macAddress": MAC_A,
+                    "deviceId": {"nodeId": NODE_A, "locationIds": [1]},
+                }
+            ]
+        },
+        "network": base64.b64encode(json.dumps(cdb).encode()).decode(),
+    }
+
+
+def _identified_devices() -> list[dict]:
+    """A device list whose ids the export above resolves — plus one it doesn't."""
+
+    def switch(device_id: str) -> dict:
+        return {
+            "id": f"{device_id}-001",
+            "type": "switch",
+            "values": [{"key": "switch", "value": "1"}],
+        }
+
+    return [
+        {
+            "id": HALL_LIGHT_ID,
+            "type": "OnOff",
+            "label": "Hall Light",
+            "datapoints": [switch(HALL_LIGHT_ID)],
+        },
+        {
+            "id": HALL_BUTTON_ID,
+            "type": "RockerSwitch",
+            "label": "Hall Button",
+            "datapoints": [
+                {
+                    "id": f"{HALL_BUTTON_ID}-00c",
+                    "type": "up_request",
+                    "values": [{"key": "up_request", "value": "0"}],
+                },
+                {
+                    "id": f"{HALL_BUTTON_ID}-00e",
+                    "type": "status_led",
+                    "values": [{"key": "status_led", "value": "0"}],
+                },
+            ],
+        },
+        {
+            "id": DESK_SOCKET_ID,
+            "type": "Socket",
+            "label": "Desk Socket",
+            "datapoints": [switch(DESK_SOCKET_ID)],
+        },
+        {
+            "id": "idorphan",
+            "type": "OnOff",
+            "label": "Orphan",
+            "datapoints": [switch("idorphan")],
+        },
+    ]
+
+
+def _device(hass: HomeAssistant, label: str) -> dr.DeviceEntry:
+    device = dr.async_get(hass).async_get_device(
+        identifiers={(DOMAIN, device_slug({"label": label}))}
+    )
+    assert device is not None, label
+    return device
+
+
+async def _setup_with_export(
+    hass: HomeAssistant, export: object, devices: list[dict] | None = None
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(
+                return_value=_identified_devices() if devices is None else devices
+            ),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=export),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+async def test_node_identity_reaches_the_device_registry(hass: HomeAssistant) -> None:
+    """Serial number on every function of a node; the connection on one.
+
+    The export is read after the first refresh and before the platforms build
+    their ``device_info``, so the rows are right from the first registration.
+    A node backs several functions — here a load and a rocker on one radio —
+    and Home Assistant resolves devices by connection, so the Bluetooth
+    address may be a *connection* on exactly one of them (the primary
+    element's function) or the registry would merge them into one device.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    assert len(coordinator.node_identities) == 3
+
+    light = _device(hass, "Hall Light")
+    button = _device(hass, "Hall Button")
+    socket = _device(hass, "Desk Socket")
+    orphan = _device(hass, "Orphan")
+
+    assert light.serial_number == MAC_A
+    assert light.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    assert button.serial_number == MAC_A
+    assert button.connections == set()
+    assert button.id != light.id, "functions of one node must stay separate devices"
+    # No meta entry for the socket's node: the MAC comes from the EUI-64 UUID.
+    assert socket.serial_number == MAC_B
+    assert socket.connections == {(dr.CONNECTION_BLUETOOTH, MAC_B)}
+    # A function the export does not cover is registered exactly as before.
+    assert orphan.serial_number is None
+    assert orphan.connections == set()
+    # The slug identifier is untouched, so existing registrations merged.
+    assert light.identifiers == {(DOMAIN, "hall_light")}
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_node_identity_fetch_is_best_effort(hass: HomeAssistant) -> None:
+    """No export (older firmware), a failed read, or garbage: setup still loads."""
+    for export in (None, [], "not a dict", {"network": "@@@"}):
+        entry = await _setup_with_export(hass, export)
+        assert entry.state is ConfigEntryState.LOADED
+        assert dict(entry.runtime_data.node_identities) == {}
+        assert _device(hass, "Hall Light").serial_number is None
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+
+    coordinator = bare_coordinator(hass)
+    for err in (aiohttp.ClientError("down"), TimeoutError(), ValueError("json")):
+        with patch.object(
+            coordinator, "_fetch_project_export_from_api", AsyncMock(side_effect=err)
+        ):
+            await coordinator.async_fetch_node_identities()
+        assert dict(coordinator.node_identities) == {}
+    # Best-effort covers gateway failures, not bugs in our own code.
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(side_effect=RuntimeError),
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        await coordinator.async_fetch_node_identities()
+
+
+@pytest.mark.real_project_fetch
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ({"json": _project_export}, 3),
+        ({"status": 404, "json": {"error": "not found"}}, 0),
+        ({"status": 501}, 0),
+        ({"status": 500, "text": "boom"}, 0),
+        ({"text": "<html>not json</html>"}, 0),
+        ({"json": []}, 0),
+        ({"exc": aiohttp.ClientError("refused")}, 0),
+    ],
+    ids=["200", "404", "501", "500", "not-json", "json-list", "client-error"],
+)
+async def test_project_export_rest_read(
+    hass: HomeAssistant, aioclient_mock, response: dict, expected: int
+) -> None:
+    """``GET /project/junghome`` over the wire: 200 parses, everything else skips.
+
+    404 is what firmware before API 1.5.0 answers (no ``project/*`` routes);
+    a body that is not JSON, or JSON of the wrong shape, must not raise out
+    of setup either — the export is an enrichment, never a requirement.
+    """
+    if callable(response.get("json")):
+        response = {**response, "json": response["json"]()}
+    aioclient_mock.get("https://1.2.3.4/api/junghome/project/junghome", **response)
+    entry = await _setup_with_export(hass, export=None)
+    # The conftest stub is bypassed by the marker, but ``_setup_with_export``
+    # still patched the method; run the real one now.
+    coordinator = entry.runtime_data
+    await coordinator.async_fetch_node_identities()
+    assert entry.state is ConfigEntryState.LOADED
+    assert len(coordinator.node_identities) == expected
+    request = aioclient_mock.mock_calls[-1]
+    assert request[3]["token"] == "tok"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_project_export_is_never_logged(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The export carries the mesh keys: not one byte of it may reach the log."""
+    caplog.set_level(logging.DEBUG)
+    entry = await _setup_with_export(hass, _project_export())
+    for secret in (NET_KEY, APP_KEY, DEV_KEY, NODE_A, MAC_A):
+        assert secret not in caplog.text, secret
+    assert "Resolved hardware identity for 3 gateway functions" in caplog.text
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_diagnostics_carry_identities_but_never_keys(
+    hass: HomeAssistant,
+) -> None:
+    """The identity map is in the dump; nothing else from the export is."""
+    entry = await _setup_with_export(hass, _project_export())
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["node_identity_count"] == 3
+    assert diag["node_identities"][HALL_LIGHT_ID] == {
+        "uuid": NODE_A,
+        "location": 1,
+        "mac": MAC_A,
+        "unicast": 0xCF,
+        "product_id": 2,
+        "primary": True,
+    }
+    device_diag = await async_get_device_diagnostics(
+        hass, entry, _device(hass, "Hall Button")
+    )
+    assert device_diag["node_identity"] == {
+        "uuid": NODE_A,
+        "location": 0x40,
+        "mac": MAC_A,
+        "unicast": 0xD0,
+        "product_id": 2,
+        "primary": False,
+    }
+    orphan_diag = await async_get_device_diagnostics(
+        hass, entry, _device(hass, "Orphan")
+    )
+    assert orphan_diag["node_identity"] is None
+
+    for dump in (json.dumps(diag, default=str), json.dumps(device_diag, default=str)):
+        for secret in (NET_KEY, APP_KEY, DEV_KEY):
+            assert secret not in dump, secret
+        assert "netKeys" not in dump
+        assert "deviceKey" not in dump
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_unidentified_function_triggers_a_debounced_refetch(
+    hass: HomeAssistant,
+) -> None:
+    """A device list with an unknown id re-reads the export — not on every poll.
+
+    Setup here found no export (the gateway had none yet), so every function
+    is unidentified. The re-read must wait out the debounce, then run once in
+    the background, then write the identities onto the devices that were
+    registered without them — and not run again once everything is known.
+    """
+    entry = await _setup_with_export(hass, export=None)
+    coordinator = entry.runtime_data
+    assert _device(hass, "Hall Light").serial_number is None
+    fetch = AsyncMock(return_value=_project_export())
+    with patch.object(coordinator, "_fetch_project_export_from_api", fetch):
+        broadcast = json.dumps({"type": "functions", "data": _identified_devices()})
+        # Inside the debounce window: an adoption schedules nothing.
+        coordinator._dispatch_text_frame(broadcast)
+        await hass.async_block_till_done()
+        assert fetch.await_count == 0
+
+        # Past it: the next adoption (a poll here) re-reads, in the background.
+        coordinator._node_identity_fetched_at = (
+            time.monotonic() - NODE_IDENTITY_REFETCH_INTERVAL - 1
+        )
+        with patch.object(
+            coordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=_identified_devices()),
+        ):
+            await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert fetch.await_count == 1
+        assert len(coordinator.node_identities) == 3
+        # ...and the rows registered before the identity was known are filled.
+        assert _device(hass, "Hall Light").serial_number == MAC_A
+        assert _device(hass, "Hall Light").connections == {
+            (dr.CONNECTION_BLUETOOTH, MAC_A)
+        }
+        assert _device(hass, "Hall Button").serial_number == MAC_A
+        assert _device(hass, "Hall Button").connections == set()
+        assert _device(hass, "Orphan").serial_number is None
+
+        # The orphan is still unidentified, but the clock was just reset.
+        coordinator._dispatch_text_frame(broadcast)
+        await hass.async_block_till_done()
+        assert fetch.await_count == 1
+        # Past the window with every function identified: nothing to do.
+        coordinator._node_identity_fetched_at = (
+            time.monotonic() - NODE_IDENTITY_REFETCH_INTERVAL - 1
+        )
+        coordinator._dispatch_text_frame(
+            json.dumps({"type": "functions", "data": _identified_devices()[:3]})
+        )
+        await hass.async_block_till_done()
+        assert fetch.await_count == 1
+        # Past the window with the orphan back: one more read, and an
+        # unchanged answer changes nothing.
+        coordinator._dispatch_text_frame(broadcast)
+        await hass.async_block_till_done()
+        assert fetch.await_count == 2
+        assert len(coordinator.node_identities) == 3
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_refetch_does_not_stack_while_one_is_in_flight(
+    hass: HomeAssistant,
+) -> None:
+    entry = await _setup_with_export(hass, export=None)
+    coordinator = entry.runtime_data
+    release = asyncio.Event()
+
+    async def _slow(_host: str, _token: str) -> dict:
+        await release.wait()
+        return _project_export()
+
+    fetch = AsyncMock(side_effect=_slow)
+    broadcast = json.dumps({"type": "functions", "data": _identified_devices()})
+    with patch.object(coordinator, "_fetch_project_export_from_api", fetch):
+        coordinator._node_identity_fetched_at = (
+            time.monotonic() - NODE_IDENTITY_REFETCH_INTERVAL - 1
+        )
+        coordinator._dispatch_text_frame(broadcast)
+        await asyncio.sleep(0)
+        assert fetch.await_count == 1
+        # A second adoption while the first read is still waiting: no new task,
+        # even though the clock (reset by the running read) is forced past
+        # the window again.
+        coordinator._node_identity_fetched_at = (
+            time.monotonic() - NODE_IDENTITY_REFETCH_INTERVAL - 1
+        )
+        coordinator._dispatch_text_frame(broadcast)
+        await asyncio.sleep(0)
+        assert fetch.await_count == 1
+        release.set()
+        await hass.async_block_till_done()
+    assert len(coordinator.node_identities) == 3
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_stop_cancels_an_in_flight_refetch(hass: HomeAssistant) -> None:
+    """A full HA shutdown reaches ``stop`` without an unload: cancel it there."""
+    entry = await _setup_with_export(hass, export=None)
+    coordinator = entry.runtime_data
+    started = asyncio.Event()
+
+    async def _hang(_host: str, _token: str) -> dict:
+        started.set()
+        await asyncio.Event().wait()
+        return {}  # pragma: no cover - cancelled before this
+
+    with patch.object(
+        coordinator, "_fetch_project_export_from_api", AsyncMock(side_effect=_hang)
+    ):
+        coordinator._node_identity_fetched_at = (
+            time.monotonic() - NODE_IDENTITY_REFETCH_INTERVAL - 1
+        )
+        coordinator._dispatch_text_frame(
+            json.dumps({"type": "functions", "data": _identified_devices()})
+        )
+        await started.wait()
+        task = coordinator._node_identity_task
+        assert task is not None
+        assert not task.done()
+        await coordinator.stop()
+        await hass.async_block_till_done()
+        assert task.cancelled()
+        assert coordinator._node_identity_task is None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_apply_identities_leaves_a_connection_held_elsewhere(
+    hass: HomeAssistant,
+) -> None:
+    """Another integration's device page for the same radio keeps the address.
+
+    ``async_update_device`` raises on a connection collision, so the back-fill
+    checks first; the serial number is still written, the link is skipped.
+    """
+    entry = await _setup_with_export(hass, export=None)
+    coordinator = entry.runtime_data
+    foreign_entry = MockConfigEntry(domain="other")
+    foreign_entry.add_to_hass(hass)
+    foreign = dr.async_get(hass).async_get_or_create(
+        config_entry_id=foreign_entry.entry_id,
+        connections={(dr.CONNECTION_BLUETOOTH, MAC_A)},
+        name="Push-button 00CF",
+    )
+    with patch.object(
+        coordinator,
+        "_fetch_project_export_from_api",
+        AsyncMock(return_value=_project_export()),
+    ):
+        await coordinator.async_fetch_node_identities()
+    light = _device(hass, "Hall Light")
+    assert light.serial_number == MAC_A
+    assert light.connections == set()
+    assert light.id != foreign.id
+    assert dr.async_get(hass).async_get(foreign.id).connections == {
+        (dr.CONNECTION_BLUETOOTH, MAC_A)
+    }
+    # The socket's address is unclaimed, so it is linked as usual.
+    assert _device(hass, "Desk Socket").connections == {
+        (dr.CONNECTION_BLUETOOTH, MAC_B)
+    }
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_apply_identities_skips_colliding_slugs(hass: HomeAssistant) -> None:
+    """Two functions on one registry device cannot take turns writing serials."""
+    devices = _identified_devices()
+    devices[3]["label"] = "Hall-Light"  # slugs to hall_light, like "Hall Light"
+    entry = await _setup_with_export(hass, export=None, devices=devices)
+    coordinator = entry.runtime_data
+    assert "hall_light" in duplicate_slugs(coordinator.data)
+    with patch.object(
+        coordinator,
+        "_fetch_project_export_from_api",
+        AsyncMock(return_value=_project_export()),
+    ):
+        await coordinator.async_fetch_node_identities()
+    assert _device(hass, "Hall Light").serial_number is None
+    assert _device(hass, "Hall Button").serial_number == MAC_A
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+def test_node_identity_for_ignores_malformed_ids(hass: HomeAssistant) -> None:
+    coordinator = bare_coordinator(hass)
+    assert coordinator.node_identity_for({"id": None}) is None  # type: ignore[typeddict-item]
+    assert coordinator.node_identity_for({"id": ["x"]}) is None  # type: ignore[typeddict-item]
+    assert coordinator.node_identity_for({"label": "no id"}) is None  # type: ignore[typeddict-item]
+    assert coordinator.node_identity_for({"id": "idorphan"}) is None  # type: ignore[typeddict-item]
+
+
+def test_apply_identities_is_a_no_op_without_identities(hass: HomeAssistant) -> None:
+    coordinator = bare_coordinator(hass)
+    with patch.object(dr, "async_get") as registry:
+        coordinator._apply_node_identities()
+    registry.assert_not_called()

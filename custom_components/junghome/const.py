@@ -309,8 +309,10 @@ def datapoint_suffix(datapoint_id: str) -> str:
     """Return the stable element index of a datapoint id.
 
     Datapoint ids look like ``id5f09764942a70ce-001``. The ``id...`` prefix is
-    the device id, which the gateway regenerates on firmware updates, but the
-    suffix (``001``, ``010``, ``00e`` ...) is a stable element/property index.
+    the device id — derived from the node UUID and element location (see
+    ``device_slug``), so it changes whenever the app re-provisions or
+    re-enumerates a node — but the suffix (``001``, ``010``, ``00e`` ...) is a
+    stable state index the firmware assigns per device type.
     """
     return str(datapoint_id).rsplit("-", 1)[-1]
 
@@ -318,10 +320,21 @@ def datapoint_suffix(datapoint_id: str) -> str:
 def device_slug(device: Device) -> str:
     """Return a firmware-stable slug for a device, based on its label.
 
-    The gateway exposes no hardware identifier (serial/MAC/address); the user
-    facing label is the only attribute that survives firmware updates, so it is
-    used as the identity anchor. Falls back to the volatile id only if the label
-    is missing or unsluggable.
+    The device ``id`` is not random — it is ``"id"`` + the first 15 hex digits
+    of ``md5(node UUID + element location)`` (``models.function_id_for``,
+    verified against the firmware) — but it changes whenever the app
+    re-provisions a node or re-enumerates its elements, which is what the
+    observed app-driven firmware updates did. The user-facing label survives
+    all of that, so it is the identity anchor; it also reads well in entity
+    ids, which a hash never would. Falls back to the volatile id only if the
+    label is missing or unsluggable.
+
+    The hardware identity the ``functions`` payload lacks *is* available on
+    API 1.5.0+ (``GET /project/junghome``: node UUID / Bluetooth address /
+    unicast / element location — ``models.parse_project_export``); it is
+    attached to the registry device as ``serial_number`` and, on the node's
+    primary function, a Bluetooth ``connection`` (``entity.py``), never used
+    as an identifier — existing registrations must keep merging on the slug.
 
     The fallback inspects the slug *result*, not the raw candidate: HA's
     ``slugify`` maps symbol/whitespace-only strings (e.g. ``"❤"`` or ``"   "``)
@@ -331,14 +344,15 @@ def device_slug(device: Device) -> str:
     collide on ``"unknown"``. So each candidate is slugified in turn and the
     first non-empty, non-``"unknown"`` slug wins.
 
-    Known limitation (accepted gateway constraint, not disambiguated here):
-    two devices with identical — or identically-slugging — labels (e.g.
-    ``"Lamp 1"`` vs ``"Lamp-1"``, both ``"lamp_1"``) produce the same slug and
-    therefore the same ``stable_unique_id``. Because the gateway exposes no
-    hardware id, the second device silently loses (its entity can't register).
-    Per-poll disambiguation is deliberately *not* done — it would make
-    unique_ids depend on poll order/membership, breaking the stable-identity
-    invariant.
+    Known limitation (accepted, not disambiguated here): two devices with
+    identical — or identically-slugging — labels (e.g. ``"Lamp 1"`` vs
+    ``"Lamp-1"``, both ``"lamp_1"``) produce the same slug and therefore the
+    same ``stable_unique_id``, and the second device silently loses (its
+    entity can't register). Per-poll disambiguation is deliberately *not*
+    done — it would make unique_ids depend on poll order/membership, breaking
+    the stable-identity invariant — and the hardware identity is not folded
+    in either: it is only known once the export has been read, and an id
+    that depends on whether a fetch succeeded is not stable.
 
     ## migration note
     This change alters ``device_slug`` (and thus ``unique_id``s) only for
@@ -357,9 +371,10 @@ def duplicate_slugs(devices: list[Device]) -> dict[str, list[str]]:
     """Map each colliding device slug to the labels that produced it.
 
     ``device_slug`` deliberately does not disambiguate two devices whose labels
-    slug identically (see its docstring: the gateway exposes no hardware id, and
-    per-poll disambiguation would make unique_ids depend on poll order). The
-    second such device simply loses — its entities can't register.
+    slug identically (see its docstring: per-poll disambiguation would make
+    unique_ids depend on poll order, and the hardware identity is only known
+    after a successful export read). The second such device simply loses — its
+    entities can't register.
 
     That is survivable for identity, but **any caller keeping per-device state
     keyed by slug must skip a colliding slug**, because two devices would
