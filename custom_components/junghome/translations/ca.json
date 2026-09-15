@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Amunt" },
-      "down": { "name": "Avall" },
-      "press": { "name": "Pulsació" }
+      "up": {
+        "name": "Amunt",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Premut",
+              "depressed": "Alliberat",
+              "click": "Clic",
+              "hold_start": "Inici de manteniment",
+              "hold_end": "Fi de manteniment"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Avall",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Premut",
+              "depressed": "Alliberat",
+              "click": "Clic",
+              "hold_start": "Inici de manteniment",
+              "hold_end": "Fi de manteniment"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Pulsació",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Premut",
+              "depressed": "Alliberat",
+              "click": "Clic",
+              "hold_start": "Inici de manteniment",
+              "hold_end": "Fi de manteniment"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Potència" },

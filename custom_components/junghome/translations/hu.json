@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Fel" },
-      "down": { "name": "Le" },
-      "press": { "name": "Megnyomás" }
+      "up": {
+        "name": "Fel",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Megnyomva",
+              "depressed": "Elengedve",
+              "click": "Kattintás",
+              "hold_start": "Nyomva tartás kezdete",
+              "hold_end": "Nyomva tartás vége"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Le",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Megnyomva",
+              "depressed": "Elengedve",
+              "click": "Kattintás",
+              "hold_start": "Nyomva tartás kezdete",
+              "hold_end": "Nyomva tartás vége"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Megnyomás",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Megnyomva",
+              "depressed": "Elengedve",
+              "click": "Kattintás",
+              "hold_start": "Nyomva tartás kezdete",
+              "hold_end": "Nyomva tartás vége"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Teljesítmény" },

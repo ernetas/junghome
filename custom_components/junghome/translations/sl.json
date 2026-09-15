@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Gor" },
-      "down": { "name": "Dol" },
-      "press": { "name": "Pritisk" }
+      "up": {
+        "name": "Gor",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pritisnjeno",
+              "depressed": "Sproščeno",
+              "click": "Klik",
+              "hold_start": "Začetek držanja",
+              "hold_end": "Konec držanja"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Dol",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pritisnjeno",
+              "depressed": "Sproščeno",
+              "click": "Klik",
+              "hold_start": "Začetek držanja",
+              "hold_end": "Konec držanja"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Pritisk",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pritisnjeno",
+              "depressed": "Sproščeno",
+              "click": "Klik",
+              "hold_start": "Začetek držanja",
+              "hold_end": "Konec držanja"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Moč" },

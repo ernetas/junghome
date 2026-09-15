@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Πάνω" },
-      "down": { "name": "Κάτω" },
-      "press": { "name": "Πάτημα" }
+      "up": {
+        "name": "Πάνω",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Πατήθηκε",
+              "depressed": "Αφέθηκε",
+              "click": "Κλικ",
+              "hold_start": "Έναρξη παρατεταμένου πατήματος",
+              "hold_end": "Λήξη παρατεταμένου πατήματος"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Κάτω",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Πατήθηκε",
+              "depressed": "Αφέθηκε",
+              "click": "Κλικ",
+              "hold_start": "Έναρξη παρατεταμένου πατήματος",
+              "hold_end": "Λήξη παρατεταμένου πατήματος"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Πάτημα",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Πατήθηκε",
+              "depressed": "Αφέθηκε",
+              "click": "Κλικ",
+              "hold_start": "Έναρξη παρατεταμένου πατήματος",
+              "hold_end": "Λήξη παρατεταμένου πατήματος"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Ισχύς" },

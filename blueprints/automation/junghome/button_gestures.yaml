@@ -71,13 +71,16 @@ blueprint:
       name: Double-click window (old firmware only)
       description: >
         Used only with "Detect double-clicks": after a click, how long to wait
-        for a second click before running the click action. Larger values
-        catch slower double-clicks but make a single click feel laggier.
-      default: 400
+        for a second click before running the click action. The gateway
+        reports a click at its own synthesised release, about 0.4-0.5 s after
+        the press, so the second click of a double-click lands 0.5-1 s after
+        the first — keep this at 1 s or more. Larger values catch slower
+        double-clicks but make a single click feel laggier.
+      default: 1000
       selector:
         number:
           min: 100
-          max: 1500
+          max: 2000
           step: 50
           unit_of_measurement: milliseconds
           mode: box
@@ -98,10 +101,10 @@ mode: single
 max_exceeded: silent
 
 # Trigger on ANY change of the selected event entities, then keep only the
-# gestures. We deliberately do NOT use `attribute: event_type` / `to: click`:
-# an event entity's state is a timestamp, so a `to:`-style trigger silently
-# misses a repeated `click` (two clicks in a row keep the attribute at
-# "click").
+# gestures: one trigger has to catch both `click` and `hold_start`, and the
+# condition below reads the `event_type` attribute off the new state. (The
+# legacy double-click wait further down is the one place an attribute
+# trigger is needed — see the comment there.)
 triggers:
   - trigger: state
     entity_id: !input button
@@ -139,9 +142,17 @@ actions:
       - conditions:
           - "{{ gesture == 'click' and legacy_double_click }}"
         sequence:
+          # Waits for the `event_type` attribute to become `click`, not for
+          # any state change: the second tap's `pressed` edge is the very next
+          # state change, and a bare state trigger completed on it — so the
+          # double action could never run. The attribute always passes through
+          # `pressed`/`depressed` between two clicks, so `to: click` fires for
+          # a repeated click too.
           - wait_for_trigger:
               - trigger: state
                 entity_id: !input button
+                attribute: event_type
+                to: click
             timeout:
               milliseconds: !input double_click_window
             continue_on_timeout: true

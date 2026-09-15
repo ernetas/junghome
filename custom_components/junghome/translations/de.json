@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Auf" },
-      "down": { "name": "Ab" },
-      "press": { "name": "Tastendruck" }
+      "up": {
+        "name": "Oben",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Gedrückt",
+              "depressed": "Losgelassen",
+              "click": "Klick",
+              "hold_start": "Halten begonnen",
+              "hold_end": "Halten beendet"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Unten",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Gedrückt",
+              "depressed": "Losgelassen",
+              "click": "Klick",
+              "hold_start": "Halten begonnen",
+              "hold_end": "Halten beendet"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Tastendruck",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Gedrückt",
+              "depressed": "Losgelassen",
+              "click": "Klick",
+              "hold_start": "Halten begonnen",
+              "hold_end": "Halten beendet"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Leistung" },

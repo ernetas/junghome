@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Вверх" },
-      "down": { "name": "Вниз" },
-      "press": { "name": "Нажатие" }
+      "up": {
+        "name": "Вверх",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Нажато",
+              "depressed": "Отпущено",
+              "click": "Клик",
+              "hold_start": "Начало удержания",
+              "hold_end": "Конец удержания"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Вниз",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Нажато",
+              "depressed": "Отпущено",
+              "click": "Клик",
+              "hold_start": "Начало удержания",
+              "hold_end": "Конец удержания"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Нажатие",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Нажато",
+              "depressed": "Отпущено",
+              "click": "Клик",
+              "hold_start": "Начало удержания",
+              "hold_end": "Конец удержания"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Мощность" },

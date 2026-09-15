@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "上" },
-      "down": { "name": "下" },
-      "press": { "name": "按下" }
+      "up": {
+        "name": "上",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "已按下",
+              "depressed": "已松开",
+              "click": "点击",
+              "hold_start": "开始长按",
+              "hold_end": "长按结束"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "已按下",
+              "depressed": "已松开",
+              "click": "点击",
+              "hold_start": "开始长按",
+              "hold_end": "长按结束"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "按下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "已按下",
+              "depressed": "已松开",
+              "click": "点击",
+              "hold_start": "开始长按",
+              "hold_end": "长按结束"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "功率" },

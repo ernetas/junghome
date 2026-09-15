@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Yukarı" },
-      "down": { "name": "Aşağı" },
-      "press": { "name": "Basma" }
+      "up": {
+        "name": "Yukarı",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Basıldı",
+              "depressed": "Bırakıldı",
+              "click": "Tıklama",
+              "hold_start": "Basılı tutma başladı",
+              "hold_end": "Basılı tutma bitti"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Aşağı",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Basıldı",
+              "depressed": "Bırakıldı",
+              "click": "Tıklama",
+              "hold_start": "Basılı tutma başladı",
+              "hold_end": "Basılı tutma bitti"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Basma",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Basıldı",
+              "depressed": "Bırakıldı",
+              "click": "Tıklama",
+              "hold_start": "Basılı tutma başladı",
+              "hold_end": "Basılı tutma bitti"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Güç" },

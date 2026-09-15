@@ -25,6 +25,9 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_component import DATA_INSTANCES
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import (
+    AiohttpClientMocker,
+)
 from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome import (
@@ -62,6 +65,7 @@ from tests.conftest import (
     _fake_run_websocket,
     bare_coordinator,
 )
+from tests.test_coordinator import _MALFORMED_DEVICES, malformed_device
 
 
 async def test_all_entity_types_created(hass: HomeAssistant, init_integration) -> None:
@@ -3043,3 +3047,117 @@ def test_apply_identities_is_a_no_op_without_identities(hass: HomeAssistant) -> 
     with patch.object(dr, "async_get") as registry:
         coordinator._apply_node_identities()
     registry.assert_not_called()
+
+
+# --- Input hardening (review 2026-09-16) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("export", "identified"),
+    [
+        # A Unicode "digit" in a CDB element index: ``int("²")`` raised out of
+        # the parser and setup ended in SETUP_ERROR (no retry, no entities).
+        # Now the index reads as absent and the element is still identified.
+        (
+            {
+                "meta": {"devices": []},
+                "network": base64.b64encode(
+                    json.dumps(
+                        {
+                            "nodes": [
+                                {
+                                    "UUID": NODE_A,
+                                    "unicastAddress": "00CF",
+                                    "elements": [{"index": "²", "location": "0040"}],
+                                }
+                            ]
+                        }
+                    ).encode()
+                ).decode(),
+            },
+            [function_id_for(NODE_A, 0x40)],
+        ),
+        # An inner CDB nested past the JSON parser's stack (RecursionError):
+        # nothing learned, setup unaffected.
+        (
+            {
+                "meta": {"devices": []},
+                "network": base64.b64encode(
+                    ("[" * 1_000_000 + "]" * 1_000_000).encode()
+                ).decode(),
+            },
+            [],
+        ),
+    ],
+    ids=["unicode_digit_index", "deeply_nested_cdb"],
+)
+async def test_a_malformed_export_does_not_fail_setup(
+    hass: HomeAssistant,
+    export: dict,
+    identified: list[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The export is an optional enrichment; a bad one costs identities only."""
+    caplog.set_level(logging.DEBUG)
+    entry = await _setup_with_export(hass, export=export)
+    assert entry.state is ConfigEntryState.LOADED
+    assert hass.states.get("light.hall_light") is not None
+    assert list(entry.runtime_data.node_identities) == identified
+    assert "Error setting up entry" not in caplog.text
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("name", list(_MALFORMED_DEVICES))
+async def test_setup_survives_one_malformed_device_from_the_gateway(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    name: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One malformed device object in ``GET /functions`` costs that device only.
+
+    Through the real REST path (the trust boundary sits in
+    ``_fetch_devices_from_api``): every other device's entities come up, no
+    platform fails to set up, nothing logs a traceback, the sanitiser warns
+    exactly once, and the entry ends LOADED. Before the boundary existed each
+    of these shapes failed differently — a non-string label made every poll
+    raise (SETUP_RETRY forever), non-list datapoints raised out of
+    ``async_setup_entry`` (SETUP_ERROR), a datapoint without an id lost the
+    whole light platform, and ``sw_version: ["1"]`` reached the device
+    registry as a deprecation report.
+    """
+    caplog.set_level(logging.WARNING)
+    aioclient_mock.get(
+        "https://1.2.3.4/api/junghome/functions",
+        json=[*copy.deepcopy(PRISTINE_DEVICES), malformed_device(name)],
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    with patch.object(
+        JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert entry.state is ConfigEntryState.LOADED
+        assert hass.states.get("light.strip").state == "on"
+        assert hass.states.get("climate.living_room") is not None
+        assert hass.states.get("sensor.boiler_power").state == "5.0"
+        assert hass.states.get("event.button_a_up") is not None
+        assert hass.states.get("binary_sensor.jung_home_gateway_connection") is not None
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert "Error while setting up junghome platform" not in caplog.text
+        # One WARNING per adoption (setup polls twice: the first refresh and
+        # the one `update_before_add` queues), each naming the count only.
+        repairs = [r for r in caplog.records if "malformed item(s)" in r.getMessage()]
+        assert len(repairs) == aioclient_mock.call_count
+        assert {r.getMessage() for r in repairs} == {repairs[0].getMessage()}
+        assert "Fuzz" not in caplog.text
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

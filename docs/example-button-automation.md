@@ -238,9 +238,13 @@ With it off, every press/release pair is its own `click`.
 
 With the suppression off and buttons that report once per tap, the blueprint's
 **Detect double-clicks** input waits for a second `click` within the
-**Double-click window** (default 400 ms) before running the click action, and
-runs the double-click action instead if one arrives. This adds that window as
-latency to every single click, which is why it is a separate opt-in.
+**Double-click window** (default 1 s) before running the click action, and
+runs the double-click action instead if one arrives. The window is measured
+from click to click, and a click is reported at the gateway's synthesised
+release, about 0.4-0.5 s after the press — so the second click of a
+double-click lands 0.5-1 s after the first, and a window much under a second
+misses it. This adds that window as latency to every single click, which is
+why it is a separate opt-in.
 
 ### Measure your own buttons
 

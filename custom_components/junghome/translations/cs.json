@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Nahoru" },
-      "down": { "name": "Dolů" },
-      "press": { "name": "Stisknutí" }
+      "up": {
+        "name": "Nahoru",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Dolů",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Stisknutí",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Výkon" },

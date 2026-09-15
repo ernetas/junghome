@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Вгору" },
-      "down": { "name": "Вниз" },
-      "press": { "name": "Натискання" }
+      "up": {
+        "name": "Вгору",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Натиснуто",
+              "depressed": "Відпущено",
+              "click": "Клік",
+              "hold_start": "Початок утримання",
+              "hold_end": "Кінець утримання"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Вниз",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Натиснуто",
+              "depressed": "Відпущено",
+              "click": "Клік",
+              "hold_start": "Початок утримання",
+              "hold_end": "Кінець утримання"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Натискання",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Натиснуто",
+              "depressed": "Відпущено",
+              "click": "Клік",
+              "hold_start": "Початок утримання",
+              "hold_end": "Кінець утримання"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Потужність" },

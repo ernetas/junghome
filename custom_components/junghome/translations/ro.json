@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Sus" },
-      "down": { "name": "Jos" },
-      "press": { "name": "Apăsare" }
+      "up": {
+        "name": "Sus",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Jos",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Apăsare",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Putere" },

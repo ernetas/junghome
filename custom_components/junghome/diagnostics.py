@@ -137,7 +137,10 @@ async def async_get_config_entry_diagnostics(
             # Redacted through the same key set as `data` for symmetry; nothing
             # in here is secret today, but a future option might be.
             "options": async_redact_data(entry.options, TO_REDACT),
-            "title": entry.title,
+            # The flow titles an entry "Jung Home (<host>)", and a user can
+            # rename it to anything — free-form text that quotes exactly what
+            # TO_REDACT keeps out of `data`, so it takes the literal sweep.
+            "title": _scrub(entry.title, secrets),
         },
         # The gateway's own software version ("2.1.3 (2840)"), read over REST.
         "gateway_version": coordinator.gateway_version,

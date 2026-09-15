@@ -37,7 +37,13 @@ from .const import (
     duplicate_slugs,
     scene_unique_id,
 )
-from .models import Device, NodeIdentity, Scene, parse_project_export
+from .models import (
+    Device,
+    NodeIdentity,
+    Scene,
+    parse_project_export,
+    sanitize_devices,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -116,6 +122,40 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # only the most recent are kept.
 WS_FRAME_LOG_SIZE = 60
 WS_FRAME_MAX_CHARS = 2000
+# The frame types the gateway's WebSocket server defines
+# (websocket-server-service.js; the table in docs/gateway-websocket.md). The
+# latest frame of each is kept IN FULL in `ws_last_frame_by_type`, so a
+# report always carries the complete handshake. The `type` field is the
+# peer's to fill in, though, so a type outside this vocabulary is stored
+# truncated, and only while the store holds fewer than WS_FRAME_TYPES_MAX
+# distinct types — a peer minting a new type per frame could otherwise grow
+# the store without bound, each entry a full frame.
+WS_KNOWN_FRAME_TYPES = frozenset(
+    {
+        "message",
+        "version",
+        "functions",
+        "groups",
+        "scenes",
+        "scenes-new",
+        "scenes-deleted",
+        "devices",
+        "devices-new",
+        "devices-deleted",
+        "config",
+        "datapoint",
+        "scene",
+    }
+)
+WS_FRAME_TYPES_MAX = 32
+
+
+def _truncate_frame(raw: str) -> str:
+    """Cut a raw frame down to WS_FRAME_MAX_CHARS for the rolling frame log."""
+    if len(raw) > WS_FRAME_MAX_CHARS:
+        return raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
+    return raw
+
 
 # Sanity bounds for a gateway-advertised colour-temperature range. Anything
 # outside this is not a plausible tunable-white range and is treated as an
@@ -610,9 +650,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Keep the full device payload so any firmware-stable identifier
         # (serial / address / etc.) is available for building unique IDs,
         # and is visible in the debug log above for inspection. This is the
-        # trust boundary: untyped gateway JSON becomes the typed `Device` model.
-        # Downstream code keeps defensive `.get(...)` access for malformed items.
-        return cast("list[Device]", [d for d in data if isinstance(d, dict)])
+        # trust boundary: untyped gateway JSON becomes the typed `Device` model
+        # (`sanitize_devices` drops or repairs malformed objects — the same
+        # boundary the `functions` broadcast passes through). Downstream code
+        # keeps defensive `.get(...)` access for absent keys.
+        return sanitize_devices(data)
 
     async def _fetch_groups_from_api(
         self, host: str, token: str
@@ -819,7 +861,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The parsed map replaces the old one only when it resolved something:
         an export the parser cannot make sense of (a shape this code does not
         know) reads as "nothing learned", and keeping the previous map is
-        strictly better than emptying it.
+        strictly better than emptying it. The parser is written never to
+        raise, and its own guards cover every shape found so far — but the
+        document is untrusted and the enrichment is optional, so should it
+        raise anyway, that is logged by exception *type* (never the document,
+        which carries the mesh keys) and setup carries on without identities
+        rather than failing with ``SETUP_ERROR``.
         """
         self._node_identity_fetched_at = time.monotonic()
         try:
@@ -831,9 +878,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         if document is None:
             return
-        identities = parse_project_export(document)
-        # Drop the document (and its keys) the moment the identities are out.
-        del document
+        try:
+            identities = parse_project_export(document)
+        except Exception as err:
+            _LOGGER.warning(
+                "Could not parse the project export: %s", type(err).__name__
+            )
+            return
+        finally:
+            # Drop the document (and its keys) the moment the parse is over.
+            del document
         if not identities:
             _LOGGER.debug("Project export carried no usable node identities")
             return
@@ -1381,8 +1435,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             cancel_stable = async_call_later(
                 self.hass, STABLE_SESSION_SECONDS, self._mark_session_stable
             )
-            await self.async_request_refresh()
             try:
+                # Inside the try: `stop()` cancels this task, and a cancel that
+                # lands while the resync's REST fetch is still in flight must
+                # run the same teardown as a drop — outside it, the session
+                # ended with `ws_connected` stuck True, in-flight commands
+                # left to sit out their timeout, and the stable-session timer
+                # still armed to fire on a stopped coordinator.
+                await self.async_request_refresh()
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         self._dispatch_text_frame(msg.data)
@@ -1456,17 +1516,25 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``json.loads`` (``_dispatch_text_frame``), or ``None`` for a frame that
         is unparseable or carries no usable type — decoding the frame a second
         time here doubled the JSON work on the hottest path the integration has.
-        The per-type store keeps the latest frame of each type IN FULL — it holds
-        at most one frame per type, so it cannot grow unbounded, and keeping the
-        connect-time handshake (functions/groups/scenes/version/message) complete
-        makes it directly comparable to the raw wire format. The rolling buffer,
-        which fills with high-frequency datapoint pushes, stays truncated.
+        The per-type store keeps the latest frame of each KNOWN type IN FULL:
+        the gateway's frame vocabulary (``WS_KNOWN_FRAME_TYPES``) is a dozen
+        strings, so that part holds at most one frame per type, and keeping
+        the connect-time handshake (functions/groups/scenes/version/message)
+        complete makes it directly comparable to the raw wire format. A type
+        outside that vocabulary is the peer's to invent — a hostile or buggy
+        one could mint a fresh type per frame — so those are kept as truncated
+        previews and only while the store holds fewer than
+        ``WS_FRAME_TYPES_MAX`` types; past that they land in the rolling
+        buffer alone. The rolling buffer, which fills with high-frequency
+        datapoint pushes, is always truncated.
         """
         if frame_type is not None:
-            self.ws_last_frame_by_type[frame_type] = raw
-        if len(raw) > WS_FRAME_MAX_CHARS:
-            raw = raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
-        self.ws_frame_log.append(raw)
+            store = self.ws_last_frame_by_type
+            if frame_type in WS_KNOWN_FRAME_TYPES:
+                store[frame_type] = raw
+            elif frame_type in store or len(store) < WS_FRAME_TYPES_MAX:
+                store[frame_type] = _truncate_frame(raw)
+        self.ws_frame_log.append(_truncate_frame(raw))
 
     def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
@@ -1623,16 +1691,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         unmatched-id memory resets because the authoritative list may have just
         added those devices.
         """
-        devices = cast("list[Device]", [d for d in data if isinstance(d, dict)])
+        # The same trust boundary as the REST poll (`_fetch_devices_from_api`):
+        # a malformed device object is dropped or repaired here, not left to
+        # raise out of a platform listener.
+        devices = sanitize_devices(data)
         _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
         self._unmatched_push_ids.clear()
         self._reload_if_device_ids_changed(devices)
         # Counted immediately before the adoption, and never before it: a poll
         # whose fetch was in flight across this point discards its own older
         # snapshot in favour of this list (see `_async_update_data`), so the
-        # count must only rise once this list is actually adopted.
-        # `_reload_if_device_ids_changed` above can raise on a malformed frame
-        # (`device_slug` slugifies the label, which throws on a non-string) and
+        # count must only rise once this list is actually adopted. Should
+        # `_reload_if_device_ids_changed` above ever raise (it used to, on a
+        # non-string label, before `sanitize_devices` enforced the shape),
         # `_dispatch_text_frame`'s catch-all swallows it — counting first would
         # let that frame suppress a racing poll that carried the fresher list,
         # leaving stale membership for a full poll interval. Nothing awaits
@@ -1815,7 +1886,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The pending entry is always popped in ``finally``, whether the wait
         succeeded, timed out, or ``send_websocket_message`` raised first (e.g.
         no live socket) — so a send failure can never leak a future nothing
-        will ever resolve.
+        will ever resolve. A send can also fail *because* the session ended
+        while ``send_str`` was suspended on the transport, in which case
+        ``_fail_pending_replies`` has already set ``cannot_send`` on the
+        future this method then never awaits; its exception is retrieved on
+        that path so asyncio does not report it as never retrieved.
         """
         self._next_message_id += 1
         message_id = f"ha{self._next_message_id}"
@@ -1827,7 +1902,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
         try:
-            await self.send_websocket_message(message)
+            try:
+                await self.send_websocket_message(message)
+            except BaseException:
+                if future.done() and not future.cancelled():
+                    future.exception()  # settled by the session's teardown
+                raise
             try:
                 async with asyncio.timeout(COMMAND_REPLY_TIMEOUT):
                     await future

@@ -7,6 +7,11 @@ their defensive ``.get(...)`` access for malformed payloads — but typing the
 stored device list as ``list[Device]`` makes key typos and wrong-key access
 ``mypy`` errors instead of silent ``Any``.
 
+``sanitize_devices`` is that boundary: both device-list adoption points (the
+REST poll and the WebSocket ``functions`` broadcast) pass the raw list through
+it, so one malformed device object from the gateway is dropped or repaired
+there instead of taking every platform down with a ``TypeError`` downstream.
+
 The second half holds the hardware-identity model: ``function_id_for`` (the
 gateway's own id derivation) and ``parse_project_export``, the trust boundary
 that turns the app's project export (``GET /project/junghome``) into key-free
@@ -17,8 +22,11 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class DatapointValue(TypedDict):
@@ -64,6 +72,113 @@ class Scene(TypedDict):
     label: str
     related_functions: NotRequired[list[str]]
     value: NotRequired[str]
+
+
+# --- Device-list sanitising (``GET /functions`` / WS ``functions``) ----------
+#
+# The platforms and the registry helpers key on these fields without further
+# guards: ``slugify(label)`` raises on a non-string, ``_capability_signature``
+# hashes datapoint types, ``stable_unique_id`` slices ``datapoint["id"]``,
+# ``.strip()`` runs on quantity labels/units, and a non-string ``sw_version``
+# reaches the device registry as a deprecation report. Each of those turned
+# one malformed device object from the gateway into every entity of the entry
+# failing (a poll that raises fails every poll; a platform that raises in
+# setup loses all of its entities), so the shape is enforced once, here.
+
+# Device / datapoint keys that must be strings when present. A wrong-typed
+# one is dropped rather than coerced: ``str(["1"])`` would be a fake value.
+_STRING_DEVICE_KEYS = ("label", "type", "sw_version")
+
+
+def _sanitize_values(datapoint: dict[str, Any]) -> int:
+    """Enforce ``values: [{"key": str, "value": str}, ...]``; return repairs."""
+    repairs = 0
+    values = datapoint.get("values")
+    if not isinstance(values, list):
+        datapoint["values"] = []
+        return 1
+    kept: list[Any] = []
+    for entry in values:
+        if not isinstance(entry, dict):
+            repairs += 1
+            continue
+        value = entry.get("value")
+        if "value" in entry and not isinstance(value, str):
+            # A number is the one plausible mis-encoding of a value (the
+            # gateway itself stringifies every state); anything else is not a
+            # value at all and the entry is dropped.
+            repairs += 1
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            entry["value"] = str(value)
+        kept.append(entry)
+    if len(kept) != len(values):
+        datapoint["values"] = kept
+    return repairs
+
+
+def _sanitize_device(device: dict[str, Any]) -> int:
+    """Repair one device dict in place; return how many items were touched."""
+    repairs = 0
+    for key in _STRING_DEVICE_KEYS:
+        if key in device and not isinstance(device[key], str):
+            del device[key]
+            repairs += 1
+    datapoints = device.get("datapoints")
+    if not isinstance(datapoints, list):
+        device["datapoints"] = []
+        return repairs + 1
+    kept: list[Any] = []
+    for datapoint in datapoints:
+        if not isinstance(datapoint, dict) or not isinstance(datapoint.get("id"), str):
+            repairs += 1
+            continue
+        if "type" in datapoint and not isinstance(datapoint["type"], str):
+            del datapoint["type"]
+            repairs += 1
+        repairs += _sanitize_values(datapoint)
+        kept.append(datapoint)
+    if len(kept) != len(datapoints):
+        device["datapoints"] = kept
+    return repairs
+
+
+def sanitize_devices(raw: list[Any]) -> list[Device]:
+    """Return the well-formed ``Device`` dicts of an untrusted device list.
+
+    The trust boundary for ``GET /functions`` and the WebSocket ``functions``
+    broadcast. Enforced, per device: a string ``id`` (a device without one
+    cannot be addressed by any push and would raise from every entity's
+    device lookup, so it is dropped); ``label`` / ``type`` / ``sw_version``
+    strings when present (a wrong-typed one is removed, and the platforms'
+    ``.get(..., default)`` fallbacks take over); ``datapoints`` a list of
+    dicts each with a string ``id`` (others dropped) and a string ``type``
+    when present; ``values`` a list of dicts whose ``value`` is a string (a
+    number is stringified, the gateway's own encoding; anything else drops the
+    entry). Repairs happen in place — the coordinator merges pushes into the
+    very dicts it adopts, so the objects must be the ones handed in — and the
+    good devices are returned in their original order.
+
+    One WARNING per call names how many items were dropped or repaired and
+    never what they contained: the payload is the gateway's whole device
+    list, and a malformed field is exactly the thing not to log verbatim.
+    """
+    devices: list[Device] = []
+    repairs = 0
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            repairs += 1
+            continue
+        repairs += _sanitize_device(item)
+        devices.append(cast("Device", item))
+    if repairs:
+        _LOGGER.warning(
+            "Dropped or repaired %d malformed item(s) in the gateway's device "
+            "list; the affected devices or datapoints may be missing until the "
+            "gateway reports them correctly",
+            repairs,
+        )
+    return devices
 
 
 # --- Hardware identity (``GET /project/junghome``) -------------------------
@@ -163,6 +278,13 @@ class NodeIdentity:
     primary: bool = False
 
 
+# Longest numeric string the parsers accept. Every CDB/meta number here is a
+# 16-bit mesh quantity (unicast, location, pid) or a small element index, so
+# ten characters is generous — and it keeps ``int()`` off a multi-kilobyte
+# string (CPython refuses decimal strings over 4300 digits with ValueError).
+_MAX_NUMERIC_CHARS = 10
+
+
 def _hex_int(raw: object) -> int | None:
     """Parse a CDB number (``"00DC"``, ``"0x40"``, or an int), or ``None``."""
     if isinstance(raw, bool):
@@ -172,20 +294,27 @@ def _hex_int(raw: object) -> int | None:
     if not isinstance(raw, str):
         return None
     text = raw.strip().removeprefix("0x").removeprefix("0X")
-    if not text or not set(text) <= _HEX_DIGITS:
+    if not text or len(text) > _MAX_NUMERIC_CHARS or not set(text) <= _HEX_DIGITS:
         return None
     return int(text, 16)
 
 
 def _decimal_int(raw: object) -> int | None:
-    """Parse a ``meta`` location id (an int, or a decimal string), or ``None``."""
+    """Parse a ``meta`` location id (an int, or a decimal string), or ``None``.
+
+    ASCII digits only: ``str.isdigit`` is also true of superscripts and other
+    Unicode digits (``"²"``), which ``int()`` then rejects with ``ValueError``.
+    """
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
         return raw if raw >= 0 else None
-    if isinstance(raw, str) and raw.strip().isdigit():
-        return int(raw.strip())
-    return None
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text.isascii() or not text.isdigit() or len(text) > _MAX_NUMERIC_CHARS:
+        return None
+    return int(text)
 
 
 def _mesh_network(document: dict[str, Any]) -> dict[str, Any] | None:
@@ -202,7 +331,11 @@ def _mesh_network(document: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(network, str):
         try:
             network = json.loads(base64.b64decode(network, validate=True))
-        except (ValueError, binascii.Error):
+        except (ValueError, binascii.Error, RecursionError):
+            # RecursionError: the C parser overflows the stack on absurdly
+            # nested input, the same hazard ``_dispatch_text_frame`` contains
+            # for frames; ``UnicodeDecodeError`` (non-UTF-8 bytes) is a
+            # ``ValueError``.
             return None
     if isinstance(network, dict):
         inner = network.get("meshNetwork", network)

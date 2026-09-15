@@ -1,11 +1,13 @@
 """Tests for the Jung Home data update coordinator."""
 
 import asyncio
+import gc
 import json
 import logging
 import random
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -36,9 +38,12 @@ from custom_components.junghome.const import (
 from custom_components.junghome.coordinator import (
     INITIAL_RECONNECT_DELAY,
     STABLE_SESSION_SECONDS,
+    WS_FRAME_MAX_CHARS,
+    WS_FRAME_TYPES_MAX,
     JungHomeDataUpdateCoordinator,
     poll_interval_from_options,
 )
+from tests.conftest import PRISTINE_DEVICES as PRISTINE
 from tests.conftest import _auto_reply_to_datapoint_commands
 
 
@@ -358,12 +363,12 @@ async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
 ) -> None:
     """The broadcast counter must only rise once the list is actually adopted.
 
-    `_reload_if_device_ids_changed` runs before the adoption and can raise on a
-    malformed frame — `device_slug` slugifies the label, which throws on a
-    non-string — and `_dispatch_text_frame`'s catch-all swallows it. Counting
-    the broadcast before that point would let such a frame suppress a racing
-    poll that carried the fresher list, leaving stale membership for a full
-    poll interval.
+    `_reload_if_device_ids_changed` runs before the adoption; should it raise
+    (it used to, on a non-string label, until `sanitize_devices` enforced the
+    shape at the boundary — so the raise is forced here), `_dispatch_text_frame`'s
+    catch-all swallows it. Counting the broadcast before that point would let
+    such a frame suppress a racing poll that carried the fresher list, leaving
+    stale membership for a full poll interval.
     """
     coordinator = _coordinator(hass)
     coordinator.data = [_switch_device("0")]
@@ -389,13 +394,17 @@ async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
     with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
         poll = asyncio.ensure_future(coordinator._async_update_data())
         await fetch_started.wait()
-        # A malformed broadcast: the label is not a string, so slugify raises
-        # out of the id-churn check and the list is never adopted. Routed
-        # through `_dispatch_text_frame`, whose catch-all swallows it exactly
-        # as it would for a real frame off the wire.
-        coordinator._dispatch_text_frame(
-            json.dumps({"type": "functions", "data": [{"id": "dev1", "label": 7}]})
-        )
+        # A broadcast whose id-churn check raises, so the list is never
+        # adopted. Routed through `_dispatch_text_frame`, whose catch-all
+        # swallows it exactly as it would for a real frame off the wire.
+        with patch.object(
+            coordinator,
+            "_reload_if_device_ids_changed",
+            side_effect=TypeError("malformed frame"),
+        ):
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "functions", "data": [{"id": "dev1"}]})
+            )
         release_fetch.set()
         result = await poll
 
@@ -1738,3 +1747,305 @@ async def test_gateway_version_tolerates_missing_or_unread_parameters(
         await coordinator.async_fetch_gateway_version()
     apply.assert_not_called()
     assert coordinator.gateway_version == "2.1.3"
+
+
+# --- Input hardening (review 2026-09-16) -----------------------------------
+
+
+async def test_a_parser_that_raises_on_the_export_does_not_fail_setup(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`parse_project_export` is written never to raise; the call site still
+    contains it, and the log names the exception TYPE only.
+
+    A malformed export reached `async_config_entry_first_refresh` as an
+    uncaught exception and turned the whole entry into SETUP_ERROR — for an
+    optional enrichment. The document carries the mesh keys, so neither the
+    document nor the exception's text (which may quote it) may be logged.
+    """
+    caplog.set_level(logging.DEBUG)
+    coordinator = _coordinator(hass)
+    document = {"network": "KEYMATERIAL-0123456789ABCDEF"}
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=document),
+        ),
+        patch(
+            "custom_components.junghome.coordinator.parse_project_export",
+            side_effect=RuntimeError("parser saw KEYMATERIAL-0123456789ABCDEF"),
+        ),
+    ):
+        await coordinator.async_fetch_node_identities()  # must not raise
+    assert dict(coordinator.node_identities) == {}
+    records = [r for r in caplog.records if "project export" in r.getMessage()]
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert records[0].getMessage() == "Could not parse the project export: RuntimeError"
+    assert "KEYMATERIAL" not in caplog.text
+
+
+_MALFORMED_DEVICES: dict[str, dict] = {
+    "label int": {"label": 123},
+    "label list": {"label": ["a"]},
+    "label bool": {"label": True},
+    "datapoint without id": {"datapoints": [{"type": "switch", "values": []}]},
+    "datapoints None": {"datapoints": None},
+    "datapoints dict": {"datapoints": {"id": "x"}},
+    "datapoints string": {"datapoints": "abc"},
+    "datapoints contains non-dict": {"datapoints": ["x", 1]},
+    "values None": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": None}]
+    },
+    "values string": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": "ab"}]
+    },
+    "values contains non-dict": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": [1, "x"]}]
+    },
+    "datapoint id int": {"datapoints": [{"id": 5, "type": "switch", "values": []}]},
+    "datapoint id list": {
+        "datapoints": [{"id": ["a"], "type": "switch", "values": []}]
+    },
+    "thermostat preset value is list": {
+        "type": "Thermostat",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "temperature_ctrl",
+                "values": [
+                    {"key": "temperature_ctrl", "value": "21"},
+                    {"key": "temperature_ctrl_preset", "value": ["eco"]},
+                ],
+            },
+            {
+                "id": "idfuzz-000",
+                "type": "switch",
+                "values": [{"key": "switch", "value": ["1"]}],
+            },
+        ],
+    },
+    "sensor label list": {
+        "type": "Socket",
+        "datapoints": [
+            {
+                "id": "idfuzz-002",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "1"},
+                    {"key": "quantity_label", "value": ["Power"]},
+                    {"key": "quantity_unit", "value": "W"},
+                ],
+            }
+        ],
+    },
+    "sensor unit list": {
+        "type": "Socket",
+        "datapoints": [
+            {
+                "id": "idfuzz-002",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "1"},
+                    {"key": "quantity_label", "value": "Power"},
+                    {"key": "quantity_unit", "value": ["W"]},
+                ],
+            }
+        ],
+    },
+    "brightness value list": {
+        "type": "DimmerLight",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+            {
+                "id": "idfuzz-002",
+                "type": "brightness",
+                "values": [{"key": "brightness", "value": [50]}],
+            },
+        ],
+    },
+    "type list": {"type": ["OnOff"]},
+    "sw_version list": {"sw_version": ["1"]},
+}
+
+
+def malformed_device(name: str) -> dict:
+    """One gateway device object with the named defect (shared with test_init)."""
+    device = {
+        "id": "idfuzz",
+        "type": "OnOff",
+        "label": "Fuzz",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "0"}],
+            }
+        ],
+    }
+    device.update(deepcopy(_MALFORMED_DEVICES[name]))
+    return device
+
+
+@pytest.mark.parametrize("name", list(_MALFORMED_DEVICES))
+async def test_functions_broadcast_with_a_malformed_device_is_still_adopted(
+    hass: HomeAssistant, init_integration, name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The WebSocket adoption point takes the same boundary as the REST poll.
+
+    A `functions` broadcast carrying one malformed device must adopt the list
+    (the other devices' state keeps flowing), log the repair once, and raise
+    nothing into the frame handler's catch-all (which would log a traceback
+    and — before the sanitiser — could suppress a racing poll).
+    """
+    caplog.set_level(logging.WARNING)
+    coordinator = init_integration.runtime_data
+    frame = {"type": "functions", "data": [*deepcopy(PRISTINE), malformed_device(name)]}
+    # Discovering the new device requests a refresh (`update_before_add`),
+    # which the mocked poll would answer with the fixture list, replacing the
+    # adopted one before it can be read; keep the adoption observable.
+    with patch.object(coordinator, "async_request_refresh", AsyncMock()):
+        coordinator._dispatch_text_frame(json.dumps(frame))
+        await hass.async_block_till_done()
+
+    assert [d["id"] for d in coordinator.data] == [
+        *(d["id"] for d in PRISTINE),
+        "idfuzz",
+    ]
+    assert hass.states.get("light.strip").state == "on"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    repairs = [r for r in caplog.records if "malformed item(s)" in r.getMessage()]
+    assert len(repairs) == 1
+
+
+async def test_frame_type_store_is_bounded_against_a_peer_minting_types(
+    hass: HomeAssistant,
+) -> None:
+    """2000 distinct frame types must not mean 2000 full frames retained.
+
+    The per-type store kept the latest frame of EVERY type in full, and the
+    type is the peer's to fill in — 2000 types of 100 kB each was 200 MB of
+    diagnostics state. Known types stay complete; unknown ones are truncated
+    and capped in number, and always land in the rolling log regardless.
+    """
+    coordinator = _coordinator(hass)
+    big = "x" * 100_000
+    for i in range(2000):
+        coordinator._dispatch_text_frame(json.dumps({"type": f"t{i}", "data": big}))
+    store = coordinator.ws_last_frame_by_type
+    assert len(store) == WS_FRAME_TYPES_MAX
+    assert all(frame.endswith("…[truncated]") for frame in store.values())
+    assert sum(len(frame) for frame in store.values()) < WS_FRAME_TYPES_MAX * 2100
+    # The rolling log saw every frame (bounded by its own maxlen).
+    assert coordinator.ws_frame_log[-1].startswith('{"type": "t1999"')
+
+    # A known type still arrives in full, even with the store at its cap ...
+    functions = json.dumps(
+        {"type": "functions", "data": [{"id": "x"} for _ in range(500)]}
+    )
+    assert len(functions) > WS_FRAME_MAX_CHARS
+    coordinator._dispatch_text_frame(functions)
+    assert store["functions"] == functions
+    # ... and an unknown type already in the store keeps updating (truncated).
+    coordinator._dispatch_text_frame(json.dumps({"type": "t0", "data": "fresh"}))
+    assert store["t0"] == '{"type": "t0", "data": "fresh"}'
+    assert "t1999" not in store
+    await coordinator.async_shutdown()
+
+
+async def test_stop_during_the_connect_time_refresh_still_tears_the_session_down(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A cancel landing inside the connect-time refresh runs the teardown.
+
+    `stop()` cancels the WebSocket task; if the cancel arrives while the
+    resync's REST fetch is in flight, the session's `finally` used to be
+    skipped (the refresh sat before the `try`): `ws_connected` stayed True,
+    an in-flight command's future was never failed, and the stable-session
+    timer fired `_mark_session_stable` on a stopped coordinator 30 s later.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    ws = _HoldingWS()
+    session = Mock()
+    session.ws_connect = Mock(return_value=ws)
+    refresh_started = asyncio.Event()
+
+    async def _slow_refresh() -> None:
+        refresh_started.set()
+        await asyncio.Event().wait()  # the REST fetch never returns in time
+
+    stable_calls: list[object] = []
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", _slow_refresh),
+        patch.object(coordinator, "_mark_session_stable", stable_calls.append),
+    ):
+        await coordinator.start()
+        await refresh_started.wait()
+        assert coordinator.ws_connected is True
+        # A command in flight on this session: registered, not yet answered.
+        pending: asyncio.Future[dict] = hass.loop.create_future()
+        coordinator._pending_replies["ha1"] = pending
+
+        await coordinator.stop()
+
+        assert coordinator.ws_connected is False
+        assert coordinator.websocket is None
+        assert pending.done()
+        with pytest.raises(HomeAssistantError) as failed:
+            pending.result()
+        assert failed.value.translation_key == "cannot_send"
+
+        freezer.tick(timedelta(seconds=STABLE_SESSION_SECONDS + 1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert stable_calls == []
+    coordinator._pending_replies.clear()
+
+
+async def test_send_failure_after_the_session_failed_the_future_is_quiet(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No "Future exception was never retrieved" from a drop mid-send.
+
+    `send_str` can suspend on transport backpressure; if the session ends
+    then, `_fail_pending_replies` sets `cannot_send` on the command's future
+    and `send_str` raises before the sender ever awaits it. The sender must
+    retrieve that exception on its way out, or asyncio logs an ERROR when the
+    future is collected — on every such drop, for a condition already handled.
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    gate = asyncio.Event()
+
+    async def _slow_send(_raw: str) -> None:
+        await gate.wait()
+        raise ConnectionResetError("Cannot write to closing transport")
+
+    ws.send_str = _slow_send
+    coordinator.websocket = ws
+
+    task = hass.async_create_task(coordinator.turn_on_switch("dp-1"))
+    await asyncio.sleep(0)
+    assert len(coordinator._pending_replies) == 1
+    coordinator._fail_pending_replies()  # the reader loop's finally, mid-send
+    gate.set()
+    with pytest.raises(HomeAssistantError) as raised:
+        await task
+    assert raised.value.translation_key == "cannot_send"
+    assert coordinator._pending_replies == {}
+    del task, raised
+    gc.collect()
+    await asyncio.sleep(0)
+    gc.collect()
+    await asyncio.sleep(0)
+    assert not [r for r in caplog.records if "never retrieved" in r.getMessage()]

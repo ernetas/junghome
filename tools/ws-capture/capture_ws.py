@@ -13,8 +13,8 @@ Why it exists: the captures in `disk_dump/ws-capture*/` are raw frame dumps with
 repo's backlog:
 
   * rockers — what edges does a real press/double/hold actually produce, on
-    which channel, and with what timing? (drives the button blueprint's
-    hold-time and double-click-window defaults). The mechanism is now
+    which channel, and with what timing? (what the integration's hold
+    threshold and duplicate window rest on). The mechanism is now
     established (docs/cross-repo-analysis.md §1.1): the gateway synthesises the
     release, so a tap is a ~0.4 to 0.5 s pulse; device firmware 2.2.0.2 publishes
     every event twice ~1 s apart, so a tap arrives as TWO pairs and a hold as
@@ -69,6 +69,17 @@ import aiohttp
 ROCKER_TYPES = ("up_request", "down_request", "trigger_request")
 # Cover position/tilt datapoint types.
 COVER_TYPES = ("level", "angle")
+
+# What the analysis measures a capture against: the integration's gesture
+# constants (custom_components/junghome/const.py — BUTTON_HOLD_THRESHOLD and
+# BUTTON_DUPLICATE_WINDOW, in seconds) and the shipped blueprint's legacy
+# double-click window default (blueprints/automation/junghome/
+# button_gestures.yaml, `double_click_window`, in ms there). Mirrored rather
+# than imported so the tool runs without Home Assistant installed; a test in
+# tests/test_blueprint.py pins them to the real values.
+HOLD_THRESHOLD_S = 1.0
+DUPLICATE_WINDOW_S = 1.2
+LEGACY_DOUBLE_CLICK_WINDOW_S = 1.0
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -480,13 +491,13 @@ def _print_edges(by_marker: dict[str | None, list[dict]]) -> None:
 
 
 def _print_timings(by_marker: dict[str | None, list[dict]], rows: list[dict]) -> None:
-    """Report durations/gaps PER GESTURE and derive the blueprint thresholds.
+    """Report durations/gaps PER GESTURE and check the gesture constants.
 
     Per gesture, not pooled: a double-click's press->press gap and two
     deliberately separate presses are both "gaps", and mixing them produces a
     range wide enough to justify any window at all.
     """
-    print("\n=== TIMING SUMMARY (what the blueprint defaults depend on) ===")
+    print("\n=== TIMING SUMMARY (what the gesture constants depend on) ===")
     reported = False
     for marker, group in by_marker.items():
         durations, gaps = _press_durations(group, rows), _press_gaps(group)
@@ -508,33 +519,98 @@ def _print_timings(by_marker: dict[str | None, list[dict]], rows: list[dict]) ->
         print("Not enough paired edges to derive timings.")
         return
 
-    ordinary = _press_durations(
-        by_marker.get("single-a") or [], rows
-    ) + _press_durations(by_marker.get("double-a") or [], rows)
+    singles = by_marker.get("single-a") or []
+    doubles = by_marker.get("double-a") or []
+    ordinary = _press_durations(singles, rows) + _press_durations(doubles, rows)
     held = _press_durations(by_marker.get("hold-a") or [], rows)
-    double_gaps = _press_gaps(by_marker.get("double-a") or [])
+    copy_gaps = _copy_gaps(singles, rows)
+    double_gaps = _click_gaps(doubles)
 
-    print("\n--- recommended blueprint thresholds ---")
+    print("\n--- against the integration's gesture constants ---")
     if ordinary and held:
-        verdict = "OK" if max(ordinary) < 2 < min(held) else "WRONG"
+        verdict = "OK" if max(ordinary) < HOLD_THRESHOLD_S < min(held) else "WRONG"
         print(
-            f"   hold_time: ordinary presses end by {max(ordinary):.3f}s and "
-            f"holds last {min(held):.3f}s+  -> anything in between works "
-            f"(default 2 s is {verdict})."
+            f"   hold threshold (BUTTON_HOLD_THRESHOLD = {HOLD_THRESHOLD_S} s): "
+            f"taps end by {max(ordinary):.3f}s and holds last {min(held):.3f}s+ "
+            f" -> {verdict}."
         )
     elif ordinary:
         print(
-            f"   hold_time: ordinary presses end by {max(ordinary):.3f}s; "
-            "no hold gesture captured to bound the other side."
+            f"   hold threshold (BUTTON_HOLD_THRESHOLD = {HOLD_THRESHOLD_S} s): "
+            f"taps end by {max(ordinary):.3f}s; no hold gesture captured to "
+            "bound the other side."
         )
-    if double_gaps:
-        verdict = "OK" if max(double_gaps) < 0.4 else "TOO SHORT"
+    if copy_gaps:
+        verdict = "OK" if max(copy_gaps) <= DUPLICATE_WINDOW_S else "TOO SHORT"
         print(
-            f"   double_click_window: double-clicks land within "
-            f"{max(double_gaps):.3f}s  -> default 0.4 s is {verdict}."
+            f"   duplicate window (BUTTON_DUPLICATE_WINDOW = {DUPLICATE_WINDOW_S} s): "
+            f"the firmware's copy of a tap presses {min(copy_gaps):.3f}-"
+            f"{max(copy_gaps):.3f}s after the first release  -> {verdict}."
         )
     else:
-        print("   double_click_window: no double-click gestures captured.")
+        print(
+            "   duplicate window (BUTTON_DUPLICATE_WINDOW = "
+            f"{DUPLICATE_WINDOW_S} s): single taps arrive as one pair here, so "
+            "there is no copy to measure (turn suppression off only on such "
+            "firmware)."
+        )
+    if double_gaps:
+        verdict = (
+            "OK" if max(double_gaps) < LEGACY_DOUBLE_CLICK_WINDOW_S else "TOO SHORT"
+        )
+        print(
+            "   legacy double-click window (blueprint default "
+            f"{LEGACY_DOUBLE_CLICK_WINDOW_S * 1000:.0f} ms): the second click "
+            f"lands {max(double_gaps):.3f}s after the first  -> {verdict}. Only "
+            "meaningful on firmware that reports each tap ONCE (see BURST "
+            "SHAPE); with doubled taps a double-click is indistinguishable "
+            "from a single one."
+        )
+    else:
+        print("   legacy double-click window: no double-click gestures captured.")
+
+
+def _copy_gaps(subset: list[dict], rows: list[dict]) -> list[float]:
+    """First release -> second press, per single-tap gesture reported twice.
+
+    The integration's duplicate window is measured from the release that
+    completed a click to the next press on the device, so that is the gap
+    that must fit inside ``BUTTON_DUPLICATE_WINDOW``. Gestures with fewer than
+    two presses (clean single-pair firmware) contribute nothing.
+    """
+    out = []
+    for gesture in _split_gestures(subset):
+        presses = [r for r in gesture if r["values"].get(r["type"]) == "1"]
+        if len(presses) < 2:
+            continue
+        release = next(
+            (
+                r
+                for r in rows
+                if r["id"] == presses[0]["id"]
+                and r["elapsed"] > presses[0]["elapsed"]
+                and r["values"].get(r["type"]) == "0"
+            ),
+            None,
+        )
+        if release and presses[1]["elapsed"] > release["elapsed"]:
+            out.append(presses[1]["elapsed"] - release["elapsed"])
+    return out
+
+
+def _click_gaps(subset: list[dict]) -> list[float]:
+    """First release -> second release, per double-click gesture.
+
+    A click fires at the release, and the blueprint's legacy double-click
+    wait starts at the first click and needs the second inside the window —
+    so release-to-release is the gap ``double_click_window`` has to cover.
+    """
+    out = []
+    for gesture in _split_gestures(subset):
+        releases = [r for r in gesture if r["values"].get(r["type"]) == "0"]
+        if len(releases) >= 2:
+            out.append(releases[1]["elapsed"] - releases[0]["elapsed"])
+    return out
 
 
 def _analyze_rocker(records: list[dict]) -> None:
