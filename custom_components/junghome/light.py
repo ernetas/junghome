@@ -68,7 +68,7 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     """Representation of a Jung Home light."""
 
     # Commanded over the WebSocket, so it is unavailable when the socket is down.
-    _controllable_over_websocket = True
+    _needs_websocket = True
 
     # The light is the device's main feature, so it adopts the device name. With
     # has_entity_name the entity_id is `light.<device>` instead of the old

@@ -70,6 +70,61 @@ async def test_event_fires_on_each_push_not_on_rest_reread(
         assert mock_trigger.call_count == 2
 
 
+async def test_event_unavailable_while_websocket_down(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A button event entity is unavailable while the WebSocket is down.
+
+    Edges only ever arrive as WebSocket pushes — a REST poll re-reads the same
+    values and fires nothing — so with the socket down the entity is deaf, not
+    merely late. It used to stay "available" on the REST signal alone, which
+    hid every lost press and meant the shipped blueprint's abort-on-unavailable
+    guard (a gesture cut short by a drop) could never engage. It must read
+    unavailable on the drop and come back on reconnect, still firing edges.
+    """
+    coordinator = init_integration.runtime_data
+    press = {
+        "type": "datapoint",
+        "data": {"id": "idrock1-00c", "values": [{"key": "up_request", "value": "1"}]},
+    }
+    coordinator._handle_websocket_message(press)
+    await hass.async_block_till_done()
+    live = hass.states.get("event.button_a_up")
+    assert live.attributes["event_type"] == "pressed"
+
+    # The socket drops: the coordinator's own drop notification (what the
+    # `_run_websocket` finally block runs) must flip the entity unavailable
+    # even though the REST poll is still succeeding.
+    coordinator.ws_connected = False
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    assert coordinator.last_update_success is True
+    assert hass.states.get("event.button_a_up").state == "unavailable"
+    # A pure state reader on the same REST signal is unaffected.
+    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+
+    # Reconnect (the real connect path refreshes, which re-dispatches).
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    restored = hass.states.get("event.button_a_up")
+    assert restored.state == live.state
+    assert restored.attributes["event_type"] == "pressed"
+
+    # And it is genuinely live again: the next edge fires.
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idrock1-00c",
+                "values": [{"key": "up_request", "value": "0"}],
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("event.button_a_up").attributes["event_type"] == "depressed"
+
+
 async def test_event_unknown_datapoint_type_uses_name(hass: HomeAssistant) -> None:
     """A datapoint type with no translation key falls back to a plain name."""
     coordinator = bare_coordinator(hass)
