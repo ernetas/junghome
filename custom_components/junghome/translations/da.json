@@ -126,6 +126,16 @@
       "down": { "name": "Ned" },
       "press": { "name": "Tryk" }
     },
+    "sensor": {
+      "power": { "name": "Effekt" },
+      "energy": { "name": "Energi" },
+      "voltage": { "name": "Spænding" },
+      "current": { "name": "Strøm" },
+      "frequency": { "name": "Frekvens" },
+      "temperature": { "name": "Temperatur" },
+      "illuminance": { "name": "Belysningsstyrke" },
+      "humidity": { "name": "Luftfugtighed" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Jung Home-gatewayen kunne ikke nås til at sende kommandoen; den er ved at oprette forbindelse igen. Prøv igen om et øjeblik."
+    },
+    "command_rejected": {
+      "message": "Jung Home-gatewayen afviste kommandoen: {error}"
     },
     "command_timeout": {
       "message": "Jung Home-gatewayen bekræftede ikke kommandoen i tide."

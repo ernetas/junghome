@@ -126,6 +126,16 @@
       "down": { "name": "Para baixo" },
       "press": { "name": "Pressionar" }
     },
+    "sensor": {
+      "power": { "name": "Potência" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Tensão" },
+      "current": { "name": "Corrente" },
+      "frequency": { "name": "Frequência" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Iluminância" },
+      "humidity": { "name": "Umidade" }
+    },
     "switch": {
       "status_led": { "name": "LED de status" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Não foi possível alcançar o gateway Jung Home para enviar o comando; ele está se reconectando. Tente novamente em instantes."
+    },
+    "command_rejected": {
+      "message": "O gateway Jung Home rejeitou o comando: {error}"
     },
     "command_timeout": {
       "message": "O gateway Jung Home não confirmou o comando a tempo."

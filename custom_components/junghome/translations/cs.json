@@ -126,6 +126,16 @@
       "down": { "name": "Dolů" },
       "press": { "name": "Stisknutí" }
     },
+    "sensor": {
+      "power": { "name": "Výkon" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Napětí" },
+      "current": { "name": "Proud" },
+      "frequency": { "name": "Frekvence" },
+      "temperature": { "name": "Teplota" },
+      "illuminance": { "name": "Osvětlení" },
+      "humidity": { "name": "Vlhkost" }
+    },
     "switch": {
       "status_led": { "name": "Stavová LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Bránu Jung Home se nepodařilo kontaktovat pro odeslání příkazu; probíhá opětovné připojení. Zkuste to za okamžik znovu."
+    },
+    "command_rejected": {
+      "message": "Brána Jung Home odmítla příkaz: {error}"
     },
     "command_timeout": {
       "message": "Brána Jung Home nepotvrdila příkaz včas."

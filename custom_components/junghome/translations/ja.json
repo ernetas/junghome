@@ -126,6 +126,16 @@
       "down": { "name": "下" },
       "press": { "name": "押下" }
     },
+    "sensor": {
+      "power": { "name": "電力" },
+      "energy": { "name": "エネルギー" },
+      "voltage": { "name": "電圧" },
+      "current": { "name": "電流" },
+      "frequency": { "name": "周波数" },
+      "temperature": { "name": "温度" },
+      "illuminance": { "name": "照度" },
+      "humidity": { "name": "湿度" }
+    },
     "switch": {
       "status_led": { "name": "ステータス LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "コマンドを送信するために Jung Home ゲートウェイに接続できませんでした。再接続中です。しばらくしてからもう一度お試しください。"
+    },
+    "command_rejected": {
+      "message": "Jung Home ゲートウェイがコマンドを拒否しました: {error}"
     },
     "command_timeout": {
       "message": "Jung Home ゲートウェイが時間内にコマンドを確認しませんでした。"

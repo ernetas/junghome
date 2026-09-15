@@ -126,6 +126,16 @@
       "down": { "name": "Le" },
       "press": { "name": "Megnyomás" }
     },
+    "sensor": {
+      "power": { "name": "Teljesítmény" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Feszültség" },
+      "current": { "name": "Áramerősség" },
+      "frequency": { "name": "Frekvencia" },
+      "temperature": { "name": "Hőmérséklet" },
+      "illuminance": { "name": "Megvilágítás" },
+      "humidity": { "name": "Páratartalom" }
+    },
     "switch": {
       "status_led": { "name": "Állapotjelző LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "A Jung Home átjáró nem volt elérhető a parancs elküldéséhez; éppen újracsatlakozik. Próbáld újra egy pillanat múlva."
+    },
+    "command_rejected": {
+      "message": "A Jung Home átjáró elutasította a parancsot: {error}"
     },
     "command_timeout": {
       "message": "A Jung Home átjáró nem erősítette meg a parancsot időben."

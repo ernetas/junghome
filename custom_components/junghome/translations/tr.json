@@ -126,6 +126,16 @@
       "down": { "name": "Aşağı" },
       "press": { "name": "Basma" }
     },
+    "sensor": {
+      "power": { "name": "Güç" },
+      "energy": { "name": "Enerji" },
+      "voltage": { "name": "Gerilim" },
+      "current": { "name": "Akım" },
+      "frequency": { "name": "Frekans" },
+      "temperature": { "name": "Sıcaklık" },
+      "illuminance": { "name": "Aydınlık" },
+      "humidity": { "name": "Nem" }
+    },
     "switch": {
       "status_led": { "name": "Durum LED'i" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Komutu göndermek için Jung Home ağ geçidine ulaşılamadı; yeniden bağlanıyor. Birazdan tekrar deneyin."
+    },
+    "command_rejected": {
+      "message": "Jung Home ağ geçidi komutu reddetti: {error}"
     },
     "command_timeout": {
       "message": "Jung Home ağ geçidi komutu zamanında onaylamadı."
