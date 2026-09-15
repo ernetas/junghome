@@ -134,6 +134,16 @@
         "name": "Press"
       }
     },
+    "sensor": {
+      "power": { "name": "Power" },
+      "energy": { "name": "Energy" },
+      "voltage": { "name": "Voltage" },
+      "current": { "name": "Current" },
+      "frequency": { "name": "Frequency" },
+      "temperature": { "name": "Temperature" },
+      "illuminance": { "name": "Illuminance" },
+      "humidity": { "name": "Humidity" }
+    },
     "switch": {
       "status_led": {
         "name": "Status LED"
@@ -149,6 +159,9 @@
     },
     "cannot_send": {
       "message": "Could not reach the Jung Home gateway to send the command; it is reconnecting. Try again in a moment."
+    },
+    "command_rejected": {
+      "message": "The Jung Home gateway rejected the command: {error}"
     },
     "command_timeout": {
       "message": "The Jung Home gateway did not confirm the command in time."

@@ -126,6 +126,16 @@
       "down": { "name": "Alas" },
       "press": { "name": "Painallus" }
     },
+    "sensor": {
+      "power": { "name": "Teho" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Jännite" },
+      "current": { "name": "Virta" },
+      "frequency": { "name": "Taajuus" },
+      "temperature": { "name": "Lämpötila" },
+      "illuminance": { "name": "Valaistusvoimakkuus" },
+      "humidity": { "name": "Kosteus" }
+    },
     "switch": {
       "status_led": { "name": "Tilan LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Jung Home -yhdyskäytävään ei saatu yhteyttä komennon lähettämiseksi; se yhdistää uudelleen. Yritä hetken kuluttua uudelleen."
+    },
+    "command_rejected": {
+      "message": "Jung Home -yhdyskäytävä hylkäsi komennon: {error}"
     },
     "command_timeout": {
       "message": "Jung Home -yhdyskäytävä ei vahvistanut komentoa ajoissa."

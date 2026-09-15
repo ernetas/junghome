@@ -126,6 +126,16 @@
       "down": { "name": "Dol" },
       "press": { "name": "Pritisk" }
     },
+    "sensor": {
+      "power": { "name": "Moč" },
+      "energy": { "name": "Energija" },
+      "voltage": { "name": "Napetost" },
+      "current": { "name": "Tok" },
+      "frequency": { "name": "Frekvenca" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Osvetljenost" },
+      "humidity": { "name": "Vlažnost" }
+    },
     "switch": {
       "status_led": { "name": "LED stanja" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Prehoda Jung Home ni bilo mogoče doseči za pošiljanje ukaza; ponovno se povezuje. Poskusite znova čez trenutek."
+    },
+    "command_rejected": {
+      "message": "Prehod Jung Home je zavrnil ukaz: {error}"
     },
     "command_timeout": {
       "message": "Prehod Jung Home ni pravočasno potrdil ukaza."

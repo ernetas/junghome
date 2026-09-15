@@ -126,6 +126,16 @@
       "down": { "name": "Вниз" },
       "press": { "name": "Натискання" }
     },
+    "sensor": {
+      "power": { "name": "Потужність" },
+      "energy": { "name": "Енергія" },
+      "voltage": { "name": "Напруга" },
+      "current": { "name": "Струм" },
+      "frequency": { "name": "Частота" },
+      "temperature": { "name": "Температура" },
+      "illuminance": { "name": "Освітленість" },
+      "humidity": { "name": "Вологість" }
+    },
     "switch": {
       "status_led": { "name": "Світлодіод стану" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Не вдалося зв’язатися зі шлюзом Jung Home, щоб надіслати команду; триває повторне підключення. Спробуйте ще раз за мить."
+    },
+    "command_rejected": {
+      "message": "Шлюз Jung Home відхилив команду: {error}"
     },
     "command_timeout": {
       "message": "Шлюз Jung Home не підтвердив команду вчасно."

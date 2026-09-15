@@ -126,6 +126,16 @@
       "down": { "name": "Avall" },
       "press": { "name": "Pulsació" }
     },
+    "sensor": {
+      "power": { "name": "Potència" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Tensió" },
+      "current": { "name": "Corrent" },
+      "frequency": { "name": "Freqüència" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Il·luminància" },
+      "humidity": { "name": "Humitat" }
+    },
     "switch": {
       "status_led": { "name": "LED d'estat" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "No s'ha pogut contactar amb la passarel·la Jung Home per enviar l'ordre; s'està tornant a connectar. Torna-ho a provar d'aquí a un moment."
+    },
+    "command_rejected": {
+      "message": "La passarel·la Jung Home ha rebutjat l'ordre: {error}"
     },
     "command_timeout": {
       "message": "La passarel·la Jung Home no ha confirmat l'ordre a temps."

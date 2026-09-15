@@ -126,6 +126,16 @@
       "down": { "name": "Вниз" },
       "press": { "name": "Нажатие" }
     },
+    "sensor": {
+      "power": { "name": "Мощность" },
+      "energy": { "name": "Энергия" },
+      "voltage": { "name": "Напряжение" },
+      "current": { "name": "Сила тока" },
+      "frequency": { "name": "Частота" },
+      "temperature": { "name": "Температура" },
+      "illuminance": { "name": "Освещённость" },
+      "humidity": { "name": "Влажность" }
+    },
     "switch": {
       "status_led": { "name": "Светодиод состояния" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Не удалось связаться со шлюзом Jung Home для отправки команды; выполняется переподключение. Повторите попытку через мгновение."
+    },
+    "command_rejected": {
+      "message": "Шлюз Jung Home отклонил команду: {error}"
     },
     "command_timeout": {
       "message": "Шлюз Jung Home не подтвердил команду вовремя."

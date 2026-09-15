@@ -126,6 +126,16 @@
       "down": { "name": "Omlaag" },
       "press": { "name": "Druk" }
     },
+    "sensor": {
+      "power": { "name": "Vermogen" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Spanning" },
+      "current": { "name": "Stroom" },
+      "frequency": { "name": "Frequentie" },
+      "temperature": { "name": "Temperatuur" },
+      "illuminance": { "name": "Verlichtingssterkte" },
+      "humidity": { "name": "Luchtvochtigheid" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "De Jung Home-gateway was niet bereikbaar om de opdracht te versturen; de verbinding wordt hersteld. Probeer het zo meteen opnieuw."
+    },
+    "command_rejected": {
+      "message": "De Jung Home-gateway heeft de opdracht geweigerd: {error}"
     },
     "command_timeout": {
       "message": "De Jung Home-gateway heeft de opdracht niet op tijd bevestigd."

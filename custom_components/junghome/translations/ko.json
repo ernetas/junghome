@@ -126,6 +126,16 @@
       "down": { "name": "아래" },
       "press": { "name": "누름" }
     },
+    "sensor": {
+      "power": { "name": "전력" },
+      "energy": { "name": "에너지" },
+      "voltage": { "name": "전압" },
+      "current": { "name": "전류" },
+      "frequency": { "name": "주파수" },
+      "temperature": { "name": "온도" },
+      "illuminance": { "name": "조도" },
+      "humidity": { "name": "습도" }
+    },
     "switch": {
       "status_led": { "name": "상태 LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "명령을 보내기 위해 Jung Home 게이트웨이에 연결할 수 없습니다. 다시 연결하는 중입니다. 잠시 후 다시 시도하세요."
+    },
+    "command_rejected": {
+      "message": "Jung Home 게이트웨이가 명령을 거부했습니다: {error}"
     },
     "command_timeout": {
       "message": "Jung Home 게이트웨이가 제한 시간 내에 명령을 확인하지 않았습니다."

@@ -126,6 +126,16 @@
       "down": { "name": "下" },
       "press": { "name": "按下" }
     },
+    "sensor": {
+      "power": { "name": "功率" },
+      "energy": { "name": "能量" },
+      "voltage": { "name": "电压" },
+      "current": { "name": "电流" },
+      "frequency": { "name": "频率" },
+      "temperature": { "name": "温度" },
+      "illuminance": { "name": "照度" },
+      "humidity": { "name": "湿度" }
+    },
     "switch": {
       "status_led": { "name": "状态指示灯" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "无法连接到 Jung Home 网关以发送命令；正在重新连接。请稍后重试。"
+    },
+    "command_rejected": {
+      "message": "Jung Home 网关拒绝了该命令：{error}"
     },
     "command_timeout": {
       "message": "Jung Home 网关未能及时确认该命令。"

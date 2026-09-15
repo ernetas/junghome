@@ -126,6 +126,16 @@
       "down": { "name": "Abajo" },
       "press": { "name": "Pulsación" }
     },
+    "sensor": {
+      "power": { "name": "Potencia" },
+      "energy": { "name": "Energía" },
+      "voltage": { "name": "Voltaje" },
+      "current": { "name": "Corriente" },
+      "frequency": { "name": "Frecuencia" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Iluminancia" },
+      "humidity": { "name": "Humedad" }
+    },
     "switch": {
       "status_led": { "name": "LED de estado" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "No se pudo contactar con la pasarela Jung Home para enviar el comando; se está reconectando. Vuelve a intentarlo dentro de un momento."
+    },
+    "command_rejected": {
+      "message": "La pasarela Jung Home rechazó el comando: {error}"
     },
     "command_timeout": {
       "message": "La pasarela Jung Home no confirmó el comando a tiempo."

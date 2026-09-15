@@ -1020,20 +1020,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if future is not None and not future.done():
             future.set_result(reply_data if isinstance(reply_data, dict) else {})
 
-    def _reject_pending_reply(self, message_id: str) -> None:
+    def _reject_pending_reply(self, message_id: str, reason: str) -> None:
         """Fail the command awaiting `message_id`: the gateway rejected it.
 
-        Same no-op rules as ``_resolve_pending_reply``. The caller sees the same
-        shape of error as any other failed set (a translated
-        ``HomeAssistantError``); the gateway's own reason is only in the
-        WARNING the caller of this method logs, because ``invalid_response`` —
-        the nearest existing exception key — carries no placeholder for it.
+        Same no-op rules as ``_resolve_pending_reply``. ``reason`` is the
+        gateway's own text from the ``error:`` frame; it is the only place the
+        gateway ever says *why*, so it is carried into the
+        ``command_rejected`` error the calling service raises (the caller's
+        WARNING keeps it in the log as well).
         """
         future = self._pending_replies.get(message_id)
         if future is not None and not future.done():
             future.set_exception(
                 HomeAssistantError(
-                    translation_domain=DOMAIN, translation_key="invalid_response"
+                    translation_domain=DOMAIN,
+                    translation_key="command_rejected",
+                    translation_placeholders={"error": reason},
                 )
             )
 
@@ -1093,10 +1095,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     # an `error:` message frame. Current firmware sends it
                     # without a message_id, so the WARNING is the only place
                     # the gateway's own reason ever surfaces; should a frame
-                    # carry one, the awaiting command is failed with it right
-                    # away instead of sitting out COMMAND_REPLY_TIMEOUT.
+                    # carry one, the awaiting command is failed right away
+                    # with that reason (minus the `error:` tag, which the
+                    # translated message already says) instead of sitting
+                    # out COMMAND_REPLY_TIMEOUT.
                     if message_id is not None:
-                        self._reject_pending_reply(message_id)
+                        reason = text.removeprefix("error:").strip() or text
+                        self._reject_pending_reply(message_id, reason)
                     _LOGGER.warning("Jung Home gateway reported an error: %s", text)
                 else:
                     _LOGGER.debug("Received message frame: %s", data)

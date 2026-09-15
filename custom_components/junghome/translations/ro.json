@@ -126,6 +126,16 @@
       "down": { "name": "Jos" },
       "press": { "name": "Apăsare" }
     },
+    "sensor": {
+      "power": { "name": "Putere" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Tensiune" },
+      "current": { "name": "Curent" },
+      "frequency": { "name": "Frecvență" },
+      "temperature": { "name": "Temperatură" },
+      "illuminance": { "name": "Iluminare" },
+      "humidity": { "name": "Umiditate" }
+    },
     "switch": {
       "status_led": { "name": "LED de stare" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Gateway-ul Jung Home nu a putut fi contactat pentru a trimite comanda; se reconectează. Încearcă din nou peste o clipă."
+    },
+    "command_rejected": {
+      "message": "Gateway-ul Jung Home a respins comanda: {error}"
     },
     "command_timeout": {
       "message": "Gateway-ul Jung Home nu a confirmat comanda la timp."

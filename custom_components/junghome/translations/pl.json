@@ -126,6 +126,16 @@
       "down": { "name": "Dół" },
       "press": { "name": "Naciśnięcie" }
     },
+    "sensor": {
+      "power": { "name": "Moc" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Napięcie" },
+      "current": { "name": "Natężenie prądu" },
+      "frequency": { "name": "Częstotliwość" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Natężenie oświetlenia" },
+      "humidity": { "name": "Wilgotność" }
+    },
     "switch": {
       "status_led": { "name": "Dioda LED stanu" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Nie udało się połączyć z bramką Jung Home, aby wysłać polecenie; trwa ponowne łączenie. Spróbuj ponownie za chwilę."
+    },
+    "command_rejected": {
+      "message": "Bramka Jung Home odrzuciła polecenie: {error}"
     },
     "command_timeout": {
       "message": "Bramka Jung Home nie potwierdziła polecenia na czas."

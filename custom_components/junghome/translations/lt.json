@@ -126,6 +126,16 @@
       "down": { "name": "Žemyn" },
       "press": { "name": "Paspaudimas" }
     },
+    "sensor": {
+      "power": { "name": "Galia" },
+      "energy": { "name": "Energija" },
+      "voltage": { "name": "Įtampa" },
+      "current": { "name": "Srovė" },
+      "frequency": { "name": "Dažnis" },
+      "temperature": { "name": "Temperatūra" },
+      "illuminance": { "name": "Apšvieta" },
+      "humidity": { "name": "Drėgmė" }
+    },
     "switch": {
       "status_led": { "name": "Būsenos LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Nepavyko pasiekti „Jung Home“ sietuvo komandai išsiųsti; jis jungiasi iš naujo. Pabandykite dar kartą po akimirkos."
+    },
+    "command_rejected": {
+      "message": "„Jung Home“ sietuvas atmetė komandą: {error}"
     },
     "command_timeout": {
       "message": "„Jung Home“ sietuvas laiku nepatvirtino komandos."

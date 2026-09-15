@@ -604,8 +604,20 @@ def _ws_replying_with(
     return ws
 
 
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        (
+            "error: could not set datapoint (dp-1) value",
+            "could not set datapoint (dp-1) value",
+        ),
+        # A bare tag with nothing after it: better the tag than an empty reason.
+        ("error:", "error:"),
+    ],
+    ids=["reason", "bare-tag"],
+)
 async def test_correlated_error_frame_rejects_the_pending_command(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, text: str, reason: str
 ) -> None:
     """An `error:` frame that echoes our message_id fails the command at once.
 
@@ -613,17 +625,14 @@ async def test_correlated_error_frame_rejects_the_pending_command(
     the id is unambiguous — and it used to resolve the command as a SUCCESS,
     because any frame with our id was taken as the confirmation before its
     type was even looked at. It must surface as a service error, immediately
-    (no waiting out COMMAND_REPLY_TIMEOUT), with the gateway's own reason in
-    the log since the exception text is a fixed translation.
+    (no waiting out COMMAND_REPLY_TIMEOUT), carrying the gateway's own reason
+    — the frame text minus its `error:` tag — as the `command_rejected`
+    placeholder, and still in the WARNING log.
     """
     coordinator = _coordinator(hass)
     coordinator.websocket = _ws_replying_with(
         coordinator,
-        lambda message_id: {
-            "type": "message",
-            "data": "error: could not set datapoint (dp-1) value",
-            "message_id": message_id,
-        },
+        lambda message_id: {"type": "message", "data": text, "message_id": message_id},
     )
 
     # No COMMAND_REPLY_TIMEOUT patch: the rejection must settle the await
@@ -633,9 +642,10 @@ async def test_correlated_error_frame_rejects_the_pending_command(
         pytest.raises(HomeAssistantError) as exc_info,
     ):
         await asyncio.wait_for(coordinator.turn_on_switch("dp-1"), timeout=1)
-    assert exc_info.value.translation_key == "invalid_response"
+    assert exc_info.value.translation_key == "command_rejected"
+    assert exc_info.value.translation_placeholders == {"error": reason}
     assert coordinator._pending_replies == {}
-    assert "could not set datapoint (dp-1)" in caplog.text
+    assert f"Jung Home gateway reported an error: {text}" in caplog.text
 
 
 async def test_correlated_error_frame_for_a_settled_command_is_a_no_op(

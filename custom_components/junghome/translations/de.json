@@ -126,6 +126,16 @@
       "down": { "name": "Ab" },
       "press": { "name": "Tastendruck" }
     },
+    "sensor": {
+      "power": { "name": "Leistung" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Spannung" },
+      "current": { "name": "Stromstärke" },
+      "frequency": { "name": "Frequenz" },
+      "temperature": { "name": "Temperatur" },
+      "illuminance": { "name": "Beleuchtungsstärke" },
+      "humidity": { "name": "Luftfeuchtigkeit" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Das Jung Home Gateway war nicht erreichbar, um den Befehl zu senden; es stellt die Verbindung gerade wieder her. Versuche es in einem Moment erneut."
+    },
+    "command_rejected": {
+      "message": "Das Jung Home Gateway hat den Befehl abgelehnt: {error}"
     },
     "command_timeout": {
       "message": "Das Jung Home Gateway hat den Befehl nicht rechtzeitig bestätigt."

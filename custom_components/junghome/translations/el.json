@@ -126,6 +126,16 @@
       "down": { "name": "Κάτω" },
       "press": { "name": "Πάτημα" }
     },
+    "sensor": {
+      "power": { "name": "Ισχύς" },
+      "energy": { "name": "Ενέργεια" },
+      "voltage": { "name": "Τάση" },
+      "current": { "name": "Ρεύμα" },
+      "frequency": { "name": "Συχνότητα" },
+      "temperature": { "name": "Θερμοκρασία" },
+      "illuminance": { "name": "Φωτεινότητα" },
+      "humidity": { "name": "Υγρασία" }
+    },
     "switch": {
       "status_led": { "name": "LED κατάστασης" }
     }
@@ -139,6 +149,9 @@
     },
     "cannot_send": {
       "message": "Δεν ήταν δυνατή η επικοινωνία με την πύλη Jung Home για την αποστολή της εντολής· επανασυνδέεται. Δοκιμάστε ξανά σε λίγο."
+    },
+    "command_rejected": {
+      "message": "Η πύλη Jung Home απέρριψε την εντολή: {error}"
     },
     "command_timeout": {
       "message": "Η πύλη Jung Home δεν επιβεβαίωσε την εντολή εγκαίρως."
