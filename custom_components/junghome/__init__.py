@@ -466,14 +466,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
             )
 
     # Register the synthetic gateway (hub) device up front, before the platforms
-    # create the per-function devices that link to it via ``via_device``. Creating
-    # it here rather than lazily (via the connectivity sensor) guarantees it
-    # already exists when those devices reference it, so Home Assistant never
-    # takes its deprecated "non existing via_device" path.
-    dr.async_get(hass).async_get_or_create(
+    # create the per-function devices that link to it. Creating it here rather
+    # than lazily (via the connectivity sensor) guarantees it already exists when
+    # those devices reference it, and gives entities its registry id for the
+    # ``via_device_id`` link (HA 2026.8+; the ``via_device`` tuple is deprecated
+    # in 2026.9 and its deprecation report raised under ``update_before_add``
+    # — issue #207).
+    hub_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         **gateway_device_info(entry, coordinator.gateway_version),
     )
+    coordinator.gateway_device_registry_id = hub_device.id
 
     # Forward the setup to the appropriate platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

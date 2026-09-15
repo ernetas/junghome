@@ -13,6 +13,8 @@ their own ``_handle_coordinator_update`` write logic (which intentionally
 differs between platforms).
 """
 
+from typing import Any, cast
+
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -21,6 +23,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, device_slug, gateway_device_id
 from .coordinator import JungHomeDataUpdateCoordinator
 from .models import Datapoint, Device
+
+# HA 2026.8 added ``via_device_id`` (the hub's registry id) to ``DeviceInfo``
+# and 2026.9 deprecated the ``via_device`` identifier tuple. The deprecation
+# report is what makes this more than a warning: it raises ``RuntimeError``
+# when it cannot find an integration frame on the stack, which is exactly the
+# case under ``async_add_entities(..., update_before_add=True)``, so one entity
+# per startup failed to load (issue #207). Cores older than 2026.8 reject the
+# new key as an unknown kwarg, hence the feature check rather than a version
+# compare; the floor stays 2025.12.4.
+VIA_DEVICE_ID_SUPPORTED = "via_device_id" in DeviceInfo.__optional_keys__
 
 
 def claim_new_entity(known: set[str], unique_id: str) -> bool:
@@ -110,10 +122,11 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
     def device_info(self) -> DeviceInfo:
         """Return device information, linking the entity to its Jung Home device.
 
-        Every device is hung off the synthetic gateway (hub) device via
-        ``via_device`` so the registry reflects the real "devices reached
-        through the gateway" topology (the hub is registered up front in
-        ``async_setup_entry``, so this reference always resolves).
+        Every device is hung off the synthetic gateway (hub) device so the
+        registry reflects the real "devices reached through the gateway"
+        topology: by registry id (``via_device_id``) on cores that know the
+        key, by identifier tuple (``via_device``) on older ones. The hub is
+        registered up front in ``async_setup_entry``, so both forms resolve.
         """
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, device_slug(self._device))},
@@ -124,8 +137,13 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             or self.coordinator.gateway_version
             or "Unknown Version",
         }
-        entry = self.coordinator.config_entry
-        if entry is not None:
+        hub_registry_id = self.coordinator.gateway_device_registry_id
+        if VIA_DEVICE_ID_SUPPORTED and hub_registry_id is not None:
+            # The key is absent from this core's DeviceInfo when the check is
+            # False, so it is set through a plain dict view to keep mypy happy
+            # on every supported version.
+            cast("dict[str, Any]", info)["via_device_id"] = hub_registry_id
+        elif (entry := self.coordinator.config_entry) is not None:
             info["via_device"] = (DOMAIN, gateway_device_id(entry))
         return info
 
