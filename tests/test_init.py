@@ -6,7 +6,7 @@ import copy
 import json
 import logging
 import time
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -55,12 +55,14 @@ from custom_components.junghome.diagnostics import (
 )
 from custom_components.junghome.entity import JungHomeEntity
 from custom_components.junghome.event import JungHomeEventEntity
-from custom_components.junghome.models import function_id_for
+from custom_components.junghome.light import JungHomeLight
+from custom_components.junghome.models import NodeIdentity, function_id_for
 from tests.conftest import (
     DEVICES,
     PRISTINE_DEVICES,
     _fake_run_websocket,
     bare_coordinator,
+    find_device,
 )
 
 
@@ -143,9 +145,8 @@ async def test_device_diagnostics(hass: HomeAssistant, init_integration) -> None
     """A per-device dump narrows to one device and keeps gateway context."""
     coordinator = init_integration.runtime_data
     coordinator.gateway_version = "1.5.0"
-    dev_reg = dr.async_get(hass)
     slug = device_slug(DEVICES[0])
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, slug)})
+    device = find_device(hass, slug)
     assert device is not None
 
     diag = await async_get_device_diagnostics(hass, init_integration, device)
@@ -173,8 +174,7 @@ async def test_device_diagnostics_redacts_credentials(
     coordinator.async_set_updated_data(devices)
     await hass.async_block_till_done()
 
-    dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    device = find_device(hass, device_slug(DEVICES[0]))
     diag = await async_get_device_diagnostics(hass, init_integration, device)
 
     assert diag["device"]["token"] == "**REDACTED**"
@@ -257,7 +257,7 @@ async def test_stale_device_pruned(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
         coordinator = entry.runtime_data
-        hub = dev_reg.async_get_device(identifiers={(DOMAIN, gateway_device_id(entry))})
+        hub = find_device(hass, gateway_device_id(entry))
         assert hub is not None
         # Not pruned on the first pass — the debounce rides out a partial poll.
         assert dev_reg.async_get(stale.id) is not None
@@ -423,9 +423,8 @@ async def test_transiently_missing_device_survives_and_resets(
         await hass.async_block_till_done()
 
         coordinator = entry.runtime_data
-        dev_reg = dr.async_get(hass)
         blind_slug = device_slug(next(d for d in DEVICES if d["id"] == "idblind1"))
-        blind = dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+        blind = find_device(hass, blind_slug)
         assert blind is not None
 
         partial = [d for d in coordinator.data if d["id"] != "idblind1"]
@@ -435,14 +434,14 @@ async def test_transiently_missing_device_survives_and_resets(
         for _ in range(STALE_DEVICE_PRUNE_MISSES - 1):
             coordinator.async_set_updated_data(partial)
             await hass.async_block_till_done()
-            assert dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+            assert find_device(hass, blind_slug)
         # It reappears -> counter resets.
         coordinator.async_set_updated_data(full)
         await hass.async_block_till_done()
         # A single later miss must not prune it (the reset worked).
         coordinator.async_set_updated_data(partial)
         await hass.async_block_till_done()
-        assert dev_reg.async_get_device(identifiers={(DOMAIN, blind_slug)})
+        assert find_device(hass, blind_slug)
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -793,6 +792,35 @@ async def test_capability_change_confirmed_by_second_adoption_reloads_once(
         await hass.async_block_till_done()
         reload.assert_called_once_with(init_integration.entry_id)
         coordinator.async_set_updated_data(without_angle)
+        await hass.async_block_till_done()
+    reload.assert_called_once_with(init_integration.entry_id)
+
+
+async def test_empty_adoption_confirms_no_capability_change(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A -> B -> [] -> B does not reload: an empty list confirms nothing.
+
+    An empty poll adopts nothing to fingerprint, so it must also drop the
+    candidate awaiting confirmation — otherwise the B after it would read as
+    the second *consecutive* sighting and reload, though the two sightings
+    were not consecutive at all. The B after the empty list is a fresh first
+    sighting; only the B after THAT confirms.
+    """
+    coordinator = init_integration.runtime_data
+    without_angle = copy.deepcopy(coordinator.data)
+    blind = next(d for d in without_angle if d["id"] == "idblind1")
+    blind["datapoints"] = [dp for dp in blind["datapoints"] if dp["type"] != "angle"]
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_set_updated_data(without_angle)  # B: seen once
+        await hass.async_block_till_done()
+        coordinator.async_set_updated_data([])  # nothing to compare against
+        await hass.async_block_till_done()
+        coordinator.async_set_updated_data(without_angle)  # B: first sighting again
+        await hass.async_block_till_done()
+        reload.assert_not_called()
+        coordinator.async_set_updated_data(without_angle)  # B: now confirmed
         await hass.async_block_till_done()
     reload.assert_called_once_with(init_integration.entry_id)
 
@@ -1550,9 +1578,8 @@ async def test_device_area_assigned_from_group(hass: HomeAssistant) -> None:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        dev_reg = dr.async_get(hass)
         area_reg = ar.async_get(hass)
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry is not None
         assert device_entry.area_id is not None
         assert area_reg.async_get_area(device_entry.area_id).name == "Living Room"
@@ -1598,7 +1625,7 @@ async def test_device_area_does_not_override_user_choice(hass: HomeAssistant) ->
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    device_entry = find_device(hass, "sofa_lamp")
     # Still in Office — the group suggestion must not move a user-placed device.
     assert area_reg.async_get_area(device_entry.area_id).name == "Office"
 
@@ -1637,7 +1664,7 @@ async def test_device_area_not_reassigned_after_user_clears_it(
     await _setup_grouped_lamp(hass, entry)
 
     dev_reg = dr.async_get(hass)
-    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    device_entry = find_device(hass, "sofa_lamp")
     assert device_entry.area_id is not None  # placed on first setup
     # The device is recorded as already considered, so it is never re-placed.
     assert "sofa_lamp" in entry.data[DATA_AREA_ASSIGNED]
@@ -1649,7 +1676,7 @@ async def test_device_area_not_reassigned_after_user_clears_it(
 
     # ...and it stays cleared across a full reload.
     await _setup_grouped_lamp(hass, entry)
-    device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+    device_entry = find_device(hass, "sofa_lamp")
     assert device_entry.area_id is None
 
 
@@ -1667,9 +1694,7 @@ async def test_device_area_reuses_existing_area_by_name(hass: HomeAssistant) -> 
     entry.add_to_hass(hass)
     await _setup_grouped_lamp(hass, entry)
 
-    device_entry = dr.async_get(hass).async_get_device(
-        identifiers={(DOMAIN, "sofa_lamp")}
-    )
+    device_entry = find_device(hass, "sofa_lamp")
     assert device_entry.area_id == existing.id
     assert len(area_reg.areas) == before  # no duplicate area was created
 
@@ -1724,9 +1749,8 @@ async def test_ungrouped_device_is_left_unplaced_and_reconsidered(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        dev_reg = dr.async_get(hass)
-        grouped = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
-        ungrouped = dev_reg.async_get_device(identifiers={(DOMAIN, "hall_lamp")})
+        grouped = find_device(hass, "sofa_lamp")
+        ungrouped = find_device(hass, "hall_lamp")
         assert grouped.area_id is not None  # placed in its room
         assert ungrouped.area_id is None  # no room -> not placed
 
@@ -1770,8 +1794,7 @@ async def test_device_area_self_heals_when_groups_arrive_later(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        dev_reg = dr.async_get(hass)
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry.area_id is None  # no rooms known yet -> not placed
         assert "sofa_lamp" not in entry.data.get(DATA_AREA_ASSIGNED, [])
 
@@ -1782,7 +1805,7 @@ async def test_device_area_self_heals_when_groups_arrive_later(
         coordinator.async_set_updated_data([_grouped_lamp()])
         await hass.async_block_till_done()
 
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry.area_id is not None
         area_reg = ar.async_get(hass)
         assert area_reg.async_get_area(device_entry.area_id).name == "Living Room"
@@ -1833,14 +1856,13 @@ async def test_area_placement_runs_only_on_device_list_adoptions(
         # skips the walk, so the lamp is NOT placed yet.
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
-        dev_reg = dr.async_get(hass)
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry.area_id is None
 
         # The next adoption (a poll or a `functions` broadcast) places it.
         coordinator.async_set_updated_data([_grouped_lamp()])
         await hass.async_block_till_done()
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry.area_id is not None
 
         await hass.config_entries.async_unload(entry.entry_id)
@@ -1898,8 +1920,7 @@ async def test_runtime_added_device_is_placed_on_the_next_dispatch(
         # A push-style dispatch (no new adoption) is all it takes.
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
-        dev_reg = dr.async_get(hass)
-        device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        device_entry = find_device(hass, "sofa_lamp")
         assert device_entry is not None
         assert device_entry.area_id is not None
 
@@ -2020,11 +2041,10 @@ async def test_area_placement_skips_colliding_slugs(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        dev_reg = dr.async_get(hass)
-        shared = dev_reg.async_get_device(identifiers={(DOMAIN, "sofa_lamp")})
+        shared = find_device(hass, "sofa_lamp")
         assert shared is not None
         assert shared.area_id is None  # ambiguous room: never auto-placed
-        placed = dev_reg.async_get_device(identifiers={(DOMAIN, "desk_lamp")})
+        placed = find_device(hass, "desk_lamp")
         assert placed.area_id is not None  # unique slugs are unaffected
 
         await hass.config_entries.async_unload(entry.entry_id)
@@ -2079,7 +2099,7 @@ async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) 
     """
     coordinator = init_integration.runtime_data
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    device = find_device(hass, "gateway_1.2.3.4")
     assert device is not None
     assert device.name == "JUNG HOME Gateway"
 
@@ -2096,10 +2116,9 @@ async def test_devices_linked_to_gateway_hub(
     hass: HomeAssistant, init_integration
 ) -> None:
     """Every function device hangs off the synthetic gateway (hub) via via_device."""
-    dev_reg = dr.async_get(hass)
-    hub = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    hub = find_device(hass, "gateway_1.2.3.4")
     assert hub is not None
-    light = dev_reg.async_get_device(identifiers={(DOMAIN, "hall_light")})
+    light = find_device(hass, "hall_light")
     assert light is not None
     assert light.via_device_id == hub.id
     # setup handed the hub's registry id to the coordinator for the
@@ -2118,7 +2137,7 @@ async def test_device_info_links_the_hub_by_registry_id_when_the_core_can(
     the choice is made from what this core's ``DeviceInfo`` knows. The pinned
     test core predates the key, hence the flag is driven explicitly here.
     """
-    hub = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    hub = find_device(hass, "gateway_1.2.3.4")
     assert hub is not None
     light = hass.data[DATA_INSTANCES]["light"].get_entity("light.hall_light")
     assert isinstance(light, JungHomeEntity)
@@ -2143,6 +2162,40 @@ async def test_device_info_links_the_hub_by_registry_id_when_the_core_can(
         assert info is not None
         assert "via_device_id" not in info
         assert info.get("via_device") == (DOMAIN, "gateway_1.2.3.4")
+
+
+def test_device_info_leaves_unknown_fields_out(hass: HomeAssistant) -> None:
+    """No made-up "Unknown Model"/"Unknown Version"/"Jung Device" rows.
+
+    Unknown fields are left OUT rather than set to ``None``: a key that is
+    absent leaves the registry's existing value alone (the gateway version an
+    earlier run wrote), whereas ``None`` would clear it. The connection is
+    never part of ``device_info`` — the coordinator writes it after the row
+    exists (see ``JungHomeEntity.device_info``).
+    """
+    coordinator = bare_coordinator(hass)
+    full = _identified_devices()[0]
+    full["sw_version"] = "2.2.0"
+    info = JungHomeLight(coordinator, full, full["datapoints"][0]).device_info
+    assert info is not None
+    assert info["name"] == "Hall Light"
+    assert info["model"] == "OnOff"
+    assert info["sw_version"] == "2.2.0"
+    assert "connections" not in info
+
+    bare = {"id": "idbare", "datapoints": full["datapoints"]}
+    info = JungHomeLight(coordinator, bare, bare["datapoints"][0]).device_info  # type: ignore[arg-type]
+    assert info is not None
+    assert info["identifiers"] == {(DOMAIN, "idbare")}
+    assert info["manufacturer"] == "Jung"
+    for key in ("name", "model", "sw_version", "serial_number", "connections"):
+        assert key not in info, key
+
+    # The gateway's own version stands in for a function that reports none.
+    coordinator.gateway_version = "2.1.3 (2840)"
+    info = JungHomeLight(coordinator, bare, bare["datapoints"][0]).device_info  # type: ignore[arg-type]
+    assert info is not None
+    assert info["sw_version"] == "2.1.3 (2840)"
 
 
 async def test_notify_websocket_closed_skips_during_teardown(
@@ -2199,8 +2252,7 @@ async def test_device_diagnostics_scrubs_host_from_last_error(
     host = init_integration.data[CONF_HOST]
     coordinator.last_error = f"Cannot connect to host {host}:443"
 
-    dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    device = find_device(hass, device_slug(DEVICES[0]))
     diag = await async_get_device_diagnostics(hass, init_integration, device)
 
     assert host not in diag["last_error"]
@@ -2365,6 +2417,8 @@ async def test_user_can_delete_a_device_the_gateway_dropped(
     )
 
     assert await async_remove_config_entry_device(hass, init_integration, ghost) is True
+    # Removed here and now, the way the pruner does it (core tolerates that).
+    assert dev_reg.async_get(ghost.id) is None
 
 
 async def test_user_cannot_delete_a_live_device(
@@ -2375,8 +2429,7 @@ async def test_user_cannot_delete_a_live_device(
     The next poll would re-create it immediately, so allowing it would just look
     broken to the user.
     """
-    dev_reg = dr.async_get(hass)
-    live = dev_reg.async_get_device(identifiers={(DOMAIN, device_slug(DEVICES[0]))})
+    live = find_device(hass, device_slug(DEVICES[0]))
     assert live is not None
 
     assert await async_remove_config_entry_device(hass, init_integration, live) is False
@@ -2386,13 +2439,29 @@ async def test_the_gateway_hub_cannot_be_deleted(
     hass: HomeAssistant, init_integration
 ) -> None:
     """The synthetic hub is never in the device list but is not stale either."""
-    dev_reg = dr.async_get(hass)
-    hub = dev_reg.async_get_device(
-        identifiers={(DOMAIN, gateway_device_id(init_integration))}
-    )
+    hub = find_device(hass, gateway_device_id(init_integration))
     assert hub is not None
 
     assert await async_remove_config_entry_device(hass, init_integration, hub) is False
+
+
+async def test_user_can_delete_a_device_of_an_unloaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Without a coordinator (entry not loaded) nothing is live: core removes it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="9.9.9.9",
+        data={CONF_HOST: "9.9.9.9", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)  # never set up: no runtime_data
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "ghost_device")}
+    )
+    assert await async_remove_config_entry_device(hass, entry, device) is True
+    # Left to core here (no coordinator to relink for), unlike the loaded case.
+    assert dev_reg.async_get(device.id) is not None
 
 
 async def test_pruning_a_device_is_logged(
@@ -2470,9 +2539,7 @@ async def test_every_device_links_to_the_gateway_hub(
     topology.
     """
     dev_reg = dr.async_get(hass)
-    hub = dev_reg.async_get_device(
-        identifiers={(DOMAIN, gateway_device_id(init_integration))}
-    )
+    hub = find_device(hass, gateway_device_id(init_integration))
     assert hub is not None
     assert hub.via_device_id is None, "the hub must not be hung off anything"
 
@@ -2550,6 +2617,11 @@ DEV_KEY = "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
 HALL_LIGHT_ID = function_id_for(NODE_A, 1)
 HALL_BUTTON_ID = function_id_for(NODE_A, 0x40)
 DESK_SOCKET_ID = function_id_for(NODE_B, 1)
+# From HA 2026.9 a device connection is unique per config entry (the scoped
+# lookups arrived with that change), so a device of ours may share a Bluetooth
+# address with another integration's; before it the address is registry-wide
+# and the first holder keeps it. Feature-detected, like the integration does.
+CONNECTIONS_ARE_PER_ENTRY = hasattr(dr.DeviceRegistry, "async_get_device_by_connection")
 
 
 def _project_export() -> dict:
@@ -2642,9 +2714,7 @@ def _identified_devices() -> list[dict]:
 
 
 def _device(hass: HomeAssistant, label: str) -> dr.DeviceEntry:
-    device = dr.async_get(hass).async_get_device(
-        identifiers={(DOMAIN, device_slug({"label": label}))}
-    )
+    device = find_device(hass, device_slug({"label": label}))
     assert device is not None, label
     return device
 
@@ -2684,11 +2754,13 @@ async def test_node_identity_reaches_the_device_registry(hass: HomeAssistant) ->
     """Serial number on every function of a node; the connection on one.
 
     The export is read after the first refresh and before the platforms build
-    their ``device_info``, so the rows are right from the first registration.
-    A node backs several functions — here a load and a rocker on one radio —
-    and Home Assistant resolves devices by connection, so the Bluetooth
-    address may be a *connection* on exactly one of them (the primary
-    element's function) or the registry would merge them into one device.
+    their ``device_info``, so the serial is right from the first registration
+    and the connection lands the moment each device's row exists
+    (``link_node_identity`` from ``async_added_to_hass``). A node backs
+    several functions — here a load and a rocker on one radio — and Home
+    Assistant resolves devices by connection, so the Bluetooth address may be
+    a *connection* on exactly one of them (the primary element's function) or
+    the registry would merge them into one device.
     """
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
@@ -2973,36 +3045,70 @@ async def test_stop_cancels_an_in_flight_refetch(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
+def _foreign_holder_of(hass: HomeAssistant, mac: str) -> dr.DeviceEntry:
+    """Register another integration's device page for the radio at ``mac``.
+
+    What the Bluetooth-direct sibling integration does for the same node.
+    """
+    foreign_entry = MockConfigEntry(domain="other")
+    foreign_entry.add_to_hass(hass)
+    return dr.async_get(hass).async_get_or_create(
+        config_entry_id=foreign_entry.entry_id,
+        connections={(dr.CONNECTION_BLUETOOTH, mac)},
+        name="Push-button 00CF",
+        manufacturer="Other",
+        model="BLE thing",
+    )
+
+
+def _assert_not_merged_into(
+    hass: HomeAssistant, light: dr.DeviceEntry, foreign: dr.DeviceEntry
+) -> None:
+    """Our device and the foreign one stay two devices; the foreign one untouched.
+
+    Whether our device ALSO carries the address depends on the core: from HA
+    2026.9 a connection is unique per config entry, so both may hold it;
+    before that it is unique registry-wide and the first holder keeps it.
+    """
+    assert light.id != foreign.id, "our function was merged into the foreign device"
+    assert light.identifiers == {(DOMAIN, "hall_light")}
+    assert light.serial_number == MAC_A
+    foreign_now = dr.async_get(hass).async_get(foreign.id)
+    assert foreign_now is not None
+    assert (foreign_now.name, foreign_now.manufacturer, foreign_now.model) == (
+        "Push-button 00CF",
+        "Other",
+        "BLE thing",
+    )
+    assert foreign_now.identifiers == set()
+    assert foreign_now.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    expected = (
+        {(dr.CONNECTION_BLUETOOTH, MAC_A)} if CONNECTIONS_ARE_PER_ENTRY else set()
+    )
+    assert light.connections == expected
+
+
 async def test_apply_identities_leaves_a_connection_held_elsewhere(
     hass: HomeAssistant,
 ) -> None:
     """Another integration's device page for the same radio keeps the address.
 
-    ``async_update_device`` raises on a connection collision, so the back-fill
-    checks first; the serial number is still written, the link is skipped.
+    The identities arrive AFTER our device was registered (an export re-read),
+    so this is the back-fill path. Before HA 2026.9 ``async_update_device``
+    raises on the registry-wide collision — caught, the link skipped, the
+    serial number still written; from 2026.9 the per-entry link succeeds.
+    Either way the two devices are never merged.
     """
     entry = await _setup_with_export(hass, export=None)
     coordinator = entry.runtime_data
-    foreign_entry = MockConfigEntry(domain="other")
-    foreign_entry.add_to_hass(hass)
-    foreign = dr.async_get(hass).async_get_or_create(
-        config_entry_id=foreign_entry.entry_id,
-        connections={(dr.CONNECTION_BLUETOOTH, MAC_A)},
-        name="Push-button 00CF",
-    )
+    foreign = _foreign_holder_of(hass, MAC_A)
     with patch.object(
         coordinator,
         "_fetch_project_export_from_api",
         AsyncMock(return_value=_project_export()),
     ):
         await coordinator.async_fetch_node_identities()
-    light = _device(hass, "Hall Light")
-    assert light.serial_number == MAC_A
-    assert light.connections == set()
-    assert light.id != foreign.id
-    assert dr.async_get(hass).async_get(foreign.id).connections == {
-        (dr.CONNECTION_BLUETOOTH, MAC_A)
-    }
+    _assert_not_merged_into(hass, _device(hass, "Hall Light"), foreign)
     # The socket's address is unclaimed, so it is linked as usual.
     assert _device(hass, "Desk Socket").connections == {
         (dr.CONNECTION_BLUETOOTH, MAC_B)
@@ -3011,20 +3117,227 @@ async def test_apply_identities_leaves_a_connection_held_elsewhere(
     await hass.async_block_till_done()
 
 
-async def test_apply_identities_skips_colliding_slugs(hass: HomeAssistant) -> None:
-    """Two functions on one registry device cannot take turns writing serials."""
-    devices = _identified_devices()
-    devices[3]["label"] = "Hall-Light"  # slugs to hall_light, like "Hall Light"
-    entry = await _setup_with_export(hass, export=None, devices=devices)
-    coordinator = entry.runtime_data
-    assert "hall_light" in duplicate_slugs(coordinator.data)
+async def test_fresh_function_is_not_merged_into_a_foreign_holder(
+    hass: HomeAssistant,
+) -> None:
+    """A foreign device already holding the address does not absorb our function.
+
+    The identities are known BEFORE the platforms register the device (the
+    setup-time export read), so this is the ``device_info`` path — where the
+    connection used to be, and where ``async_get_or_create`` resolved our new
+    slug to the foreign device by connection on cores before 2026.9 and
+    merged: a junghome light living on the sibling integration's device page,
+    with its name, manufacturer and model.
+    """
+    foreign = _foreign_holder_of(hass, MAC_A)
+    entry = await _setup_with_export(hass, _project_export())
+    _assert_not_merged_into(hass, _device(hass, "Hall Light"), foreign)
+    assert hass.states.get("light.hall_light") is not None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def _poll(
+    hass: HomeAssistant,
+    coordinator: JungHomeDataUpdateCoordinator,
+    devices: list[dict],
+    times: int = 1,
+) -> None:
+    """Poll ``devices`` from the gateway ``times`` times, off the network.
+
+    Patched for the whole loop rather than adopted directly: a device that
+    appears in a poll is added with ``update_before_add``, which requests a
+    refresh of its own — that refresh must read the same list.
+    """
     with patch.object(
         coordinator,
-        "_fetch_project_export_from_api",
-        AsyncMock(return_value=_project_export()),
+        "_fetch_devices_from_api",
+        AsyncMock(return_value=copy.deepcopy(devices)),
     ):
-        await coordinator.async_fetch_node_identities()
-    assert _device(hass, "Hall Light").serial_number is None
+        for _ in range(times):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+
+
+def _relabelled(devices: list[dict], function_id: str, label: str) -> list[dict]:
+    """The same device list with one function relabelled in the app."""
+    devices = copy.deepcopy(devices)
+    next(d for d in devices if d["id"] == function_id)["label"] = label
+    return devices
+
+
+async def test_relabelling_a_primary_function_replaces_its_device(
+    hass: HomeAssistant,
+) -> None:
+    """A relabel yields a new device; the old one is pruned, entities and all.
+
+    The documented contract (``async_remove_config_entry_device``, the
+    options flow's orphan note): identity is label-derived, so a relabel is a
+    new device, and the old one goes after ``STALE_DEVICE_PRUNE_MISSES``
+    adoptions. The b8 regression: the primary function's ``device_info``
+    carried the node's Bluetooth connection, so ``async_get_or_create`` for
+    the new slug resolved to the OLD device by connection and merged — one
+    device with both identifiers, the old entity registered and live
+    forever, and a pruner that never fires because one of the device's slugs
+    is always current. Now the connection moves to the successor on the pass
+    that prunes the old device.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Light")
+    assert old.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+
+    await _poll(hass, coordinator, relabelled)
+    new = _device(hass, "Hall Lamp")
+    # A fresh device — not the old one under a second identifier — and the
+    # address stays with its live holder until that holder is gone.
+    assert new.id != old.id
+    assert new.identifiers == {(DOMAIN, "hall_lamp")}
+    assert new.serial_number == MAC_A
+    assert new.connections == set()
+    assert dr.async_get(hass).async_get(old.id) is not None
+
+    await _poll(hass, coordinator, relabelled, times=STALE_DEVICE_PRUNE_MISSES + 1)
+
+    dev_reg = dr.async_get(hass)
+    assert dev_reg.async_get(old.id) is None, "the old device was not pruned"
+    assert find_device(hass, "hall_light") is None
+    survivor = _device(hass, "Hall Lamp")
+    assert survivor.id == new.id
+    assert survivor.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    assert survivor.serial_number == MAC_A
+    ent_reg = er.async_get(hass)
+    hall_lights = [
+        e.entity_id
+        for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+        if e.domain == Platform.LIGHT and e.unique_id.startswith("hall_l")
+    ]
+    assert hall_lights == ["light.hall_lamp"]
+    assert hass.states.get("light.hall_light") is None
+    assert hass.states.get("light.hall_lamp").state == "on"
+    # The node's other function is untouched by its sibling's relabel.
+    button = _device(hass, "Hall Button")
+    assert button.serial_number == MAC_A
+    assert button.connections == set()
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_relabelling_a_non_primary_function_is_unchanged(
+    hass: HomeAssistant,
+) -> None:
+    """A non-primary function's relabel never involved a connection: same outcome."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Button")
+    relabelled = _relabelled(_identified_devices(), HALL_BUTTON_ID, "Hallway Button")
+    await _poll(hass, coordinator, relabelled, times=STALE_DEVICE_PRUNE_MISSES + 2)
+    assert dr.async_get(hass).async_get(old.id) is None
+    new = _device(hass, "Hallway Button")
+    assert new.serial_number == MAC_A
+    assert new.connections == set()
+    ent_reg = er.async_get(hass)
+    assert (
+        ent_reg.async_get_entity_id(Platform.SWITCH, DOMAIN, "hall_button_00e_switch")
+        is None
+    )
+    assert ent_reg.async_get_entity_id(
+        Platform.SWITCH, DOMAIN, "hallway_button_00e_switch"
+    )
+    # The primary function keeps the node's connection throughout.
+    assert _device(hass, "Hall Light").connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_manual_delete_of_the_old_device_hands_over_the_connection(
+    hass: HomeAssistant,
+) -> None:
+    """Deleting the stale device from the UI relinks the successor at once.
+
+    The user need not wait out the pruner: ``async_remove_config_entry_device``
+    removes the device itself and runs the same back-fill the pruner does.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Light")
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _poll(hass, coordinator, relabelled)
+    assert _device(hass, "Hall Lamp").connections == set()
+
+    assert await async_remove_config_entry_device(hass, entry, old) is True
+    assert dr.async_get(hass).async_get(old.id) is None
+    assert _device(hass, "Hall Lamp").connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_pruned_device_reported_again_is_restored_with_its_connection(
+    hass: HomeAssistant,
+) -> None:
+    """The registry's identifier-based restore still applies; the link follows.
+
+    A device absent past the prune threshold and then reported again under the
+    SAME label matches its deleted registry row by identifier, so the user's
+    area and custom name come back with the same device id — and, because the
+    connection is written on entity add rather than restored from the deleted
+    row, the successor's link is established the moment the row is back.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    dev_reg = dr.async_get(hass)
+    light = _device(hass, "Hall Light")
+    area = ar.async_get(hass).async_get_or_create("Hallway")
+    dev_reg.async_update_device(light.id, area_id=area.id, name_by_user="Ceiling")
+    full = _identified_devices()
+    without_light = [d for d in full if d["id"] != HALL_LIGHT_ID]
+    await _poll(hass, coordinator, without_light, times=STALE_DEVICE_PRUNE_MISSES)
+    assert dev_reg.async_get(light.id) is None
+
+    await _poll(hass, coordinator, full)
+    restored = _device(hass, "Hall Light")
+    assert restored.id == light.id
+    assert restored.area_id == area.id
+    assert restored.name_by_user == "Ceiling"
+    assert restored.serial_number == MAC_A
+    assert restored.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    assert hass.states.get("light.hall_light").state == "on"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("identities_at_setup", [False, True])
+async def test_apply_identities_skips_colliding_slugs(
+    hass: HomeAssistant, identities_at_setup: bool
+) -> None:
+    """Two functions on one registry device cannot take turns writing serials.
+
+    Both coordinator write paths skip the colliding slug: the back-fill after
+    a later export read, and the entity-add link when the identities were
+    known at registration. In the latter case ``device_info`` still carries
+    the registering function's serial number — informational, written once
+    by whichever function won the slug — but the connection is never linked.
+    """
+    devices = _identified_devices()
+    devices[3]["label"] = "Hall-Light"  # slugs to hall_light, like "Hall Light"
+    entry = await _setup_with_export(
+        hass,
+        export=_project_export() if identities_at_setup else None,
+        devices=devices,
+    )
+    coordinator = entry.runtime_data
+    assert "hall_light" in duplicate_slugs(coordinator.data)
+    if not identities_at_setup:
+        with patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=_project_export()),
+        ):
+            await coordinator.async_fetch_node_identities()
+    shared = _device(hass, "Hall Light")
+    assert shared.serial_number == (MAC_A if identities_at_setup else None)
+    assert shared.connections == set()
     assert _device(hass, "Hall Button").serial_number == MAC_A
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -3041,5 +3354,50 @@ def test_node_identity_for_ignores_malformed_ids(hass: HomeAssistant) -> None:
 def test_apply_identities_is_a_no_op_without_identities(hass: HomeAssistant) -> None:
     coordinator = bare_coordinator(hass)
     with patch.object(dr, "async_get") as registry:
-        coordinator._apply_node_identities()
+        coordinator.apply_node_identities()
+        coordinator.link_node_identity("some-device", {"id": "idorphan"})  # type: ignore[typeddict-item]
+        coordinator.config_entry = None
+        coordinator.link_node_identity("some-device", {"id": HALL_LIGHT_ID})  # type: ignore[typeddict-item]
     registry.assert_not_called()
+
+
+async def test_identity_without_an_address_writes_nothing(hass: HomeAssistant) -> None:
+    """A node whose address is unknown (non-EUI-64 UUID, no meta) links nothing.
+
+    Both write paths, plus the link for a registry row that does not exist —
+    an entity whose device vanished between registration and its add.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    orphan_device = next(d for d in coordinator.data if d["id"] == "idorphan")
+    coordinator.node_identities = MappingProxyType(
+        {
+            **coordinator.node_identities,
+            "idorphan": NodeIdentity(
+                uuid="not-an-eui-64-uuid", location=1, primary=True
+            ),
+        }
+    )
+    coordinator.apply_node_identities()
+    orphan = _device(hass, "Orphan")
+    coordinator.link_node_identity(orphan.id, orphan_device)
+    coordinator.link_node_identity("no-such-device", orphan_device)
+    orphan = _device(hass, "Orphan")
+    assert orphan.serial_number is None
+    assert orphan.connections == set()
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_entity_without_a_device_row_links_nothing(hass: HomeAssistant) -> None:
+    """``async_added_to_hass`` only links when the platform gave the entity a device."""
+    coordinator = bare_coordinator(hass)
+    device = _identified_devices()[0]
+    light = JungHomeLight(coordinator, device, device["datapoints"][0])
+    light.hass = hass
+    assert light.device_entry is None
+    with patch.object(coordinator, "link_node_identity") as link:
+        await light.async_added_to_hass()
+    link.assert_not_called()
+    # Adding a listener armed the poll timer (landmine 2 in CLAUDE.md).
+    await coordinator.async_shutdown()

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.junghome.const import (
@@ -21,7 +20,7 @@ from custom_components.junghome.const import (
 )
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.diagnostics import async_get_device_diagnostics
-from tests.conftest import _fake_run_websocket
+from tests.conftest import _fake_run_websocket, find_device
 
 HOST = "192.168.1.50"
 HOSTNAME = "junghome-0022d1059602.local"
@@ -82,9 +81,7 @@ async def test_hub_device_diagnostics_do_not_leak_the_anchor(
         await hass.async_block_till_done()
     entry.runtime_data.last_error = last_error
 
-    hub = dr.async_get(hass).async_get_device(
-        identifiers={(DOMAIN, gateway_device_id(entry))}
-    )
+    hub = find_device(hass, gateway_device_id(entry))
     assert hub is not None
     diag = await async_get_device_diagnostics(hass, entry, hub)
 
