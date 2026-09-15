@@ -185,7 +185,8 @@ instead of re-deriving:
   freeze supported features at construction from the datapoints present
   (tilt ← `angle`, brightness/CT ← `brightness`/`color_temperature`), and
   discovery is add-only. `_register_capability_reload` reloads the entry when
-  a device's datapoint-type set changes so features are rebuilt (the
+  a device's datapoint-type set changes — once the new set has been seen on
+  two consecutive adoptions — so features are rebuilt (the
   tilt-lost-after-update regression). Gate capabilities on datapoint
   *presence*, never on the function-type name.
 - **Push handling must not starve the poll.** The per-datapoint push path
@@ -211,8 +212,9 @@ instead of re-deriving:
   malformed frame.
 - **Availability**: entities key off `last_update_success` and never OR in
   `ws_connected` (a stale-True socket flag froze energy readings — issue
-  #120); controllable entities additionally require the live WS because
-  commands only travel over it.
+  #120); entities whose function needs the socket — controllables and
+  button events — additionally require the live WS because commands only go
+  out over it and button edges only arrive over it.
 - **Entities skip state writes for other devices' pushes — but only while
   already shown available.** A per-datapoint push dispatch used to write
   every entity of the entry; `JungHomeEntity._skip_foreign_device_push`
@@ -260,7 +262,7 @@ instead of re-deriving:
   pytest-homeassistant-custom-component stack moves as one group and is
   version-capped); Dependabot deliberately does not watch pip.
 - Tests: one file per platform plus flow/coordinator/init/blueprint/
-  translations/device-trigger files; new platform behaviour goes in that
+  translations/device-trigger/diagnostics files; new platform behaviour goes in that
   platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
   The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
@@ -386,7 +388,10 @@ interleavings that could violate it and check the *code*, not the comment.
 identifier from a volatile gateway id, and none derived from
 `entry.unique_id` (only `entry_anchor`). Every map keyed by device slug is
 guarded with `duplicate_slugs`. Availability: `last_update_success` only;
-`ws_connected` may gate controllable entities, never grant availability.
+`ws_connected` may gate socket-dependent entities (controllables, button
+events), never grant availability. A flow-side "did the listener reload?"
+check reads `entry.state` BEFORE `async_update_entry` (listeners dispatch
+eagerly — the zeroconf bullet seen from the other side).
 Optimistic entity writes happen only after the awaited command returns.
 Quantified claims in comments ("10 consecutive polls", "5 s", "60 s") must
 match what the code actually measures — same quantity, same unit, same
@@ -411,6 +416,14 @@ or "clean — nothing above P3 survived verification."
 
 ## Backlog (open, in rough value order)
 
+- **Audit tracker** — `docs/cross-repo-analysis.md` (2026-09-15) holds the
+  open bugs (wave 1 landed on `audit-2026-09-15`, incl. the P1 reauth reload),
+  improvements
+  and doc corrections from the cross-repo audit, plus the now-established
+  mechanism of the double-reporting rockers (gateway synthesises the
+  release; device fw 2.2.0.2 double-publishes; key elements alternate
+  sides). Prefer it over re-deriving those facts; the two bullets below
+  are superseded where they conflict with it.
 - **Cover travel states** — half-unblocked by firmware evidence: every
   composed `level` datapoint always carries a `level_move` value (−1/1/0)
   derived from current-vs-target (`PositionState.fromMeshMessage` computes

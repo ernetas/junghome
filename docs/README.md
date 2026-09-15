@@ -16,6 +16,10 @@ live local API. None of this is required to *use* the integration.
   Mesh **without the gateway**: the function→model map, send/receive protocol,
   the JUNG vendor model, hardware options, and what keys you need. Prototypes in
   [`../tools/bt-mesh-direct/`](../tools/bt-mesh-direct/).
+- **[cross-repo-analysis.md](cross-repo-analysis.md)** — 2026-09-15 audit
+  against the Bluetooth-direct sibling project and the firmware dump: the
+  established mechanism of the double-reporting rockers, other settled
+  gateway facts, and the open bug / improvement / doc-correction tracker.
 - **[matter-bridge.md](matter-bridge.md)** — getting JUNG devices into Matter
   (the gateway's built-in Matter is inactive; bridge from Home Assistant
   instead).

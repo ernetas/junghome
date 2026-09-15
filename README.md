@@ -219,19 +219,20 @@ again. The alternative is the **network-key password** option, which connects
 immediately with no approval step.
 
 **"Live updates have stopped" repair notice.**
-The WebSocket that carries live push has been down for several consecutive
-reconnect attempts. The integration keeps working on the REST poll (60 seconds
+The WebSocket that carries live push has been down for more than three
+minutes (a normal gateway reboot or firmware update is shorter and never
+triggers this). The integration keeps working on the REST poll (60 seconds
 by default — see [Options](#options)), so states stay correct but stop being
-instant, and controllable entities read unavailable because commands only
-travel over the WebSocket. It clears itself once the connection is genuinely
+instant, and controllable and button-event entities read unavailable because
+commands and button presses only travel over the WebSocket. It clears itself once the connection is genuinely
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
 **Entities are unavailable but the gateway is up.**
 Controllable entities (lights, sockets, covers, thermostats, status LEDs)
-require the live WebSocket, since that is the only path commands take.
-Read-only entities (sensors, binary sensors, events) stay available on the
-REST poll alone. So "sensors fine, lights unavailable" points at the WebSocket
+and button event entities require the live WebSocket: commands only go out
+over it and button presses only arrive over it. Sensors and binary sensors
+stay available on the REST poll alone. So "sensors fine, lights unavailable" points at the WebSocket
 specifically — see the repair notice above.
 
 **Home Assistant asks you to re-authenticate.**

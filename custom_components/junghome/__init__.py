@@ -745,8 +745,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
     The token arm is what completes the reauth flow: that flow stores the fresh
     token with ``async_update_and_abort`` and deliberately does NOT schedule its
-    own reload, because pairing a reloading flow helper with an update listener
-    is deprecated in HA 2026.6 and raises from 2026.12. Without this arm the new
+    own reload for a loaded entry (it does for one that never loaded — see
+    ``async_step_reauth_finish``), because pairing a reloading flow helper with
+    an update listener is deprecated in HA 2026.6 and raises from 2026.12. Without this arm the new
     token would sit in ``entry.data`` while the coordinator kept using the
     rejected one it cached at construction — an endless reauth loop.
     """
