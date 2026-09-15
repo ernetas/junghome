@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 
-from .const import DOMAIN, device_slug
+from .const import DOMAIN, device_slug, gateway_device_id
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -78,10 +78,18 @@ _HANDLED_DATAPOINT_TYPES = {
 
 
 def _secrets(entry: JungHomeConfigEntry) -> list[str]:
-    """Return the entry's secrets, longest first so the token wins any overlap."""
-    values = [str(entry.data.get(key) or "") for key in (CONF_TOKEN, CONF_HOST)]
+    """Return the entry's secrets, longest first so the token wins any overlap.
+
+    The values behind every ``TO_REDACT`` key, so the literal sweep and the
+    keyed redaction agree on what a report must not contain: the serial and
+    the frozen identity anchor (host, mDNS hostname or serial) used to be
+    masked in ``entry.data`` only, and survived inside free-form text.
+    Deterministic order (length, then value) so equal-length secrets are
+    swept the same way on every run.
+    """
+    values = {str(entry.data.get(key) or "") for key in TO_REDACT}
     return sorted(
-        (v for v in values if len(v) >= _MIN_SCRUBBABLE), key=len, reverse=True
+        (v for v in values if len(v) >= _MIN_SCRUBBABLE), key=lambda v: (-len(v), v)
     )
 
 
@@ -205,12 +213,22 @@ async def async_get_device_diagnostics(
         (d for d in coordinator.data or [] if device_slug(d) in slugs),
         None,
     )
+    # The hub's identifier is `gateway_<anchor>`, and the anchor is the host,
+    # the mDNS hostname or the serial — exactly what TO_REDACT keeps out of the
+    # entry dump. Masked by identity rather than by the literal sweep because a
+    # legacy entry's anchor is its `unique_id`, which `entry.data` (all the
+    # sweep sees) does not carry. Device slugs are label-derived and stay: the
+    # label is the one thing that makes a report useful.
+    hub_id = gateway_device_id(entry)
+    identifiers = [
+        "gateway_**REDACTED**" if slug == hub_id else slug for slug in sorted(slugs)
+    ]
     return {
         "gateway_version": coordinator.gateway_version,
         "ws_connected": coordinator.ws_connected,
         "last_error": _scrub(coordinator.last_error, secrets),
         "last_error_at": coordinator.last_error_at,
-        "identifiers": sorted(slugs),
+        "identifiers": identifiers,
         # Redacted with the same rule as the entry dump: a per-device report is
         # pasted into public issues just as often as a full one.
         "device": async_redact_data(matched, TO_REDACT) if matched else None,
