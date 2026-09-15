@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import random
+import time
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timedelta
@@ -30,6 +31,7 @@ from .const import (
     EVENT_SCENE_RECALLED,
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
+    WEBSOCKET_OUTAGE_REPAIR_AFTER,
     device_slug,
     duplicate_slugs,
     scene_unique_id,
@@ -44,18 +46,21 @@ MAX_RECONNECT_DELAY = 60
 # Small random addition to each reconnect wait, so multiple gateways/entries on
 # the same network don't all retry in lockstep after a shared network blip.
 RECONNECT_JITTER = 0.5
-# Consecutive failed reconnects before raising a repair issue, following the core
-# convention of bounding push failures. Below this the backoff has waited well
-# under a minute in total, which an ordinary blip (gateway reboot, Wi-Fi hiccup)
-# rides out silently; past it the gateway has been unreachable long enough that
-# the user is unknowingly running on the REST poll alone and deserves to be told.
-MAX_RECONNECT_FAILURES = 5
+# The repair issue for a dead push channel is raised on the first failed
+# reconnect once the outage has lasted WEBSOCKET_OUTAGE_REPAIR_AFTER (const.py,
+# with the rationale for the value): elapsed time since the outage began, not
+# a count of attempts — a count reached five in ~15-20 s of backoff, inside
+# every ordinary gateway reboot. Below the threshold the blip rides out
+# silently; past it the gateway has been unreachable long enough that the user
+# is unknowingly running on the REST poll alone and deserves to be told.
+#
 # How long a session must stay up before it counts as a genuine recovery rather
 # than a flap. Resetting the backoff at the moment of connect made the escalation
 # unreachable: a gateway that accepts the upgrade and drops us immediately (a
 # reboot loop, a websocket server restart cycle, a client limit) would reconnect
 # roughly once a second forever, never raising the repair issue and flapping every
-# controllable entity. A session shorter than this is treated as a failed attempt.
+# controllable entity. A session shorter than this is treated as a failed attempt
+# and does not end the outage, so its clock keeps running through the flap.
 STABLE_SESSION_SECONDS = 30
 # Bound for the WebSocket handshake. Home Assistant's shared session carries
 # aiohttp's default ClientTimeout(total=300, sock_connect=30), so a gateway that
@@ -82,7 +87,9 @@ WS_SEND_TIMEOUT = 10
 # so every reply that will ever arrive does so within ~3.5 s. A rejected set
 # produces only an uncorrelated `error:` message frame (no message_id to match
 # against — see `_dispatch_text_frame`), so a rejection surfaces here as a
-# timeout rather than the gateway's specific error text.
+# timeout rather than the gateway's specific error text. (Were the firmware
+# ever to echo the message_id on that frame, `_reject_pending_reply` fails
+# the command at once instead.)
 COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
@@ -330,8 +337,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._closing = False
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         # Consecutive failed reconnects; reset once a session proves stable (see
-        # ``_mark_session_stable``), not merely on a successful handshake.
+        # ``_mark_session_stable``), not merely on a successful handshake. Shown
+        # in the repair issue; the escalation itself is driven by the clock below.
         self._reconnect_failures = 0
+        # ``time.monotonic()`` of the first failed reconnect of the current
+        # outage, or None while no outage is in progress. Started by
+        # ``_note_reconnect_failure`` and ended by ``_mark_session_stable`` only
+        # — a flapping session leaves it running, so a reboot loop escalates
+        # exactly like a dead gateway. Monotonic rather than wall-clock so an
+        # NTP step during the outage cannot lengthen or shorten it.
+        self._outage_started_at: float | None = None
         # Whether the current outage has already produced its one WARNING, so the
         # retry loop degrades to DEBUG instead of warning once a minute forever.
         self._unavailable_logged = False
@@ -928,18 +943,27 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         _LOGGER.warning("Jung Home WebSocket disconnected: %s", err)
 
     def _note_reconnect_failure(self) -> None:
-        """Count a failed reconnect and, past the threshold, tell the user.
+        """Count a failed reconnect and, once the outage has lasted, tell the user.
 
         A dropped WebSocket degrades the integration to the REST poll: state
-        still updates, so nothing looks broken, it just stops being live. Below
-        ``MAX_RECONNECT_FAILURES`` that is an ordinary blip the backoff rides out
-        silently. Past it, raise a repair issue so the degradation is visible
-        rather than buried in a log warning. It is deliberately not fixable from
-        the UI — only the gateway or the network coming back fixes it, and
-        ``_run_websocket`` deletes the issue on the next successful connect.
+        still updates, so nothing looks broken, it just stops being live. For
+        the first ``WEBSOCKET_OUTAGE_REPAIR_AFTER`` seconds of an outage that is
+        an ordinary blip (a gateway reboot, a Wi-Fi hiccup) the backoff rides
+        out silently. Past that, raise a repair issue so the degradation is
+        visible rather than buried in a log warning. It is deliberately not
+        fixable from the UI — only the gateway or the network coming back fixes
+        it, and ``_mark_session_stable`` deletes the issue once a session holds.
+
+        The clock starts at the first failure of the outage and is only ever
+        stopped by ``_mark_session_stable``: an attempt count was the wrong
+        measure because the backoff makes attempts cheap early on (five inside
+        ~20 s), so the count said "sustained outage" about every reboot.
         """
         self._reconnect_failures += 1
-        if self._reconnect_failures < MAX_RECONNECT_FAILURES:
+        now = time.monotonic()
+        if self._outage_started_at is None:
+            self._outage_started_at = now
+        if now - self._outage_started_at < WEBSOCKET_OUTAGE_REPAIR_AFTER:
             return
         # Re-created on every further failure so the attempt count stays current
         # (and so a manually deleted issue comes back while the outage lasts).
@@ -990,6 +1014,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if future is not None and not future.done():
             future.set_result(reply_data if isinstance(reply_data, dict) else {})
 
+    def _reject_pending_reply(self, message_id: str) -> None:
+        """Fail the command awaiting `message_id`: the gateway rejected it.
+
+        Same no-op rules as ``_resolve_pending_reply``. The caller sees the same
+        shape of error as any other failed set (a translated
+        ``HomeAssistantError``); the gateway's own reason is only in the
+        WARNING the caller of this method logs, because ``invalid_response`` —
+        the nearest existing exception key — carries no placeholder for it.
+        """
+        future = self._pending_replies.get(message_id)
+        if future is not None and not future.done():
+            future.set_exception(
+                HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="invalid_response"
+                )
+            )
+
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
 
@@ -1023,33 +1064,44 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if not isinstance(data, dict):
                 _LOGGER.error("Received non-object WebSocket message: %s", data)
                 return
+            # Only a reply to one of OUR OWN datapoint sets/gets carries
+            # message_id back (websocket-server-service.js never assigns it to
+            # a broadcast), so a correlated frame can only ever concern
+            # something `_send_datapoint_command` is awaiting. What it means
+            # depends on the frame type, so the future is settled inside the
+            # type switch below — never before it: a correlated frame is not a
+            # confirmation just because it echoes the id.
             message_id = data.get("message_id")
-            if isinstance(message_id, str) and message_id:
-                # Only a reply to one of OUR OWN datapoint sets/gets carries
-                # message_id back (websocket-server-service.js never assigns it
-                # to a broadcast), so this can only ever match something
-                # `_send_datapoint_command` is awaiting. Resolving it here does
-                # not short-circuit the frame: it still falls through to the
-                # normal dispatch below, which merges `data.get("data")` into
-                # `self.data` exactly like a push would — the confirmed value
-                # replaces the optimistic one HA already wrote.
-                self._resolve_pending_reply(message_id, data.get("data"))
-            if data.get("type") == "version":
+            if not isinstance(message_id, str) or not message_id:
+                message_id = None
+            if frame_type == "version":
                 # `api-junghome`'s package version (the API contract), not the
                 # gateway's software version — see `api_version` in __init__.
                 self.api_version = data.get("data")
                 _LOGGER.debug("Jung Home gateway API version: %s", self.api_version)
                 return
-            if data.get("type") == "message":
+            if frame_type == "message":
                 text = data.get("data")
                 if isinstance(text, str) and text.startswith("error:"):
                     # The gateway reports a rejected command (e.g. a bad set) as
-                    # an `error:` message frame. There is no message_id
-                    # correlation, but surfacing it at WARNING beats dropping it.
+                    # an `error:` message frame. Current firmware sends it
+                    # without a message_id, so the WARNING is the only place
+                    # the gateway's own reason ever surfaces; should a frame
+                    # carry one, the awaiting command is failed with it right
+                    # away instead of sitting out COMMAND_REPLY_TIMEOUT.
+                    if message_id is not None:
+                        self._reject_pending_reply(message_id)
                     _LOGGER.warning("Jung Home gateway reported an error: %s", text)
                 else:
                     _LOGGER.debug("Received message frame: %s", data)
                 return
+            if frame_type == "datapoint" and message_id is not None:
+                # The confirmation of a set: the re-read datapoint. Resolving it
+                # here does not short-circuit the frame: it still falls through
+                # to the normal dispatch below, which merges `data.get("data")`
+                # into `self.data` exactly like a push would — the confirmed
+                # value replaces the optimistic one HA already wrote.
+                self._resolve_pending_reply(message_id, data.get("data"))
             self._handle_websocket_message(data)
         except Exception as e:
             _LOGGER.error("Unexpected error handling WebSocket message: %s", e)
@@ -1072,12 +1124,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # drop/recover story is visible without enabling debug logging
             # during a long soak.
             #
-            # The backoff and the failure counter are deliberately NOT reset
-            # here. A successful upgrade proves nothing yet — a gateway stuck in
-            # a reboot loop accepts the handshake and drops us straight away, and
-            # resetting on connect made that flap immortal: the delay went back
-            # to 1 s before the doubling could ever apply, and the counter never
-            # reached MAX_RECONNECT_FAILURES so the repair issue never appeared.
+            # The backoff, the failure counter and the outage clock are
+            # deliberately NOT reset here. A successful upgrade proves nothing
+            # yet — a gateway stuck in a reboot loop accepts the handshake and
+            # drops us straight away, and resetting on connect made that flap
+            # immortal: the delay went back to 1 s before the doubling could
+            # ever apply, and the escalation towards the repair issue restarted
+            # from zero on every connect, so the issue never appeared.
             # `_mark_session_stable` below does the reset once the session has
             # actually lasted STABLE_SESSION_SECONDS.
             _LOGGER.info("Jung Home WebSocket connected")
@@ -1117,12 +1170,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
         Fires ``STABLE_SESSION_SECONDS`` after a successful connect, and is
         cancelled if the session dies first — so a flapping gateway keeps
-        escalating its backoff and keeps accumulating failures towards the repair
-        issue, while a gateway that is actually back clears both (and the issue,
-        a no-op when it was never raised).
+        escalating its backoff and its outage clock keeps running towards the
+        repair issue, while a gateway that is actually back ends the outage and
+        clears both (and the issue, a no-op when it was never raised).
         """
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
         self._reconnect_failures = 0
+        self._outage_started_at = None
         # A gateway software update reboots the gateway, so a session that has
         # just proven stable is exactly when the version may have changed. Done
         # here rather than on connect so a flapping socket cannot turn it into a
@@ -1189,7 +1243,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # spurious "no matching datapoint" warning.
                 self._handle_scene_recall(data)
                 return
-            self._handle_datapoint_push(message, data)
+            if msg_type == "datapoint":
+                self._handle_datapoint_push(message, data)
+                return
+            # Any other object-carrying frame (`config` is the only one the
+            # server defines, and current firmware never emits it) is not a
+            # datapoint: treating it as one logged a spurious ERROR about a
+            # missing datapoint_id for a frame that was never malformed.
+            _LOGGER.debug("Received %s frame (ignored): %s", msg_type, message)
         elif isinstance(data, list):
             if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
                 self._handle_scenes_broadcast(msg_type, data)

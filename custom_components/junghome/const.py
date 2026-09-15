@@ -80,6 +80,25 @@ DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 30
 MAX_POLL_INTERVAL_SECONDS = 3600
 
+# How long the WebSocket must have been continuously down, in seconds, before
+# the coordinator raises the `websocket_push_failure` repair issue. Measured
+# from the first failed (re)connect of the current outage; a session that
+# stays up for STABLE_SESSION_SECONDS (coordinator.py) ends the outage.
+#
+# Elapsed time, not an attempt count: the reconnect backoff (1, 2, 4, 8 ... s)
+# reaches five failed attempts in ~15-20 s when the port refuses, so a count
+# threshold fired on every ordinary gateway reboot (~2 min on the Pi Zero —
+# firmware updates reboot it too) and self-cleared half a minute after it came
+# back, which is exactly the blip the issue is meant to ride out. Three minutes
+# clears such a reboot with margin, while a gateway that is genuinely gone is
+# still reported within minutes — the silent REST-only degradation the issue
+# exists for is measured in hours, so the extra wait costs nothing. Note the
+# backoff quantises when the issue can fire: with a refusing port the attempts
+# land at ~0, 1, 3, 7, 15, 31, 63, 123, 183 ... s, so any threshold in
+# (63, 123] would fire at ~123 s — inside a slow reboot — and the next slot is
+# ~183 s.
+WEBSOCKET_OUTAGE_REPAIR_AFTER = 180
+
 # Entry-data key: the gateway's hardware serial (from the mDNS TXT record or
 # the REST `config/parameter/system_serial` endpoint). Presence of this key
 # means the entry's identity is verified: `unique_id` equals this serial, a
