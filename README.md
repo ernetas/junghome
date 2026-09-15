@@ -145,9 +145,10 @@ derived in an automation — a ready-made **blueprint** does this for you:
 Import the blueprint by URL (Settings → Automations & scenes → Blueprints →
 Import), select the button's event entity/entities, and assign actions for
 single / double / hold. **One caveat before relying on double-click**: current
-JUNG device firmware (mid-2026) can report one quick tap as *two*
-press/release pairs on the same channel, which makes a single click
-indistinguishable from a double — the
+JUNG device firmware (2.2.0.x, mid-2026) can report one quick tap as *two*
+press/release pairs — on the same channel for a rocker half, alternating
+between the up and down events on a single-key button — which makes a single
+click indistinguishable from a double — the
 [guide](docs/example-button-automation.md) shows how to measure your buttons,
 and what stays fully reliable (single and hold) if yours are affected.
 
@@ -219,19 +220,20 @@ again. The alternative is the **network-key password** option, which connects
 immediately with no approval step.
 
 **"Live updates have stopped" repair notice.**
-The WebSocket that carries live push has been down for several consecutive
-reconnect attempts. The integration keeps working on the REST poll (60 seconds
+The WebSocket that carries live push has been down for more than three
+minutes (a normal gateway reboot or firmware update is shorter and never
+triggers this). The integration keeps working on the REST poll (60 seconds
 by default — see [Options](#options)), so states stay correct but stop being
-instant, and controllable entities read unavailable because commands only
-travel over the WebSocket. It clears itself once the connection is genuinely
+instant, and controllable and button-event entities read unavailable because
+commands and button presses only travel over the WebSocket. It clears itself once the connection is genuinely
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
 **Entities are unavailable but the gateway is up.**
 Controllable entities (lights, sockets, covers, thermostats, status LEDs)
-require the live WebSocket, since that is the only path commands take.
-Read-only entities (sensors, binary sensors, events) stay available on the
-REST poll alone. So "sensors fine, lights unavailable" points at the WebSocket
+and button event entities require the live WebSocket: commands only go out
+over it and button presses only arrive over it. Sensors and binary sensors
+stay available on the REST poll alone. So "sensors fine, lights unavailable" points at the WebSocket
 specifically — see the repair notice above.
 
 **Home Assistant asks you to re-authenticate.**
@@ -279,12 +281,14 @@ are redacted; device labels are kept because they are the identity anchor.
 - **Colour temperature tops out at 6000 K** — the gateway itself clamps every
   tunable-white command to 2000–6000 K, regardless of the fixture.
 - The **puck** isn't supported/validated yet.
-- **Two devices with the same label collide.** The gateway exposes no hardware
-  identifier and regenerates its device ids on firmware updates, so the device
-  *label* is the only stable identity anchor available. Devices whose labels
-  are identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1` — map
-  to the same id and only the first one gets entities. Give each device a
-  distinct label in the Jung Home app.
+- **Two devices with the same label collide.** The gateway's device ids are
+  derived from each node's mesh identity and location, so they change when a
+  device is re-provisioned or re-enumerated (as app-driven firmware updates
+  have done), and the device list carries no hardware identifier — so the
+  device *label* is the identity anchor the integration uses. Devices whose
+  labels are identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1`
+  — map to the same id and only the first one gets entities. Give each device
+  a distinct label in the Jung Home app.
 
 ## Gateway internals (for contributors)
 

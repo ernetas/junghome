@@ -1,5 +1,6 @@
 """Light / dimmer / color-light platform tests for Jung Home."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -99,24 +100,26 @@ async def test_colorlight_brightness_and_color_update(
 async def test_switch_echo_does_not_reset_brightness(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A switch=on echo must not clobber the optimistic brightness (UI flicker).
+    """A switch=on echo must not clobber the just-set brightness (UI flicker).
 
     The gateway echoes switch-on and brightness as separate frames; the switch
     one arrives first, while coordinator data still holds the old brightness.
     Re-reading brightness on that frame would momentarily reset the slider.
     """
     coordinator = init_integration.runtime_data
-    # Drag brightness up: HA turns the light on AND sets brightness optimistically.
+    # Drag brightness up: HA turns the light on AND sets brightness. 200 is
+    # raw 78 on the device's 0-100 scale, which the gateway confirms and
+    # which reads back as 199 (see test_brightness_round_trips_...).
     await hass.services.async_call(
         "light",
         "turn_on",
         {"entity_id": "light.strip", "brightness": 200},
         blocking=True,
     )
-    assert hass.states.get("light.strip").attributes["brightness"] == 200
+    assert hass.states.get("light.strip").attributes["brightness"] == 199
 
-    # The switch=on echo arrives FIRST; the brightness datapoint in coordinator
-    # data still holds the old "50". This must NOT reset brightness to ~128.
+    # A switch=on echo carries no brightness; the brightness datapoint must
+    # not be re-read on that frame (a stale snapshot would reset the slider).
     coordinator._handle_websocket_message(
         {
             "type": "datapoint",
@@ -124,7 +127,7 @@ async def test_switch_echo_does_not_reset_brightness(
         }
     )
     await hass.async_block_till_done()
-    assert hass.states.get("light.strip").attributes["brightness"] == 200
+    assert hass.states.get("light.strip").attributes["brightness"] == 199
 
     # The brightness echo then lands and is applied normally.
     coordinator._handle_websocket_message(
@@ -156,21 +159,21 @@ async def test_plain_turn_on_waits_for_device_brightness(
     clearing it left brightness unknown until the next poll for no reason.
     """
     coordinator = init_integration.runtime_data
-    # Set a high brightness via the slider (optimistic 200); light is now on.
+    # Set a high brightness via the slider (200 -> raw 78 -> 199); light is on.
     await hass.services.async_call(
         "light",
         "turn_on",
         {"entity_id": "light.strip", "brightness": 200},
         blocking=True,
     )
-    assert hass.states.get("light.strip").attributes["brightness"] == 200
+    assert hass.states.get("light.strip").attributes["brightness"] == 199
 
-    # Plain turn_on while already on: nothing changes device-side, keep 200.
+    # Plain turn_on while already on: nothing changes device-side, keep 199.
     await hass.services.async_call(
         "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
     )
     await hass.async_block_till_done()
-    assert hass.states.get("light.strip").attributes["brightness"] == 200
+    assert hass.states.get("light.strip").attributes["brightness"] == 199
 
     # Off, then a plain on: this is the genuine power-on where the device
     # restores its own level — brightness is cleared, pending the report.
@@ -248,6 +251,156 @@ async def test_light_external_change_applied(
     )
     await hass.async_block_till_done()
     assert hass.states.get("light.strip").attributes["color_temp_kelvin"] == 5000
+
+
+def _sent_value(coordinator: JungHomeDataUpdateCoordinator, dp_type: str) -> str:
+    """Return the value of the last ``dp_type`` set the fake socket was sent."""
+    frames = [
+        json.loads(c.args[0]) for c in coordinator.websocket.send_str.call_args_list
+    ]
+    frame = next(f for f in reversed(frames) if f["data"].get("type") == dp_type)
+    return str(frame["data"]["values"][0]["value"])
+
+
+@pytest.mark.parametrize(
+    ("requested", "sent"), [(6500, 6000), (1000, 2000), (3500, 3500)]
+)
+async def test_color_temp_request_is_clamped_before_sending(
+    hass: HomeAssistant, init_integration, requested: int, sent: int
+) -> None:
+    """An out-of-range Kelvin request is clamped to the declared range first.
+
+    `light.turn_on` does not validate `color_temp_kelvin` against the entity's
+    min/max, and the gateway clamps every write to 2000-6000 K anyway — so
+    6500 K used to go out as 6500, come back confirmed as 6000, and the entity
+    then showed 6500: above its own `max_color_temp_kelvin`, until the next
+    push corrected it. What is sent must be what can be confirmed.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "color_temp_kelvin": requested},
+        blocking=True,
+    )
+    assert _sent_value(coordinator, "color_temperature") == str(sent)
+    state = hass.states.get("light.strip")
+    assert state.attributes["color_temp_kelvin"] == sent
+    assert (
+        state.attributes["color_temp_kelvin"]
+        <= state.attributes["max_color_temp_kelvin"]
+    )
+
+
+async def test_brightness_round_trips_through_the_confirmed_reply(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The brightness shown is the gateway-confirmed level, not HA's request.
+
+    The device has 0-100 steps: HA's 200 goes out as raw 78, and the reply the
+    command awaits confirms 78 — which is 199 on HA's scale. Storing the
+    request (200) after that reply overwrote the confirmed value the reply had
+    already merged, so the entity disagreed with the very next push/poll.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200},
+        blocking=True,
+    )
+    assert _sent_value(coordinator, "brightness") == "78"
+    assert hass.states.get("light.strip").attributes["brightness"] == round(
+        78 * 255 / 100
+    )
+
+
+async def test_confirmed_reply_wins_over_the_requested_value(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Whatever the gateway confirms is what the entity shows after a command.
+
+    The fixture socket echoes requests verbatim, which cannot tell a re-read of
+    the confirmed value from a stored request. Here the gateway confirms a
+    different value than it was asked for (as it does when it clamps or the
+    device adjusts), and that confirmed value must be what lands.
+    """
+    coordinator = init_integration.runtime_data
+    adjusted = {"brightness": "60", "color_temperature": "3900"}
+
+    def _reply_adjusted(raw: str) -> None:
+        sent = json.loads(raw)
+        data = sent["data"]
+        if data.get("type") in adjusted:
+            data = {
+                **data,
+                "values": [{"key": data["type"], "value": adjusted[data["type"]]}],
+            }
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
+            )
+        )
+
+    coordinator.websocket.send_str.side_effect = _reply_adjusted
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200, "color_temp_kelvin": 4000},
+        blocking=True,
+    )
+    state = hass.states.get("light.strip")
+    assert state.attributes["brightness"] == round(60 * 255 / 100)
+    assert state.attributes["color_temp_kelvin"] == 3900
+
+
+async def test_request_stands_in_when_the_reply_confirms_nothing(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """With no usable confirmed value, the (clamped) request is shown.
+
+    The firmware answers every set with the re-read datapoint, so this is the
+    defensive path: the datapoint holds nothing parseable (the gateway had
+    given up on the node — "NaN") and the reply carries no values either.
+    Leaving the entity blank after a command it just confirmed would be worse
+    than the request.
+    """
+    coordinator = init_integration.runtime_data
+    for dp_id, key in (
+        ("idcolor1-002", "brightness"),
+        ("idcolor1-004", "color_temperature"),
+    ):
+        coordinator._handle_websocket_message(
+            {
+                "type": "datapoint",
+                "data": {"id": dp_id, "values": [{"key": key, "value": "NaN"}]},
+            }
+        )
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").attributes.get("color_temp_kelvin") is None
+
+    def _reply_without_values(raw: str) -> None:
+        sent = json.loads(raw)
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {
+                    "type": "datapoint",
+                    "data": {"id": sent["data"]["id"]},
+                    "message_id": sent["message_id"],
+                }
+            )
+        )
+
+    coordinator.websocket.send_str.side_effect = _reply_without_values
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200, "color_temp_kelvin": 6500},
+        blocking=True,
+    )
+    state = hass.states.get("light.strip")
+    assert state.attributes["brightness"] == 200
+    assert state.attributes["color_temp_kelvin"] == 6000
 
 
 async def test_light_value_extractors_are_defensive(hass: HomeAssistant) -> None:

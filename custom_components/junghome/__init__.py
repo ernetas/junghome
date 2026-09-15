@@ -120,8 +120,30 @@ def _register_capability_reload(
     rebuilds every entity from the current datapoint set. See
     ``_capability_signature`` for what counts as a change (datapoint types, not
     their values, so a routine value push never triggers a reload).
+
+    A changed signature must be seen on two consecutive adoptions before the
+    reload is scheduled. The re-enumeration case above is exactly the one where
+    a single adoption cannot be trusted: the datapoints arrive across several
+    polls, and a partial list can momentarily drop a datapoint (a cover's
+    ``angle``) that the next poll restores. Reloading on the first sighting
+    rebuilt the entry from that transient set — and the rebuilt watcher, having
+    seeded its baseline from it, reloaded again when the next poll restored the
+    full set: one reload per adoption for as long as the flap lasted. Two
+    adoptions is the smallest window that filters a one-adoption blip, and it is
+    enough: unlike the stale-device prune (``STALE_DEVICE_PRUNE_MISSES``) a
+    reload destroys nothing, so confirming late costs one extra poll interval
+    before a genuine change reaches the entity, while confirming early cost a
+    reload storm.
     """
+    # The signature each device's live entities were built from: seeded on the
+    # first pass and never moved afterwards (a confirmed change reloads the
+    # entry, which rebuilds this closure and re-seeds).
     capability_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
+    # Changed signatures seen on the previous adoption only, awaiting the next
+    # one's confirmation. Rebuilt on every adoption, so a candidate the next
+    # list does not repeat — the device flapped back, or was absent — is
+    # dropped, and "consecutive" means exactly that.
+    pending_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
     warned_collisions: set[str] = set()
     reload_scheduled = False
     # The last device-list adoption this watcher has fingerprinted, mirroring
@@ -137,13 +159,14 @@ def _register_capability_reload(
 
     @callback
     def _reload_on_capability_change() -> None:
-        nonlocal reload_scheduled, last_generation
+        nonlocal reload_scheduled, last_generation, pending_signatures
         if reload_scheduled:
             return
         if coordinator.data_generation == last_generation:
             return  # same device list as last time; datapoint types unchanged
         last_generation = coordinator.data_generation
         if not coordinator.data:
+            pending_signatures = {}  # an empty list confirms nothing (see above)
             return
         # Two devices whose labels slug identically share ONE key in the map
         # below. Without this guard the second overwrote the first's signature
@@ -169,18 +192,25 @@ def _register_capability_reload(
                     slug,
                 )
         changed = False
+        candidates: dict[str, tuple[str | None, frozenset[str]]] = {}
         for device in coordinator.data:
             slug = device_slug(device)
             if slug in collisions:
                 continue
             signature = _capability_signature(device)
-            previous = capability_signatures.get(slug)
-            capability_signatures[slug] = signature
+            baseline = capability_signatures.get(slug)
             # A brand-new device is picked up by the platforms' own discovery and
             # a vanished one by the stale-device prune; only a change to a device
             # already fingerprinted leaves an entity with stale features.
-            if previous is not None and previous != signature:
-                changed = True
+            if baseline is None:
+                capability_signatures[slug] = signature
+            elif signature == baseline:
+                continue  # unchanged, or flapped back: no candidate to carry
+            elif pending_signatures.get(slug) == signature:
+                changed = True  # the same change on two consecutive adoptions
+            else:
+                candidates[slug] = signature  # first sighting; confirm next time
+        pending_signatures = candidates
         if changed:
             reload_scheduled = True
             _LOGGER.info(
@@ -715,8 +745,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
     The token arm is what completes the reauth flow: that flow stores the fresh
     token with ``async_update_and_abort`` and deliberately does NOT schedule its
-    own reload, because pairing a reloading flow helper with an update listener
-    is deprecated in HA 2026.6 and raises from 2026.12. Without this arm the new
+    own reload for a loaded entry (it does for one that never loaded — see
+    ``async_step_reauth_finish``), because pairing a reloading flow helper with
+    an update listener is deprecated in HA 2026.6 and raises from 2026.12. Without this arm the new
     token would sit in ``entry.data`` while the coordinator kept using the
     rejected one it cached at construction — an endless reauth loop.
     """

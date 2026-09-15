@@ -109,8 +109,9 @@ rules:
       A revoked token is handled by the reauthentication flow rather than a
       repair issue. Losing the WebSocket, however, degrades the integration
       silently — states keep updating on the REST poll, so nothing looks
-      broken, it just stops being live. After MAX_RECONNECT_FAILURES consecutive
-      failed reconnects the coordinator raises a non-fixable warning issue
+      broken, it just stops being live. Once the WebSocket has been down for
+      WEBSOCKET_OUTAGE_REPAIR_AFTER (3 min from the first failed reconnect —
+      an attempt count fires inside every gateway reboot) the coordinator raises a non-fixable warning issue
       (`websocket_push_failure`) and deletes it again on the next connect that
       STAYS UP for STABLE_SESSION_SECONDS (a bare connect is not proof of
       recovery — a flapping socket would clear and re-raise the issue forever),

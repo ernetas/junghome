@@ -74,6 +74,16 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
     _attr_event_types = ["pressed", "depressed"]
     _attr_device_class = EventDeviceClass.BUTTON
 
+    # Edges only ever arrive as WebSocket pushes (``_handle_coordinator_update``
+    # fires on the per-push marker; a REST poll re-reads the same values and
+    # fires nothing), so with the socket down this entity is deaf — a press is
+    # lost, not delayed. Reading unavailable says so, and is what lets an
+    # automation abort a gesture mid-way (the shipped blueprint's
+    # abort-on-unavailable guard) instead of waiting on a release that will
+    # never be reported. Without it the entity looked live on the REST poll
+    # alone and that guard could never engage.
+    _needs_websocket = True
+
     def __init__(
         self,
         coordinator: JungHomeDataUpdateCoordinator,

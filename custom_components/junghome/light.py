@@ -28,8 +28,10 @@ PARALLEL_UPDATES = 0
 # `btmesh_set_datapoint_service.js:51-53`). A wider ceiling here (this used to
 # say 6500) only offered users 500 K of slider the device can never reach: the
 # gateway silently capped the write at 6000 while the entity optimistically
-# displayed the requested value. (The `/types/datapoints` catalog advertises
-# 2000-10000, but the firmware enforces 2000-6000 — trust the enforcement.)
+# displayed the requested value — and since HA never validates a requested
+# `color_temp_kelvin` against this range, writes are clamped to it as well
+# (`_clamp_kelvin`). (The `/types/datapoints` catalog advertises 2000-10000,
+# but the firmware enforces 2000-6000 — trust the enforcement.)
 DEFAULT_MIN_KELVIN = 2000
 DEFAULT_MAX_KELVIN = 6000
 
@@ -68,7 +70,7 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     """Representation of a Jung Home light."""
 
     # Commanded over the WebSocket, so it is unavailable when the socket is down.
-    _controllable_over_websocket = True
+    _needs_websocket = True
 
     # The light is the device's main feature, so it adopts the device name. With
     # has_entity_name the entity_id is `light.<device>` instead of the old
@@ -135,14 +137,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         # would be pure speculation. Two things have to be settled before it can
         # drive an entity, and neither is answerable without a real capture:
         #
-        #  - Clamping is asymmetric. Reads are clamped to the range below, writes
-        #    are not, and Home Assistant does not validate `color_temp_kelvin`
-        #    against the declared range either (the service schema is only
-        #    `cv.positive_int`). So `light.turn_on` at 6500 K against a narrower
-        #    advertised range reaches the hardware unchanged, and the entity then
-        #    reports the clamped value — a state contradicting both the device and
-        #    its own declared attributes. Today the window is wide enough that the
-        #    clamp effectively never fires; narrowing it makes that the common path.
+        #  - Whether the gateway clamps writes to the *group* range the way it
+        #    clamps them to 2000-6000 K. Both reads and writes here clamp to
+        #    `_clamp_kelvin` (Home Assistant does not validate `color_temp_kelvin`
+        #    against the declared range — the service schema is only
+        #    `cv.positive_int`), so a narrower range would be enforced on our
+        #    side before the value reaches the hardware; whether that matches
+        #    what the device would have done is the open question.
         #  - A group range is a *group* property. Applying it per-fixture is only
         #    right if every fixture in the group shares it.
         self._min_kelvin, self._max_kelvin = DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN
@@ -296,9 +297,18 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             kelvin = round(float(value))
         except (TypeError, ValueError, OverflowError):
             return None
-        # Clamp to this light's own advertised range (gateway-supplied where
-        # available, defaults otherwise) so an out-of-range value doesn't violate
-        # the declared min/max color-temperature contract.
+        return self._clamp_kelvin(kelvin)
+
+    def _clamp_kelvin(self, kelvin: int) -> int:
+        """Clamp a Kelvin value into this light's declared min/max range.
+
+        One clamp for both directions: an out-of-range gateway *read* must not
+        violate the declared min/max contract, and an out-of-range *write* must
+        not be sent as-is — the gateway silently clamps it to 2000-6000 K (see
+        `DEFAULT_MAX_KELVIN`) and confirms the clamped value, so sending the
+        raw request only meant the entity briefly showed a value above its own
+        `max_color_temp_kelvin`.
+        """
         return max(self._min_kelvin, min(self._max_kelvin, kelvin))
 
     async def _set_brightness(self, brightness: int) -> None:
@@ -317,7 +327,20 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             self._name,
         )
         await self.coordinator.set_brightness(self._brightness_datapoint_id, raw_value)
-        self._brightness = brightness
+        # The awaited reply already merged the gateway's confirmed value into
+        # the coordinator (and dispatched it through _handle_coordinator_update),
+        # so read that back rather than store the request: the device only has
+        # 0-100 steps, so HA's 0-255 request round-trips to a neighbouring value
+        # (200 -> raw 78 -> 199), and storing the request made the entity
+        # disagree with the next push/poll. The request stands in only when the
+        # datapoint yields nothing usable (0 is "off"/unparseable — see
+        # _handle_coordinator_update — not a level the device confirmed).
+        self._brightness = (
+            self._get_brightness_from_datapoint(
+                self._find_datapoint(self._brightness_datapoint_id)
+            )
+            or ha_brightness
+        )
         self.async_write_ha_state()
 
     async def _set_color_temp(self, kelvin: int) -> None:
@@ -327,10 +350,18 @@ class JungHomeLight(JungHomeEntity, LightEntity):
                 "No color_temperature datapoint id for light %s", self._name
             )
             return
-        kelvin = int(kelvin)
+        # Home Assistant's service schema does not check `color_temp_kelvin`
+        # against the entity's declared range, and the gateway clamps the write
+        # anyway, so clamp here first: what is sent is what can be confirmed.
+        kelvin = self._clamp_kelvin(int(kelvin))
         _LOGGER.debug(
             "Setting color temperature for light %s to %sK", self._name, kelvin
         )
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
-        self._color_temp = kelvin
+        # Same as brightness: the confirmed value the reply merged wins over the
+        # request; the request stands in only if the datapoint yields nothing.
+        confirmed = self._get_color_temp_from_datapoint(
+            self._find_datapoint(self._color_temp_datapoint_id)
+        )
+        self._color_temp = kelvin if confirmed is None else confirmed
         self.async_write_ha_state()

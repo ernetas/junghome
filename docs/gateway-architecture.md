@@ -44,17 +44,22 @@ counterpart on the data partition. (The `api-server/res/README.md` explicitly
 warns that anything in a rootfs `res/` is overwritten on update and must be
 linked to the data partition.)
 
-> This A/B design is also *why device IDs can change across firmware updates* —
-> see the stable-ID handling in the integration (`const.py`, `__init__.py`).
+> Device ids changing across (app-driven) firmware updates is **not** a
+> consequence of this A/B design, as an earlier revision of this doc claimed:
+> per the 2026-09-15 audit a function id is `"id"` + `md5(node UUID +
+> hex(location))[:15]` and a scene id is `"id"` + hex(scene number), so an id
+> moves when a node is re-provisioned or its location/element mapping is
+> re-enumerated — which those updates did. The integration's stable-ID
+> handling (`const.py`, `__init__.py`) keys on the label regardless.
 
 ## Service components (`/opt`)
 
 | Component | What it is |
 |-----------|-----------|
 | **api-server** | Node.js / Express app. Serves the REST API (`127.0.0.1:3000`) and the WebSocket server (`127.0.0.1:8080`). Handles token auth. Talks to the middleware over TCP `localhost:1024`. See [gateway-rest-api.md](gateway-rest-api.md) and [gateway-websocket.md](gateway-websocket.md). |
-| **middleware** | Node.js app, internal name **"bluetooth"** — *"bluetooth mesh logic and communication to mesh network co-processor (ncp)"*. Runs the BT-Mesh host stack and talks to the radio NCP over UART `/dev/ttyAMA0`. Exposes `localhost:1024` to the api-server. |
+| **middleware** | Node.js app (compiled TypeScript, no npm dependencies), internal name **"bluetooth"** — *"bluetooth mesh logic and communication to mesh network co-processor (ncp)"*. Drives the mesh *client* models on the NCP through `bt_tunnel`'s unix socket (`const/config.json` `bt_adapter.socket_path`, line-delimited JSON BGAPI commands/events; BGAPI ids in `const/bt_api_ids.js`). Exposes `localhost:1024` to the api-server. |
 | **wireless_module** | Firmware images (`.gbl`, Silicon Labs Gecko Bootloader format) for the radio co-processor. It is a **Silicon Labs EFR32** running the **Silabs Bluetooth Mesh SDK v4.4.6** as an NCP, flashed/updated over UART (`lbc_uart_update.json`). |
-| **bt_tunnel** | `lbc-gw-bt-tunnel_pi-zero` binary. A BLE GATT tunnel exposed via the unix socket `/tmp/lbc-bt-tunnel.soc` — used for the mobile app's direct Bluetooth connection and provisioning. |
+| **bt_tunnel** | `lbc-gw-bt-tunnel_pi-zero` binary (ARM ELF with symbols, built against Mesh SDK 4.4.6). The **UART ↔ EFR32-NCP BGAPI bridge**: it owns `/dev/ttyAMA0` and exposes the BGAPI host side to the middleware on the unix socket `/tmp/lbc-bt-tunnel.soc` (`config.json` `bt_adapter`). JUNG's vendor property models (`0x0527xxxx`, `sl_btmesh_vendor_model_*`) are implemented in here; the middleware only sees them as `lbc_cmd` user messages. It is **not** an app-facing BLE/GATT tunnel — an earlier revision of this doc said so; [gateway-system-analysis.md](gateway-system-analysis.md) had it right. The app provisions the gateway like any other node (PB-ADV + PB-GATT unprovisioned beaconing for 20 min, `services/ncp_service.js:427-437`) and afterwards reaches it **over the mesh** (vendor props `0xC000–0xC003`, see [gateway-rest-api.md](gateway-rest-api.md)) through whichever proxy node it is connected to — the NCP's own GATT proxy included; none of that goes through this socket. |
 | **jungremote-client** | Cloud link (socket.io) to the JUNG OpenAPI portal for remote (off-LAN) access. |
 | **matter-interface** | Matter bridge. Provisioned (`sdc4/matter-interface/matter_setup_data.json`): `vendor_id 5161` (0x1429), `product_id 11`, `discriminator 1538`, SPAKE2+ salt/verifier, `commissioning_flow 0`, `discovery_capability 4`. Lets the gateway expose JUNG devices to Matter controllers (incl. Home Assistant's own Matter integration). It is a separate interface (UDP 5540 + mDNS); **not** part of the REST API. The daemon binary was not present in the dump, so default-enabled status couldn't be confirmed from disk alone. |
 | **board_ctrl / system_information / tools** | Board control, diagnostics, and shell helpers (`gpio_init.sh`, `led.sh`, `firewall.sh`, …). LEDs: BT on `gpio17`, Cloud on `gpio27`, LAN on `led0`. |
@@ -74,10 +79,13 @@ Home Assistant / mobile app
     api-server  (REST + WebSocket, token auth)
         │  TCP localhost:1024
         ▼
-    middleware  ("bluetooth", BT-Mesh host stack)
+    middleware  ("bluetooth", mesh client models / state logic)
+        │  unix socket /tmp/lbc-bt-tunnel.soc  (line-delimited JSON BGAPI)
+        ▼
+    bt_tunnel  (BGAPI host bridge, vendor property models)
         │  UART /dev/ttyAMA0
         ▼
-   EFR32 NCP  (Silabs BT-Mesh SDK v4.4.6)
+   EFR32 NCP  (Silabs BT-Mesh SDK v4.4.6 — the mesh stack itself)
         │  Bluetooth Mesh radio
         ▼
    JUNG HOME devices (mesh nodes)
@@ -109,27 +117,81 @@ for "the" CDB and called the gateway reset/empty.
 
 > ⚠ The CDB contains the network's secret keys. Never commit a real
 > `bt_mesh_project.json` (or the whole `disk_dump/`, which is `.gitignore`d).
+> `GET /project/cdb` hands the same file, keys included, to any API client.
+
+## The gateway's own role on the mesh
+
+The gateway is an **ordinary provisioned node** — unicast `0x00DC`, `cid 0x0527`,
+`pid 0x0B`, one element — not a provisioner and not a Config Client. The phone
+provisions it (unprovisioned beaconing on PB-ADV + PB-GATT for 20 minutes,
+`services/ncp_service.js:427-437`) and later uploads the project file
+(`POST /config` `project_file`, see [gateway-rest-api.md](gateway-rest-api.md));
+that upload is why the gateway holds the network keys at all. From that file the
+middleware installs its *own* node data with **local-only** BGAPI `test_*`
+calls (`ncp_service.js:299-351`): `node_set_provisioning_data` (device key,
+NetKey, unicast), `test_set_iv_index`, `test_set_element_seqnum`,
+`test_add_local_key` (AppKey 0), `test_set_gatt_proxy`, `test_set_relay`. All
+configuration of *other* nodes — key binding, publish/subscribe — is done by
+the app. Its element group is `C005`; button elements in KeyMode 6 publish
+their events there.
+
+- **Features:** relay on (retransmit count 0, `config.json`
+  `relay_transmissions_*`), GATT proxy on (`ncp_service.js:333-343`; both
+  default to 1 when the CDB node entry says nothing), no Friend/LPN, no
+  heartbeat. TTL is never set by the middleware (project default 5; the
+  sibling project sees its Sets on air with TTL 2).
+- **State acquisition, both ways at once:** self-configuration binds AppKey 0
+  to the gateway's client models (`self_config_service.js:68-96` — SIG clients
+  plus the vendor property servers `0x05271011/12/13` and client `0x05271015`)
+  and subscribes them to **every element group the devices publish to**
+  (`:104-158,279-346`; the June log shows 221 desired / 202 current
+  subscriptions), **and** it polls every device state with a Get every 15 s
+  (`config.json` `btmesh.device_state_poll_interval_sec`). Because acked Sets
+  to JUNG devices are answered only by the group publication (see
+  [bt-mesh-direct.md](bt-mesh-direct.md)), the subscription is also what
+  confirms commands.
+- **Time:** it hosts a Time Server (`0x1200`) but `config.json`
+  `btmesh.publish_time_interval_minutes` is `0` — the gateway **never
+  publishes Time**; only the phone sets device clocks.
+- **Sequence / IV:** the sequence number is persisted hourly, rounded up to the
+  next 0x4000 (`services/seq_number_service.js`), and was at `0x9FC000` in
+  June 2026, `0xA68000` in August, ~`0xB0D6xx` in September (sibling sniff) —
+  9–18 k messages/day. The middleware requests an IV Update when fewer than
+  128 reboots' worth (128 × 0x4000) remain, i.e. in roughly 6–12 months, with
+  warnings a few months earlier. IV index is persisted in
+  `middleware/res_6/btmesh_iv_index` (0 so far).
 
 ## Could you self-host without the JUNG gateway?
 
-**Yes, in principle — it's a real (but non-trivial) project.** JUNG devices are
-standard Bluetooth Mesh nodes; the gateway is "just" a mesh provisioner/proxy
-plus the HTTP/WS façade. To control them directly you need:
+**Yes — and it has been done.** JUNG devices are standard Bluetooth Mesh nodes
+plus JUNG's vendor property models; the gateway is an ordinary node with an
+HTTP/WS façade (above). The Bluetooth-direct sibling project
+(`junghome-bt-mesh`) controls the devices from Home Assistant with **no mesh
+chip**: it acts as a **Mesh Proxy client** over a plain BLE adapter or an
+ESPHome Bluetooth proxy, connecting to any node's GATT proxy service. What it
+needs:
 
-1. **The mesh keys** — NetKey + AppKey(s) + IV index. These live in the CDB on
-   the gateway and can also be **exported from the JUNG HOME app**, so this is
-   not a blocker.
-2. **A BT-Mesh-capable radio + host stack** on your own hardware — e.g. a Silabs
-   EFR32 or Nordic nRF52 acting as an NCP, or BlueZ-mesh on a Linux BT adapter
-   (BlueZ mesh provisioner/CDB support is workable but rough). You'd add a *new*
-   provisioner/node address rather than reuse the gateway's.
-3. **Respect IV index & sequence numbers** to avoid tripping replay protection.
-4. **The model/opcode mapping.** Core control is standard mesh models (Generic
-   OnOff, Light Lightness, Light CTL); rocker/button *events* come from devices
-   publishing to group addresses (subscribe to receive them). Scenes and any
-   vendor models would need some reverse engineering.
+1. **The mesh keys** — NetKey + AppKey 0 + the IV index. These live in the CDB
+   on the gateway (`GET /project/cdb`) and can also be **exported from the JUNG
+   HOME app**, so this is not a blocker.
+2. **Its own unicast address** outside every provisioner's
+   `allocatedUnicastRange` and the CDB's `networkExclusions`, and **its own
+   sequence counter** — replay protection is per source address, so nothing
+   of the gateway's needs continuing. Only the IV index must match, and it
+   arrives in every Secure Network Beacon. No mesh NCP (EFR32 / nRF52 /
+   BlueZ-mesh) is required; a full stack only adds relay/friend/provisioning,
+   which a controller does not need.
+3. **The model/opcode mapping** — now fully reverse-engineered in
+   [bt-mesh-direct.md](bt-mesh-direct.md): core control is standard models
+   (Generic OnOff, Light Lightness, Light CTL / Generic Level, Scene Recall);
+   rocker/button *events* are vendor `User Property Set Unack` publications of
+   property `0x5012` to the gateway's group (a proxy client with an empty
+   blacklist filter hears them); the status LED is property `0x5013`; the
+   vendor opcode table is confirmed on air.
 
-What you'd give up: cloud/remote access, the gateway's central relay coverage,
-and easy provisioning/firmware updates of new devices. For most users the
-gateway-backed integration here is the practical path; a direct-mesh integration
-is a worthwhile experiment if you want to remove the gateway entirely.
+What you'd give up: cloud/remote access and the app-driven provisioning /
+firmware-update path (the app still needs the gateway for those). For most
+users the gateway-backed integration here is the practical path; the sibling
+project is the working alternative, and the long-term plan is one integration
+with both transports (HA ≥ 2026.8 binds a device to a single config entry, so
+the two can never share a device page otherwise — tracker §3).

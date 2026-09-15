@@ -80,19 +80,36 @@ async def test_scene_label_collision_creates_one_entity_and_warns_once(
 async def test_scene_removed_when_deleted(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A scene the gateway deletes has its entity removed."""
+    """A scene the gateway deletes is gone: no state, no registry entry.
+
+    ``Entity.async_remove`` alone leaves a registered entity behind as a
+    "restored" unavailable placeholder, so a scene deleted in the app used to
+    linger permanently unavailable (and this test accepted that). The registry
+    entry has to be removed too — and the registry's deleted-entity memory then
+    brings a scene re-created under the same label back as the same entity.
+    """
     coordinator = init_integration.runtime_data
+    ent_reg = er.async_get(hass)
     coordinator._handle_websocket_message(
         {"type": "scenes", "data": [{"id": "s1", "label": "Movie Night"}]}
     )
     await hass.async_block_till_done()
     assert hass.states.get("scene.movie_night") is not None
-    # Gateway removes it (scene list now empty) -> the live entity is removed,
-    # leaving only a restored/unavailable placeholder that can't be activated.
+    assert ent_reg.async_get("scene.movie_night") is not None
+
+    # Gateway removes it (scene list now empty).
     coordinator._handle_websocket_message({"type": "scenes", "data": []})
     await hass.async_block_till_done()
-    state = hass.states.get("scene.movie_night")
-    assert state is None or state.state == "unavailable"
+    assert hass.states.get("scene.movie_night") is None
+    assert ent_reg.async_get("scene.movie_night") is None
+
+    # Re-created in the app: it is discovered again under the same entity_id.
+    coordinator._handle_websocket_message(
+        {"type": "scenes", "data": [{"id": "s2", "label": "Movie Night"}]}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie_night") is not None
+    assert ent_reg.async_get("scene.movie_night") is not None
 
 
 async def test_scene_activate_raises_when_missing(hass: HomeAssistant) -> None:
