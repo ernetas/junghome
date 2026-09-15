@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -170,6 +171,19 @@ async def async_get_config_entry_diagnostics(
         "scenes": coordinator.scenes,
         "group_count": len(coordinator.groups),
         "groups": coordinator.groups,
+        # Function id -> hardware identity parsed from the gateway's project
+        # export (node UUID, Bluetooth address, unicast, element location).
+        # These are what a report needs to tell which HA device is which
+        # radio; they are not secrets. The export ALSO carries the mesh keys,
+        # which `parse_project_export` never reads — `NodeIdentity` has no
+        # field that could hold one — so dumping the map as-is is safe by
+        # construction (pinned by a test). Empty on firmware without the
+        # endpoint; a function missing here is one the export did not cover.
+        "node_identity_count": len(coordinator.node_identities),
+        "node_identities": {
+            function_id: asdict(identity)
+            for function_id, identity in coordinator.node_identities.items()
+        },
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...
         "recent_websocket_frames": [
@@ -232,4 +246,11 @@ async def async_get_device_diagnostics(
         # Redacted with the same rule as the entry dump: a per-device report is
         # pasted into public issues just as often as a full one.
         "device": async_redact_data(matched, TO_REDACT) if matched else None,
+        # The radio behind this function (see the entry dump's map); None when
+        # the export did not cover it, which is why its page shows no serial.
+        "node_identity": (
+            asdict(identity)
+            if matched and (identity := coordinator.node_identity_for(matched))
+            else None
+        ),
     }
