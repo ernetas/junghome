@@ -145,9 +145,10 @@ derived in an automation — a ready-made **blueprint** does this for you:
 Import the blueprint by URL (Settings → Automations & scenes → Blueprints →
 Import), select the button's event entity/entities, and assign actions for
 single / double / hold. **One caveat before relying on double-click**: current
-JUNG device firmware (mid-2026) can report one quick tap as *two*
-press/release pairs on the same channel, which makes a single click
-indistinguishable from a double — the
+JUNG device firmware (2.2.0.x, mid-2026) can report one quick tap as *two*
+press/release pairs — on the same channel for a rocker half, alternating
+between the up and down events on a single-key button — which makes a single
+click indistinguishable from a double — the
 [guide](docs/example-button-automation.md) shows how to measure your buttons,
 and what stays fully reliable (single and hold) if yours are affected.
 
@@ -279,12 +280,14 @@ are redacted; device labels are kept because they are the identity anchor.
 - **Colour temperature tops out at 6000 K** — the gateway itself clamps every
   tunable-white command to 2000–6000 K, regardless of the fixture.
 - The **puck** isn't supported/validated yet.
-- **Two devices with the same label collide.** The gateway exposes no hardware
-  identifier and regenerates its device ids on firmware updates, so the device
-  *label* is the only stable identity anchor available. Devices whose labels
-  are identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1` — map
-  to the same id and only the first one gets entities. Give each device a
-  distinct label in the Jung Home app.
+- **Two devices with the same label collide.** The gateway's device ids are
+  derived from each node's mesh identity and location, so they change when a
+  device is re-provisioned or re-enumerated (as app-driven firmware updates
+  have done), and the device list carries no hardware identifier — so the
+  device *label* is the identity anchor the integration uses. Devices whose
+  labels are identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1`
+  — map to the same id and only the first one gets entities. Give each device
+  a distinct label in the Jung Home app.
 
 ## Gateway internals (for contributors)
 

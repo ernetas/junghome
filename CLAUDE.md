@@ -52,34 +52,65 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - Function-type → platform: `OnOff`/`DimmerLight`/`ColorLight` → light;
   `Socket` → switch + sensor; `Measurement` → sensor + binary_sensor;
   `Position`/`PositionAndAngle` → cover; `Thermostat` → climate;
-  `RockerSwitch` → event + switch (status LED). Rockers report only raw
-  `pressed`/`depressed` edges (`up_request` / `down_request`, one datapoint
-  per physical side — **not** alternating channels per press; that earlier
-  belief was refuted by a timestamped capture).
+  `RockerSwitch` → event + switch (status LED; on the mesh that is vendor
+  property `0x5013 KEY_STATUS`, which the gateway writes with a User Property
+  *Status* `D1 27 05` to the button element). A `RockerSwitch` function is
+  **one mesh button element** — a whole rocker (events carry the side) or a
+  single key (side not physical), by the device's key layout. The
+  API carries only raw `pressed`/`depressed` edges (`up_request` /
+  `down_request`), but the *device* sends gestures: vendor property `0x5012
+  KEY_EVT` `[counter][event]` (0/1 click down/up, 2/3 hold-start, 4 release,
+  5 click / 6 hold-start on single-key elements), which the gateway flattens
+  (`services/btmesh_property_service.js:184-256`) — a click becomes a
+  synthesised `[1, 0]` pair (~0.4 s: two 200 ms delays in the emitter loop).
 - **On current DEVICE firmware, one tap is reported as TWO press/release
-  pairs — same channel; a hold as ONE.** Labelled capture (2026-08-02, 16
-  taps + 5 holds): tap pulse 0.40–0.53 s (near-constant — the device's
-  reporting granularity, not the finger), hold pulse 2.44–3.11 s, intra-burst
-  gap 0.11–1.03 s. Single vs double click is **indistinguishable** (both = 2
-  identical pairs, overlapping gap ranges); tap vs hold separates perfectly on
-  **pulse width** (5× empty band). **This is a regression**: the gateway's own
-  archived logs (2026-06-20→07-28, ~450 bursts) show 1.00 presses/burst on
-  the same buttons; gateway fw unchanged across the window, JUNG app went
-  2.1.0→2.2.0 (app 2.2.x updates device firmware — issue #66). Mechanism
-  unestablished — do NOT present it as BT-Mesh retransmission (gaps up to
-  1 s refute that); gesture logic must tolerate both one and two pairs per
-  tap. A duplicate-suppression window must be **≥ ~1.2 s** (earlier
-  0.15–0.25 s guidance came from a mis-segmented unlabelled capture —
-  refuted). Evidence + tables in docs/gateway-websocket.md.
-- **Every button gang exposes BOTH `up_request` and `down_request`**, even a
-  single-action one: the firmware's `JungHome_PushButton` model always creates
-  PushedUp + PushedDown + StatusLed states. The gateway knows the difference
-  (a `KeyMode` property) but that is category `manufacturer_property`, which
-  `getDatapointTypeByState` never turns into an API datapoint — and JUNG's own
-  code carries a `// TODO: set visibility here based on mode` for exactly
-  this. So a single-action gang unavoidably gets one dead event entity; there
-  is nothing on the wire to suppress it with. Multi-gang panels report each
-  gang as a **separate function**, hence a separate HA device.
+  pairs; a hold as ONE.** Mechanism (2026-09-15 audit): device fw 2.2.0.2
+  (shipped by app 2.2.0) publishes every access message **twice, ~1 s apart,
+  fresh SEQ, same counter** — an on-air capture by the Bluetooth-direct
+  sibling project (`junghome-bt-mesh`), CDB publish-retransmit 0 everywhere,
+  so not BT-Mesh retransmission and not configuration. The gateway ignores
+  the counter (`Number(values[1])`), has no dedupe, and turns each copy of a
+  click into a `[1, 0]` pair; on a rocker a hold's second copy is
+  value-and-mode-unchanged and suppressed. Side: rocker elements (events
+  0/1) carry the side in the event byte, so both copies hit the **same
+  channel** (the 2026-08-02 rocker capture); single-key elements (events
+  5/6) get the side toggled per reception via one service-wide
+  `_prevButtonType`, so their two copies **alternate `up`/`down`** (on-air
+  capture by the sibling; a key-element *hold* through the gateway is
+  uncaptured and by the code differs). Labelled capture (2026-08-02, 16 taps + 5
+  holds): tap pulse 0.40–0.53 s (the gateway's synthesised release, not the
+  finger and not "device granularity"), hold pulse 2.44–3.11 s (the finger),
+  intra-burst gap 0.11–1.03 s. Single vs double click is
+  **indistinguishable** (both = 2 identical pairs, overlapping gap ranges);
+  tap vs hold separates perfectly on **pulse width** (5× empty band). **This
+  is a regression**: the gateway's own archived logs (2026-06-20→07-28, ~450
+  bursts) show 1.00 presses/burst on the same buttons; gateway fw unchanged
+  across the window, JUNG app went 2.1.0→2.2.0 (app 2.2.x updates device
+  firmware — issue #66). Gesture logic must tolerate both one and two pairs
+  per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
+  device, not per datapoint** (a key element's second copy lands on the
+  other datapoint; earlier 0.15–0.25 s guidance came from a mis-segmented
+  unlabelled capture — refuted). Evidence + tables in
+  docs/gateway-websocket.md.
+- **Every button element exposes BOTH `up_request` and `down_request`**, even
+  a single-key one: the firmware's `JungHome_PushButton` model always creates
+  PushedUp + PushedDown + StatusLed states (`trigger_request` exists only in
+  the datapoint descriptor — no device model produces it). The gateway knows
+  the difference — property `0x5003 KEY_MODE`: 0 light, 1 blinds, 2 scene,
+  3 property, 4 thermostat, 5 switch, 6 gateway
+  (`models/jung-home-state-mode.js:39-47`; mode 6 publishes `0x5012` to the
+  gateway's group, the other modes act on the mesh directly) — but never
+  exposes it: the function assembly
+  (`createFunctionListByDevices`) maps only `device.states` into datapoints,
+  and KeyMode is a *property* state. (Its `manufacturer_property` category is
+  not the reason — PushedUp/PushedDown/StatusLed are `manufacturer_property`
+  too, with explicit cases in `getDatapointTypeByState`; an earlier revision
+  of this file said otherwise.) JUNG's own code carries a `// TODO: set
+  visibility here based on mode` for exactly this. So a single-key element
+  unavoidably exposes two event entities for one key — and since the gateway
+  toggles the side on every event-5 reception, *both* fire (alternately) on
+  doubled firmware; neither is physically "up" or "down". Multi-gang panels
+  report each gang as a **separate function**, hence a separate HA device.
 - A `quantity` datapoint whose label denotes presence/occupancy (empty unit,
   0/1 value — a BWM detector's `Presence Detected`) becomes an **occupancy
   binary_sensor**; other quantities become numeric sensors.
@@ -113,8 +144,14 @@ JUNG HOME Gateway over its REST API and WebSocket.
   Don't hard-code `blind` again: it gave every roller shutter slat-oriented
   controls and icons.
 - **Colour temperature is 2000–6000 K, enforced by the gateway**: the
-  middleware hard-codes that range and clamps every tunable-white write (see
-  the `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it.
+  middleware hard-codes that range and clamps every tunable-white write
+  (`models/device_states/ColorTemperatureState.js:60,95-103`; see the
+  `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it — it is a
+  gateway limit, not the device's (the app sends `Light CTL Set` with
+  2000–10000 K; the real range is `Light CTL Temperature Range Get`
+  `0x8262`, which the gateway never surfaces). The write path is
+  conditional (`:108-122`): the CTL-Temperature state when the device has
+  one, else Generic Level on element+1.
 - **The WS handshake's `version` frame is the API version, not the firmware.**
   It carries `api-junghome`'s own package version (`"1.5.0"`, matching
   `apidoc.json` `info.version`); the gateway's *software* version is a REST
@@ -126,8 +163,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
 - Scenes arrive over the WS `scenes` broadcasts (plus a setup-time REST fetch)
   and recall over REST `POST /scenes/{id}` — the WS `scene` *command* is
-  unimplemented on the gateway. Scene identity is the **label** (ids
-  regenerate like device ids); recalls re-resolve the id at call time.
+  unimplemented on the gateway. Scene identity is the **label**; recalls
+  re-resolve the id at call time. (The scene `id` is in fact derived —
+  `"id"` + hex(mesh scene number), `id0001` ↔ `value` `"0001"` — so it is
+  stabler than the device ids; the label-keyed design stays for existing
+  installs' `unique_id`s, and the tracker lists `value` as a candidate
+  stable join key.)
 - The gateway lists **unreachable devices too** (no `isOnline` filter in the
   firmware's function assembly) — absence from `/functions/` means
   deleted/relabelled or a partial poll, which is why the pruner debounces
@@ -146,16 +187,26 @@ instead of re-deriving:
   services, BT-Mesh stack, self-hosting analysis.
 - [docs/gateway-system-analysis.md](docs/gateway-system-analysis.md) — the
   current (v2.1.3) firmware image in detail.
-- [docs/bt-mesh-direct.md](docs/bt-mesh-direct.md) — gateway-free BT-Mesh
-  control; prototypes in `tools/bt-mesh-direct/`.
+- [docs/bt-mesh-direct.md](docs/bt-mesh-direct.md) — how the gateway talks
+  to the devices on the mesh (model map, vendor property opcodes, its own
+  node role); the working gateway-free client is the sibling project
+  `junghome-bt-mesh` (Mesh Proxy client). `tools/bt-mesh-direct/` holds stale
+  EFR32/ESP32 sketches (v2.0.0 send path, no vendor models).
 - [docs/matter-bridge.md](docs/matter-bridge.md) — Matter options.
 
 ## Key behaviours to preserve
 
-- **Stable identity.** The gateway regenerates device/datapoint `id`s on
-  firmware updates, so entity `unique_id`s and device identifiers derive from
-  the device **label** + datapoint **suffix** (`stable_unique_id`), never the
-  raw id. Don't reintroduce id-based identifiers.
+- **Stable identity.** Device/datapoint `id`s have been observed to change
+  across app-driven firmware updates, so entity `unique_id`s and device
+  identifiers derive from the device **label** + datapoint **suffix**
+  (`stable_unique_id`), never the raw id. The ids are not random: per the
+  2026-09-15 audit a device id is `"id"` + `md5(node UUID + hex(location))[:15]`
+  and a scene id is `"id"` + hex(scene number) — so an id changes whenever a
+  node is re-provisioned (new UUID) or its location/element mapping is
+  re-enumerated, which is what those updates did. The gateway *does* expose
+  hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
+  unicast / locations — tracker §3), but the label-keyed design stays.
+  Don't reintroduce id-based identifiers.
 - **Entry identity vs. entity identity are decoupled.** Entries are keyed
   (`unique_id`) on the gateway hardware serial when known (mDNS TXT
   `serial=`, or REST `config/parameter/system_serial`), and legacy entries
@@ -411,28 +462,42 @@ or "clean — nothing above P3 survived verification."
 
 ## Backlog (open, in rough value order)
 
-- **Cover travel states** — half-unblocked by firmware evidence: every
-  composed `level` datapoint always carries a `level_move` value (−1/1/0)
-  derived from current-vs-target (`PositionState.fromMeshMessage` computes
-  mode opening/closing/stopped), so `is_opening`/`is_closing` could be read
-  from `level` pushes today. Still needed before building it: a capture of a
-  blind actually moving, to learn whether intermediate `level` pushes stream
-  during travel (drives whether position can track live or only jump).
-  Capture it with `tools/ws-capture/capture_ws.py capture --script cover`.
+- **Audit tracker** — `docs/cross-repo-analysis.md` (2026-09-15) holds the
+  open bugs (P1: reauth never reloads a `SETUP_ERROR` entry), improvements
+  and doc corrections from the cross-repo audit, plus the now-established
+  mechanism of the double-reporting rockers (gateway synthesises the
+  release; device fw 2.2.0.2 double-publishes; key elements alternate
+  sides). Prefer it over re-deriving those facts; the two bullets below
+  are superseded where they conflict with it.
+- **Cover travel states** — less unblocked than it looked: a composed
+  `level` datapoint carries a `level_move` value (−1/1/0) derived from
+  current-vs-target (`PositionState.fromMeshMessage` computes mode
+  opening/closing/stopped), but per the audit `extractTargetValue` slices
+  the *last two octets* of the status parameters, which makes `level_move`
+  **structurally always 0** — `is_opening`/`is_closing` cannot be read from
+  `level` pushes as they stand. No cover exists in any capture or in the
+  reference network. Still needed before building anything: a capture of a
+  blind actually moving (`tools/ws-capture/capture_ws.py capture --script
+  cover` — note its script drives an API move whose `level` reports the
+  *target* for ~4 s, so read the result with that in mind), to learn whether
+  intermediate `level` pushes stream during travel.
 - **Button gesture handling must be rebuilt for double-reporting firmware**
-  — labelled capture done (see the rocker protocol bullet; numbers final).
-  On affected firmware every blueprint path is wrong: single fires twice
-  (or as double when the burst gap lands inside the 0.4 s window), double
-  fires single twice, only hold works. Since single-vs-double is provably
-  unrecoverable there, the plan (user decision pending on the double-click
-  strategy): (1) integration-level duplicate suppression in `event.py` —
-  fire on the FIRST press, ignore a press within ~1.2 s of the previous
-  release on the same datapoint; opt-in via options flow, covers device
-  triggers and hand-written automations, no added latency; (2) derived
-  `click`/`hold` event types classified on pulse width (taps ≤0.53 s, holds
-  ≥2.44 s — clean 5× band), replacing the blueprint's timing gymnastics;
-  (3) keep `double_action` for unaffected firmware, documented as such.
-  First: user checks the JUNG app for the button key-mode / device-fw
-  change and reports the regression upstream — a config fix at source
-  beats all of this. Verify any change on a second rocker before shipping
-  (all measurements so far are one button).
+  — labelled capture done and the mechanism is established (see the rocker
+  protocol bullet; numbers final). On affected firmware every blueprint path
+  is wrong: single fires twice (or as double when the burst gap lands inside
+  the 0.4 s window), double fires single twice, only hold works. Since
+  single-vs-double is provably unrecoverable there, the plan (user decision
+  pending on the double-click strategy): (1) integration-level duplicate
+  suppression in `event.py` — fire on the FIRST press, ignore a press within
+  ~1.2 s of the previous release **on the same device** (not datapoint: a
+  key element's second copy arrives on the other side); opt-in via options
+  flow, covers device triggers and hand-written automations, no added
+  latency; (2) derived `click`/`hold` event types classified on pulse width
+  (taps ≤0.53 s, holds ≥2.44 s — clean 5× band), replacing the blueprint's
+  timing gymnastics; (3) keep `double_action` for unaffected firmware,
+  documented as such. First: report upstream — the fix at source is a
+  one-line counter dedupe in the gateway's `btmesh_property_service.js`
+  (it ignores the `0x5012` counter byte), or the device firmware's double
+  publication. Verify any change on a rocker element *and* a single-key
+  element before shipping (they differ; all measurements so far are one
+  rocker).

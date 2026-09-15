@@ -59,16 +59,22 @@ bridged-device support for some domains (e.g. events from rocker switches) is
 limited by what Matter device types exist; check the project's current support
 matrix.
 
-### Option: roll your own with `matter.js`
+### Option: gateway-free, via the Bluetooth-direct sibling project
 
-If you go the [gateway-free BT-Mesh route](bt-mesh-direct.md), you can wrap that
-layer in a [`matter.js`](https://github.com/project-chip/matter.js) bridge to
-expose devices to Matter natively, end to end, without HA in the path.
+The [gateway-free BT-Mesh route](bt-mesh-direct.md) **exists now**: the sibling
+project `junghome-bt-mesh` (`custom_components/junghome_ble` + its mesh stack
+`jhmesh`) controls JUNG devices from Home Assistant through any node's GATT
+proxy, over a plain BLE adapter or an ESPHome Bluetooth proxy — no gateway, no
+mesh chip. Its HA entities can be bridged with `home-assistant-matter-hub`
+exactly like this integration's. Wrapping `jhmesh` itself in a
+[`matter.js`](https://github.com/project-chip/matter.js) bridge (Matter natively,
+end to end, without HA in the path) remains a project nobody has done.
 
 ## Recommendation
 
 - Want Matter now, least effort: **`home-assistant-matter-hub`** on top of this
-  integration.
-- Want it native/gateway-free: **BT-Mesh direct + a `matter.js` bridge** (a real
-  project).
-- Want JUNG's own bridge: **wait for firmware** that ships `matter-interface`.
+  integration (or on top of the sibling project if you run without a gateway).
+- Want it native without HA: **the sibling's `jhmesh` + a `matter.js` bridge**
+  (the mesh half exists; the bridge half is a real project).
+- Want JUNG's own bridge: **wait for firmware** that ships `matter-interface`
+  (nothing is implemented in v2.1.3 — `sdb2/opt/matter-interface/` is empty).
