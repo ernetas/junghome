@@ -245,6 +245,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # over REST (`async_fetch_gateway_version`). This is what a device page
         # should show as `sw_version`.
         self.gateway_version: str | None = None
+        # Device-registry id of the synthetic gateway (hub) device, set by
+        # ``async_setup_entry`` right after it registers the hub and before any
+        # platform loads. Entities link their device to the hub through it
+        # (``via_device_id``) on cores that know that key — see
+        # ``JungHomeEntity.device_info``.
+        self.gateway_device_registry_id: str | None = None
         # The REST/WebSocket API version the gateway implements, e.g. "1.5.0",
         # announced in the WebSocket handshake's `version` frame. It is
         # `api-junghome`'s own package version — a protocol number, NOT the

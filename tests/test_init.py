@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_component import DATA_INSTANCES
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from syrupy.assertion import SnapshotAssertion
 
@@ -48,6 +49,7 @@ from custom_components.junghome.diagnostics import (
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
 )
+from custom_components.junghome.entity import JungHomeEntity
 from custom_components.junghome.event import JungHomeEventEntity
 from tests.conftest import (
     DEVICES,
@@ -2095,6 +2097,47 @@ async def test_devices_linked_to_gateway_hub(
     light = dev_reg.async_get_device(identifiers={(DOMAIN, "hall_light")})
     assert light is not None
     assert light.via_device_id == hub.id
+    # setup handed the hub's registry id to the coordinator for the
+    # ``via_device_id`` form of that link
+    assert init_integration.runtime_data.gateway_device_registry_id == hub.id
+
+
+async def test_device_info_links_the_hub_by_registry_id_when_the_core_can(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """``device_info`` prefers ``via_device_id`` and falls back to the tuple.
+
+    HA 2026.9's deprecation of the ``via_device`` tuple raised (not warned)
+    under ``update_before_add=True``, dropping one entity per startup (issue
+    #207). The registry-id form exists from 2026.8; older cores reject it, so
+    the choice is made from what this core's ``DeviceInfo`` knows. The pinned
+    test core predates the key, hence the flag is driven explicitly here.
+    """
+    hub = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
+    assert hub is not None
+    light = hass.data[DATA_INSTANCES]["light"].get_entity("light.hall_light")
+    assert isinstance(light, JungHomeEntity)
+
+    with patch("custom_components.junghome.entity.VIA_DEVICE_ID_SUPPORTED", True):
+        info = light.device_info
+        assert info is not None
+        assert info.get("via_device_id") == hub.id
+        assert "via_device" not in info
+
+        # no registry id (a coordinator that never went through setup) keeps
+        # the tuple so the link is not silently lost
+        light.coordinator.gateway_device_registry_id = None
+        info = light.device_info
+        assert info is not None
+        assert "via_device_id" not in info
+        assert info.get("via_device") == (DOMAIN, "gateway_1.2.3.4")
+
+    with patch("custom_components.junghome.entity.VIA_DEVICE_ID_SUPPORTED", False):
+        light.coordinator.gateway_device_registry_id = hub.id
+        info = light.device_info
+        assert info is not None
+        assert "via_device_id" not in info
+        assert info.get("via_device") == (DOMAIN, "gateway_1.2.3.4")
 
 
 async def test_notify_websocket_closed_skips_during_teardown(
