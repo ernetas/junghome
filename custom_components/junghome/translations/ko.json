@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "위" },
-      "down": { "name": "아래" },
-      "press": { "name": "누름" }
+      "up": {
+        "name": "위",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "눌림",
+              "depressed": "놓임",
+              "click": "클릭",
+              "hold_start": "길게 누름 시작",
+              "hold_end": "길게 누름 종료"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "아래",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "눌림",
+              "depressed": "놓임",
+              "click": "클릭",
+              "hold_start": "길게 누름 시작",
+              "hold_end": "길게 누름 종료"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "누름",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "눌림",
+              "depressed": "놓임",
+              "click": "클릭",
+              "hold_start": "길게 누름 시작",
+              "hold_end": "길게 누름 종료"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "전력" },

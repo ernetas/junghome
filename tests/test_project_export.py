@@ -378,11 +378,59 @@ def test_a_function_the_export_does_not_cover_has_no_identity() -> None:
                 ]
             }
         },
+        # Unicode digits: ``"²".isdigit()`` is True, ``int("²")`` raises.
+        {"meta": {"devices": [{"deviceId": {"nodeId": NODE_A, "locationIds": ["²"]}}]}},
+        # Past CPython's 4300-digit limit for decimal strings (ValueError).
+        {
+            "meta": {
+                "devices": [
+                    {"deviceId": {"nodeId": NODE_A, "locationIds": ["9" * 5000]}}
+                ]
+            }
+        },
+        # An inner CDB nested deeply enough to overflow the JSON parser's
+        # stack (RecursionError, not JSONDecodeError).
+        {
+            "network": base64.b64encode(
+                ("[" * 1_000_000 + "]" * 1_000_000).encode()
+            ).decode()
+        },
+        # Base64 of bytes that are not UTF-8 (UnicodeDecodeError).
+        {"network": base64.b64encode(b"\xff\xfe\x00").decode()},
     ],
 )
 def test_parse_tolerates_malformed_documents(document: object) -> None:
     """Untrusted gateway JSON: garbage yields nothing, never an exception."""
     assert parse_project_export(document) == {}
+
+
+def test_parse_skips_unparseable_indices_and_absurd_locations() -> None:
+    """The same hostile numbers inside an otherwise good CDB node.
+
+    A Unicode-digit or 5000-digit ``index`` reads as "no index" (the element
+    keeps its location and falls back to the node's unicast); a 100 000-digit
+    hex ``location`` is not a location descriptor and drops the element.
+    """
+    document = {
+        "nodes": [
+            {
+                "UUID": NODE_A,
+                "unicastAddress": "00CF",
+                "elements": [
+                    {"index": "³", "location": "0001"},
+                    {"index": "9" * 5000, "location": "0002"},
+                    {"index": 2, "location": "F" * 100_000},
+                ],
+            }
+        ]
+    }
+    identities = parse_project_export(document)
+    assert set(identities) == {
+        function_id_for(NODE_A, 1),
+        function_id_for(NODE_A, 2),
+    }
+    assert identities[function_id_for(NODE_A, 1)].unicast == 0xCF
+    assert identities[function_id_for(NODE_A, 2)].unicast == 0xCF
 
 
 def test_parse_keeps_the_good_parts_of_a_partly_malformed_export() -> None:

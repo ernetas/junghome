@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Omhoog" },
-      "down": { "name": "Omlaag" },
-      "press": { "name": "Druk" }
+      "up": {
+        "name": "Omhoog",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Omlaag",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Druk",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Vermogen" },

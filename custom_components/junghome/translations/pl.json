@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Góra" },
-      "down": { "name": "Dół" },
-      "press": { "name": "Naciśnięcie" }
+      "up": {
+        "name": "Góra",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Naciśnięty",
+              "depressed": "Zwolniony",
+              "click": "Kliknięcie",
+              "hold_start": "Początek przytrzymania",
+              "hold_end": "Koniec przytrzymania"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Dół",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Naciśnięty",
+              "depressed": "Zwolniony",
+              "click": "Kliknięcie",
+              "hold_start": "Początek przytrzymania",
+              "hold_end": "Koniec przytrzymania"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Naciśnięcie",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Naciśnięty",
+              "depressed": "Zwolniony",
+              "click": "Kliknięcie",
+              "hold_start": "Początek przytrzymania",
+              "hold_end": "Koniec przytrzymania"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Moc" },

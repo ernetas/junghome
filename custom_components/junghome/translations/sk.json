@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Nahor" },
-      "down": { "name": "Nadol" },
-      "press": { "name": "Stlačenie" }
+      "up": {
+        "name": "Nahor",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stlačené",
+              "depressed": "Uvoľnené",
+              "click": "Kliknutie",
+              "hold_start": "Začiatok podržania",
+              "hold_end": "Koniec podržania"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Nadol",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stlačené",
+              "depressed": "Uvoľnené",
+              "click": "Kliknutie",
+              "hold_start": "Začiatok podržania",
+              "hold_end": "Koniec podržania"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Stlačenie",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stlačené",
+              "depressed": "Uvoľnené",
+              "click": "Kliknutie",
+              "hold_start": "Začiatok podržania",
+              "hold_end": "Koniec podržania"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Výkon" },

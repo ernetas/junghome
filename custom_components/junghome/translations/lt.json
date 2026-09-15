@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Aukštyn" },
-      "down": { "name": "Žemyn" },
-      "press": { "name": "Paspaudimas" }
+      "up": {
+        "name": "Viršutinis",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Apatinis",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Paspaudimas",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Galia" },

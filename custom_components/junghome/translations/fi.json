@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Ylös" },
-      "down": { "name": "Alas" },
-      "press": { "name": "Painallus" }
+      "up": {
+        "name": "Ylös",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Painettu",
+              "depressed": "Vapautettu",
+              "click": "Napsautus",
+              "hold_start": "Pito alkoi",
+              "hold_end": "Pito päättyi"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Alas",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Painettu",
+              "depressed": "Vapautettu",
+              "click": "Napsautus",
+              "hold_start": "Pito alkoi",
+              "hold_end": "Pito päättyi"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Painallus",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Painettu",
+              "depressed": "Vapautettu",
+              "click": "Napsautus",
+              "hold_start": "Pito alkoi",
+              "hold_end": "Pito päättyi"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Teho" },

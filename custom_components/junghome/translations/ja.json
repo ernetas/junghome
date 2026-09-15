@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "上" },
-      "down": { "name": "下" },
-      "press": { "name": "押下" }
+      "up": {
+        "name": "上",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "押下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "電力" },

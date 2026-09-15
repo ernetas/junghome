@@ -200,7 +200,7 @@ async def test_presence_labelled_quantity_still_goes_to_binary_sensor(
         await hass.async_block_till_done()
 
     assert hass.states.get("sensor.boiler_presence_detected") is None
-    assert hass.states.get("binary_sensor.boiler_presence_detected") is not None
+    assert hass.states.get("binary_sensor.boiler_occupancy") is not None
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

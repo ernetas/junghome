@@ -19,7 +19,10 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from custom_components.junghome.diagnostics import async_get_device_diagnostics
+from custom_components.junghome.diagnostics import (
+    async_get_config_entry_diagnostics,
+    async_get_device_diagnostics,
+)
 from tests.conftest import _fake_run_websocket, find_device
 
 HOST = "192.168.1.50"
@@ -93,6 +96,47 @@ async def test_hub_device_diagnostics_do_not_leak_the_anchor(
     assert diag["last_error"].startswith("Cannot connect to host **REDACTED**:443")
     # The hub is not one of the gateway's functions, so it has no payload.
     assert diag["device"] is None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_entry_diagnostics_scrub_the_host_out_of_the_title(
+    hass: HomeAssistant,
+) -> None:
+    """The entry title is free-form text and the flow fills it with the host.
+
+    ``Jung Home (<host>)`` is what every entry created by the config flow is
+    called, and ``TO_REDACT`` keys cannot reach it — so it re-leaked exactly
+    the value the ``data`` redaction removes. It takes the same literal sweep
+    as ``last_error`` and the raw frames; a user's own rename that quotes the
+    serial is swept the same way.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SERIAL,
+        title=f"Jung Home ({HOST}) sn {SERIAL}",
+        data={CONF_HOST: HOST, CONF_TOKEN: "tok", CONF_SERIAL: SERIAL},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["entry"]["title"] == "Jung Home (**REDACTED**) sn **REDACTED**"
+    dump = json.dumps(diag, default=str)
+    assert HOST not in dump
+    assert SERIAL not in dump
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

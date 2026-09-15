@@ -86,7 +86,13 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
     """A Jung Home presence/occupancy detection (boolean quantity)."""
 
     # Secondary entity on the device (the detector also has a lux sensor), so HA
-    # prepends the device name: entity_id `binary_sensor.<device>_presence_detected`.
+    # prepends the device name. The entity's own name is deliberately NOT set:
+    # with no name, Home Assistant names a binary sensor by its device class,
+    # localised ("Occupancy"), so the entity reads in the user's language —
+    # the gateway's English datapoint label ("Presence Detected") was baked in
+    # verbatim before. The label still keys the `unique_id`, so existing
+    # registrations (and their entity_ids) are untouched; only new ones get
+    # `binary_sensor.<device>_occupancy`.
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
 
     def __init__(
@@ -100,7 +106,6 @@ class JungHomePresence(JungHomeEntity, BinarySensorEntity):
         super().__init__(coordinator, device)
         self._datapoint = datapoint
         self._datapoint_id = datapoint["id"]
-        self._attr_name = label
         self._name = f"{device.get('label', 'Jung Device')} {label}"  # for logging
         # Firmware-stable id derived from the label, not the volatile device id.
         self._attr_unique_id = stable_unique_id(

@@ -127,9 +127,48 @@
       }
     },
     "event": {
-      "up": { "name": "Upp" },
-      "down": { "name": "Ner" },
-      "press": { "name": "Tryck" }
+      "up": {
+        "name": "Upp",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Nedtryckt",
+              "depressed": "Släppt",
+              "click": "Klick",
+              "hold_start": "Långtryck startat",
+              "hold_end": "Långtryck avslutat"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Ner",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Nedtryckt",
+              "depressed": "Släppt",
+              "click": "Klick",
+              "hold_start": "Långtryck startat",
+              "hold_end": "Långtryck avslutat"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Tryck",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Nedtryckt",
+              "depressed": "Släppt",
+              "click": "Klick",
+              "hold_start": "Långtryck startat",
+              "hold_end": "Långtryck avslutat"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Effekt" },

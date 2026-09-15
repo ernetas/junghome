@@ -558,3 +558,24 @@ async def test_nan_button_state_is_not_an_edge(
 
     assert events == []
     assert hass.states.get("event.button_a_up").state == before
+
+
+async def test_genuine_press_after_the_copy_but_within_the_window_is_kept(
+    rocker: _Rocker, bus_events
+) -> None:
+    """Only the FIRST press after a click is a duplicate candidate.
+
+    ``is_duplicate_press`` consumes the click whether or not it drops the
+    press, so a genuine second tap that lands after the copy but still inside
+    1.2 s of the first click's release (tap, copy, tap in quick succession)
+    must fire — a tracker that kept the click armed dropped it. Timeline: tap
+    released at 0.4 s, copy 0.9-1.3 s, real press at 1.5 s (1.1 s after the
+    click's release).
+    """
+    await rocker.tap()
+    tap = [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+    assert bus_events == tap
+    await rocker.edge(UP, "1", after=0.2)
+    assert bus_events == [*tap, ("up", "pressed")]
+    await rocker.edge(UP, "0", after=TAP_PULSE)
+    assert bus_events == tap * 2

@@ -130,13 +130,46 @@
     },
     "event": {
       "up": {
-        "name": "Up"
+        "name": "Up",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "depressed": "Released",
+              "click": "Click",
+              "hold_start": "Hold start",
+              "hold_end": "Hold end"
+            }
+          }
+        }
       },
       "down": {
-        "name": "Down"
+        "name": "Down",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "depressed": "Released",
+              "click": "Click",
+              "hold_start": "Hold start",
+              "hold_end": "Hold end"
+            }
+          }
+        }
       },
       "press": {
-        "name": "Press"
+        "name": "Press",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressed",
+              "depressed": "Released",
+              "click": "Click",
+              "hold_start": "Hold start",
+              "hold_end": "Hold end"
+            }
+          }
+        }
       }
     },
     "sensor": {
