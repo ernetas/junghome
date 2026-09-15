@@ -10,19 +10,27 @@ state of anything in your installation.
 
 ## What it's for
 
-Two things in this repo are blocked on real timing evidence:
+Two things in this repo need real timing evidence:
 
 1. **Rocker buttons.** The shipped blueprint derives single/double/hold from raw
-   `pressed`/`depressed` edges, and its defaults (2 s hold, 0.4 s double-click
-   window) plus the "one channel can echo the other" guidance in
-   [docs/example-button-automation.md](../../docs/example-button-automation.md)
-   rest on field reports rather than a measured capture.
-2. **Cover travel states.** The firmware computes an opening/closing/stopped
-   mode and puts `level_move` in every `level` datapoint
-   (`PositionState.fromMeshMessage`), so travel *direction* is available — but
-   whether intermediate positions actually stream during a move has never been
-   observed. That decides whether a cover can track position live or only jump
-   to the target.
+   `pressed`/`depressed` edges. The mechanism behind what those edges look
+   like is established (see §1.1 of
+   [docs/cross-repo-analysis.md](../../docs/cross-repo-analysis.md)): the
+   gateway synthesises the release, so a tap is a ~0.4–0.5 s pulse, and device
+   firmware 2.2.0.2 publishes every event twice ~1 s apart, so a tap arrives as
+   **two** pairs and a hold as **one**. The second copy lands on the *same*
+   channel on a rocker half and on the *other* channel on a single-key element
+   (the gateway toggles the side on each reception — there is no echo). A
+   capture measures your own firmware's numbers; a single-key element has
+   never been captured at all.
+2. **Cover travel states.** Whether intermediate positions stream during a
+   move has never been observed — that decides whether a cover can track
+   position live or only jump to the target. (`level_move` is *not* the
+   answer: the firmware slices the wrong octets, so it is always `0`.)
+   **Drive the blind from its wall button**, never from Home Assistant or the
+   app: a move commanded through the gateway's API reports the *target* level
+   for ~4 s before the device's own status catches up, which looks exactly
+   like a streamed position and would answer the question wrongly.
 
 ## Running it
 
@@ -55,7 +63,10 @@ Scripts available: `--script rocker` (default), `--script cover`, or
 
 For the rocker script, pick **one physical rocker** and use the same button
 throughout — "button A" means the same side every time, "button B" its
-sibling. The `alternate` step is what exposes a sibling-channel echo.
+sibling. The `single-b` step is what tells a rocker (each side its own
+channel) from a single-key element (the two copies of one tap alternate
+channels); `alternate` is deliberate ~1 s alternation to compare against the
+firmware's own doubled copies.
 
 ## Reading it back
 
@@ -64,11 +75,11 @@ python capture_ws.py analyze disk_dump/ws-capture-<stamp>/frames.jsonl
 ```
 
 This prints the edges per gesture, flags when more than one channel fired
-inside a single gesture (echo or genuine alternation), and derives the timing
-bounds the blueprint defaults depend on — press→release durations and
-press→press gaps, reported **per gesture** rather than pooled, because a
-double-click gap and two deliberately separate presses are both "gaps" and
-mixing them would justify any window at all.
+inside a single gesture (a single-key element's alternating copies, or both
+sides pressed), and derives the timing bounds the blueprint defaults depend
+on — press→release durations and press→press gaps, reported **per gesture**
+rather than pooled, because a double-click gap and two deliberately separate
+presses are both "gaps" and mixing them would justify any window at all.
 
 It also reports the **burst shape** — presses per physical gesture — which is
 the doubled-reporting diagnostic: 1.00 is clean, 2.00 is the affected device
@@ -80,8 +91,10 @@ instructed groups, so if you can't use the interactive script, just leave
 15-second hands-off pauses between gesture groups.
 
 For cover captures it reports how many `level` frames arrived during each
-move — more than a couple means the gateway streams intermediate positions —
-plus the `level_move` values seen.
+move — more than a couple means the gateway streams intermediate positions,
+**provided the move was started from the wall button** (an API-driven move
+adds a target-level frame that is not a position; the output repeats this
+caveat) — plus the `level_move` values seen.
 
 ## Output and privacy
 

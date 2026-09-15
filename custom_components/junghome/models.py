@@ -42,9 +42,12 @@ class Device(TypedDict):
 class Scene(TypedDict):
     """A gateway scene (``GET /scenes``).
 
-    ``id`` is volatile (regenerated on firmware updates, like a device id), so
-    the scene platform anchors identity on the stable ``label`` and re-resolves
-    ``id`` from the coordinator's scene list at activation time.
+    ``id`` is derived, not opaque — ``"id"`` + hex(mesh scene number), so
+    ``id0001`` ↔ ``value`` ``"0001"`` — and the number is the app's to
+    reassign. The scene platform anchors identity on the ``label`` (the scene
+    as the user sees it, and what existing installs' ``unique_id``s are keyed
+    on) and re-resolves ``id`` from the coordinator's scene list at activation
+    time.
     """
 
     id: str

@@ -36,16 +36,20 @@ PLATFORMS: list[Platform] = [
     Platform.SCENE,
 ]
 
-# Consecutive polls a device must be absent from before it is pruned. The
-# gateway occasionally returns a partial device list on a single poll (notably
-# right after a reload); pruning on the first miss would delete a live device's
-# entities — and because identity is label-derived, the platform would then
-# re-create them under whatever label the next poll reports, losing the user's
-# entity_id/customisations. Requiring persistence rides out a transient blip.
+# Consecutive device-list adoptions (REST polls or `functions` broadcasts —
+# every `coordinator.data_generation` bump) a device must be absent from before
+# it is pruned. The gateway occasionally returns a partial device list on a
+# single poll (notably right after a reload); pruning on the first miss would
+# delete a live device's entities — and because identity is label-derived, the
+# platform would then re-create them under whatever label the next poll
+# reports, losing the user's entity_id/customisations. Requiring persistence
+# rides out a transient blip.
 #
-# The threshold is deliberately generous (10 polls — about 10 minutes at the
-# default 60 s interval; the window scales with the configured one, up to 10
-# hours at the 1 h ceiling). Removal is destructive and irreversible from the
+# The threshold is deliberately generous (10 adoptions — at most about 10
+# minutes at the default 60 s interval, since the poll supplies one per
+# interval and each broadcast (WS connect, an app edit) adds another; the
+# window scales with the configured interval, up to 10 hours at the 1 h
+# ceiling). Removal is destructive and irreversible from the
 # user's side — it takes the entity registry entries with it, so custom names,
 # areas and entity_ids are lost and automations referencing them break — while
 # the cost of removing late is only that a device the user deleted in the app

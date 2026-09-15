@@ -1,10 +1,12 @@
 """Scene platform for Jung Home.
 
 Scenes are recalled via REST (``POST /scenes/{id}``) — the WebSocket ``scene``
-command is not implemented on the gateway. The scene ``id`` is volatile (it is
-regenerated on firmware updates, like a device id), so identity is anchored on
-the stable ``label`` and the current ``id`` is re-resolved from the
-coordinator's scene list at activation time.
+command is not implemented on the gateway. The scene ``id`` is derived
+(``"id"`` + hex(mesh scene number) — a number the app assigns and may
+reassign), so identity is anchored on the ``label`` (the scene as the user
+sees it, and what existing installs' ``unique_id``s are keyed on) and the
+current ``id`` is re-resolved from the coordinator's scene list at activation
+time.
 """
 
 import logging
