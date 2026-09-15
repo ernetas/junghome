@@ -122,8 +122,8 @@ verifies the address actually belongs to *this* gateway before saving.
   backstop: live state keeps arriving over the WebSocket regardless, so a
   longer interval mainly reduces gateway load. It does stretch everything the
   poll drives — a device added while the WebSocket is down appears up to one
-  interval later, and the ten-poll debounce before a removed device disappears
-  scales with it (ten hours at the maximum).
+  interval later, and the ten-miss debounce before a removed device disappears
+  scales with it (up to ten hours at the maximum).
 - **Inverted covers (awnings)** — flag covers whose position is reported
   backwards, as described under [What works](#what-works).
 
@@ -242,9 +242,10 @@ app or the gateway was factory-reset. Follow the reauth prompt: press submit
 to send a new access request, then approve it in the Jung Home app.
 
 **A device disappeared from Home Assistant.**
-The integration removes a device once the gateway has stopped reporting it for
-ten consecutive polls (about ten minutes at the default
-[poll interval](#options), longer if you raised it) — that is how a device you
+The integration removes a device once it has been missing from ten consecutive
+device lists — REST polls, plus the list the gateway pushes over the WebSocket
+on connect and on every change — so at most about ten minutes at the default
+[poll interval](#options), longer if you raised it. That is how a device you
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
 device is still installed, make sure it is powered and in range of the mesh;

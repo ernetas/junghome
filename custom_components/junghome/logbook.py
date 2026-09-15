@@ -23,6 +23,12 @@ def async_describe_events(
     def async_describe_scene_recalled_event(event: Event) -> dict[str, str]:
         """Describe a junghome_scene_recalled logbook event."""
         label = event.data.get("label") or event.data.get("scene_id")
+        # English on purpose, unlike everything else in this integration: the
+        # logbook API has no translation hook — a describer is a sync callback
+        # returning literal strings, runs in the server's language rather than
+        # the viewing user's, and `strings.json` has no category hassfest would
+        # accept for it. Core's own describers (automation, deconz, shelly,
+        # zha, …) hard-code English the same way. Revisit if core grows one.
         entry = {
             LOGBOOK_ENTRY_NAME: str(label) if label is not None else "Scene",
             LOGBOOK_ENTRY_MESSAGE: "was recalled",
