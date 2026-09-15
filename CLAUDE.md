@@ -16,10 +16,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
-    (REST poll interval, inverted covers).
-  - `const.py` — `DOMAIN` and the stable-ID helpers (`device_slug`,
+    (REST poll interval, duplicate-press suppression, inverted covers).
+  - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
-    `scene_unique_id`, `is_presence_quantity`).
+    `scene_unique_id`, `is_presence_quantity`), the option keys and the
+    button gesture constants (`BUTTON_EVENT_TYPES`, `BUTTON_HOLD_THRESHOLD`,
+    `BUTTON_DUPLICATE_WINDOW`, `CONF_SUPPRESS_DUPLICATE_PRESSES`).
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
@@ -30,8 +32,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   blueprint's defaults rest on. This is how the two evidence-blocked backlog
   items get unblocked; the old `disk_dump/ws-capture*/` dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
-  deriving single/double/hold from raw press/release edges. Imported by URL;
-  **not** distributed by HACS (HACS only installs `custom_components/`).
+  mapping the event platform's `click`/`hold_start` events to actions (plus
+  an opt-in legacy double-click path for pre-2.2.0 device firmware). Imported
+  by URL; **not** distributed by HACS (HACS only installs `custom_components/`).
 - `docs/` — reverse-engineered gateway reference (see below) plus
   `docs/example-button-automation.md` (user-facing guide).
 - `config/`, `docker-compose.yml`, `scripts/` — local test harness.
@@ -92,6 +95,23 @@ JUNG HOME Gateway over its REST API and WebSocket.
   other datapoint; earlier 0.15–0.25 s guidance came from a mis-segmented
   unlabelled capture — refuted). Evidence + tables in
   docs/gateway-websocket.md.
+- **Button gestures are derived in `event.py`, and duplicates dropped there
+  (settled 2026-09-16).** Every entity re-fires the raw `pressed`/`depressed`
+  edges and adds `click` (release before `BUTTON_HOLD_THRESHOLD` = 1.0 s),
+  `hold_start` (an `async_call_later` timer at the threshold; cancelled on
+  release/unload/unavailable) and `hold_end` (at the release; if the release
+  was never reported, on the next edge on that side — the pair is always
+  balanced). Duplicate suppression is **on by default**
+  (`CONF_SUPPRESS_DUPLICATE_PRESSES`, options flow): after a click, the next
+  press on the same **device** — a `ButtonGestureTracker` shared by both
+  sides — within `BUTTON_DUPLICATE_WINDOW` = 1.2 s is dropped with its
+  release, edges included; a dropped press still down at the hold threshold
+  is reinstated as a hold (a copy is a ~0.4 s pulse). Tap vs hold is pulse
+  width only; there is **no double-click detector** and none is possible over
+  the API — the blueprint's `double_action` is a legacy opt-in for
+  pre-2.2.0 device firmware with suppression turned off. Key-element holds
+  through the gateway are still uncaptured (a "press while down" restarts the
+  measurement to cover the stuck-side shape the code predicts).
 - **Every button element exposes BOTH `up_request` and `down_request`**, even
   a single-key one: the firmware's `JungHome_PushButton` model always creates
   PushedUp + PushedDown + StatusLed states (`trigger_request` exists only in
@@ -501,23 +521,11 @@ or "clean — nothing above P3 survived verification."
   cover` — note its script drives an API move whose `level` reports the
   *target* for ~4 s, so read the result with that in mind), to learn whether
   intermediate `level` pushes stream during travel.
-- **Button gesture handling must be rebuilt for double-reporting firmware**
-  — labelled capture done and the mechanism is established (see the rocker
-  protocol bullet; numbers final). On affected firmware every blueprint path
-  is wrong: single fires twice (or as double when the burst gap lands inside
-  the 0.4 s window), double fires single twice, only hold works. Since
-  single-vs-double is provably unrecoverable there, the plan (user decision
-  pending on the double-click strategy): (1) integration-level duplicate
-  suppression in `event.py` — fire on the FIRST press, ignore a press within
-  ~1.2 s of the previous release **on the same device** (not datapoint: a
-  key element's second copy arrives on the other side); opt-in via options
-  flow, covers device triggers and hand-written automations, no added
-  latency; (2) derived `click`/`hold` event types classified on pulse width
-  (taps ≤0.53 s, holds ≥2.44 s — clean 5× band), replacing the blueprint's
-  timing gymnastics; (3) keep `double_action` for unaffected firmware,
-  documented as such. First: report upstream — the fix at source is a
-  one-line counter dedupe in the gateway's `btmesh_property_service.js`
-  (it ignores the `0x5012` counter byte), or the device firmware's double
-  publication. Verify any change on a rocker element *and* a single-key
-  element before shipping (they differ; all measurements so far are one
-  rocker).
+- **Button gestures — verify on hardware.** The rebuild landed (see the
+  "Button gestures are derived in `event.py`" bullet under protocol facts);
+  what remains is a live check on a rocker element *and* a single-key
+  element (all measurements so far are one rocker; a key element's hold
+  through the gateway is uncaptured and by the code leaves one side down),
+  and the upstream report — the fix at source is a one-line counter dedupe
+  in the gateway's `btmesh_property_service.js` (it ignores the `0x5012`
+  counter byte), or the device firmware's double publication.

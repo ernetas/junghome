@@ -87,10 +87,12 @@
         "description": "Kyselyväli määrittää, kuinka usein yhdyskäytävä luetaan uudelleen REST-rajapinnan kautta — live-päivitykset saapuvat edelleen WebSocketin kautta, joten pidempi väli lähinnä vähentää yhdyskäytävän kuormaa. Valitse verhot, joiden asento raportoidaan käänteisenä, kuten markiisit. Niiden asento käännetään, joten täysin suljettu näkyy arvona 0 prosenttia (suljettu) ja täysin avoin arvona 100 prosenttia (avoin). Jätä rullaverhot ja sälekaihtimet valitsematta.",
         "data": {
           "poll_interval": "Kyselyväli (sekuntia)",
-          "inverted_covers": "Käänteiset verhot (markiisit)"
+          "inverted_covers": "Käänteiset verhot (markiisit)",
+          "suppress_duplicate_presses": "Ohita kahdentuneet painallukset"
         },
         "data_description": {
-          "poll_interval": "30–3600 sekuntia (oletus 60)."
+          "poll_interval": "30–3600 sekuntia (oletus 60).",
+          "suppress_duplicate_presses": "JUNG-laitteiden nykyinen laiteohjelmisto ilmoittaa jokaisen painalluksen kahdesti. Kun tämä on käytössä, saman painikkeen painallus 1,2 sekunnin sisällä napsautuksesta ohitetaan, joten jokainen painallus laukeaa vain kerran. Poista käytöstä vain, jos painikkeesi ilmoittavat jokaisen painalluksen kerran (vanhempi laiteohjelmisto) ja tarvitset alle 1,2 sekunnin välein tapahtuvia painalluksia, esimerkiksi kaksoisnapsautuksia."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "painettu",
-      "depressed": "vapautettu"
+      "depressed": "vapautettu",
+      "click": "napsautettu",
+      "hold_start": "pidetty pohjassa (alku)",
+      "hold_end": "pidetty pohjassa (loppu)"
     }
   },
   "entity": {

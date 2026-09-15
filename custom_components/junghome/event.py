@@ -1,15 +1,53 @@
-"""Event platform for Jung Home rocker buttons."""
+"""Event platform for Jung Home rocker buttons.
+
+The gateway pushes raw ``pressed``/``depressed`` edges only. Every edge is
+re-fired verbatim (existing automations and device triggers rely on them),
+and on top of them each entity derives the gestures the gateway knew but
+discarded (docs/gateway-websocket.md, rocker section):
+
+- ``click`` — at the release of a press that lasted less than
+  ``BUTTON_HOLD_THRESHOLD``;
+- ``hold_start`` — by timer, once a press has lasted the threshold without a
+  release;
+- ``hold_end`` — at the release of a hold. Always paired with a
+  ``hold_start``: if the release was never reported (socket down, or a
+  single-key element's hold, which by the gateway code leaves one side down),
+  it fires on the next edge seen on that side instead.
+
+Tap vs hold is classified on pulse width alone (taps at most 0.53 s, holds at least 2.44 s
+in the labelled capture — a clean band). There is deliberately no double-click:
+on current device firmware a single and a double click are indistinguishable
+on the wire.
+
+**Duplicate suppression.** Device firmware 2.2.0.x reports every tap twice,
+so one tap arrives as two press/release pairs. After a click, the next press
+on the same *device* (either side — on a single-key element the copy lands on
+the other datapoint) within ``BUTTON_DUPLICATE_WINDOW`` is that copy: it and
+its release are dropped, edges included. A dropped press that is still down
+at the hold threshold was not a copy after all (copies are ~0.4 s pulses) but
+a real hold following a quick tap, so it is reinstated then: its ``pressed``
+edge fires late, followed by ``hold_start``. The option
+``CONF_SUPPRESS_DUPLICATE_PRESSES`` (default on) switches suppression off for
+older device firmware that reports each tap once.
+"""
 
 import logging
+from datetime import datetime
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.const import CONF_DEVICE_ID, CONF_TYPE, Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 
 from .const import (
     BUTTON_DATAPOINT_TYPES,
+    BUTTON_DUPLICATE_WINDOW,
+    BUTTON_EVENT_TYPES,
+    BUTTON_HOLD_THRESHOLD,
     CONF_SUBTYPE,
+    CONF_SUPPRESS_DUPLICATE_PRESSES,
+    DEFAULT_SUPPRESS_DUPLICATE_PRESSES,
     EVENT_BUTTON_ACTION,
     datapoint_bool,
     stable_unique_id,
@@ -31,6 +69,41 @@ PARALLEL_UPDATES = 0
 _EVENT_TRANSLATION_KEYS = BUTTON_DATAPOINT_TYPES
 
 
+class ButtonGestureTracker:
+    """Duplicate-press state shared by every event entity of one button element.
+
+    One instance per gateway device (a ``RockerSwitch`` function = one mesh
+    button element), handed to both of its ``up``/``down`` entities. The
+    duplicate copy of a tap lands on the same datapoint on a rocker half but on
+    the *other* datapoint on a single-key element, so the window has to be
+    per device, not per entity — which is the only reason this is not entity
+    state.
+    """
+
+    def __init__(self, *, suppress_duplicates: bool) -> None:
+        """Initialise with the entry's suppression option."""
+        self.suppress_duplicates = suppress_duplicates
+        # Loop time of the release that completed the last click, until the
+        # next press on any side has consumed it.
+        self._last_click_release: float | None = None
+
+    def note_click(self, now: float) -> None:
+        """Record the release that completed a click."""
+        self._last_click_release = now
+
+    def is_duplicate_press(self, now: float) -> bool:
+        """Whether a press arriving now is the firmware's copy of the last click.
+
+        Consumes the click either way: only the *next* press after a click is
+        a candidate, so a genuine second tap after the copy is never dropped.
+        """
+        if not self.suppress_duplicates or self._last_click_release is None:
+            return False
+        since_release = now - self._last_click_release
+        self._last_click_release = None
+        return since_release <= BUTTON_DUPLICATE_WINDOW
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: JungHomeConfigEntry,
@@ -39,6 +112,17 @@ async def async_setup_entry(
     """Set up Jung Home event entities from a config entry."""
     coordinator = entry.runtime_data
     known = coordinator.known_unique_ids(Platform.EVENT)
+    # Read once here — an options change reloads the entry (update listener in
+    # __init__), the same way cover.py reads its inverted-covers flags.
+    suppress_duplicates = bool(
+        entry.options.get(
+            CONF_SUPPRESS_DUPLICATE_PRESSES, DEFAULT_SUPPRESS_DUPLICATE_PRESSES
+        )
+    )
+    # Keyed by the gateway's device id — runtime-only state, never identity
+    # (see the stable-identity rules in CLAUDE.md), and the two datapoints of
+    # one device may be discovered on different passes.
+    trackers: dict[str, ButtonGestureTracker] = {}
 
     @callback
     def _discover_events() -> None:
@@ -55,8 +139,14 @@ async def async_setup_entry(
                         uid = stable_unique_id(device, datapoint, "event")
                         if not claim_new_entity(known, uid):
                             continue
+                        tracker = trackers.setdefault(
+                            str(device.get("id")),
+                            ButtonGestureTracker(
+                                suppress_duplicates=suppress_duplicates
+                            ),
+                        )
                         new_entities.append(
-                            JungHomeEventEntity(coordinator, device, datapoint)
+                            JungHomeEventEntity(coordinator, device, datapoint, tracker)
                         )
         if new_entities:
             async_add_entities(new_entities, update_before_add=True)
@@ -71,7 +161,7 @@ async def async_setup_entry(
 class JungHomeEventEntity(JungHomeEntity, EventEntity):
     """Event entity for Jung Home button presses."""
 
-    _attr_event_types = ["pressed", "depressed"]
+    _attr_event_types = list(BUTTON_EVENT_TYPES)
     _attr_device_class = EventDeviceClass.BUTTON
 
     # Edges only ever arrive as WebSocket pushes (``_handle_coordinator_update``
@@ -89,6 +179,7 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         coordinator: JungHomeDataUpdateCoordinator,
         device: Device,
         datapoint: Datapoint,
+        tracker: ButtonGestureTracker,
     ) -> None:
         """Initialize the event entity."""
         super().__init__(coordinator, device)
@@ -101,10 +192,26 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
             self._attr_name = dp_type
         self._attr_unique_id = stable_unique_id(device, datapoint, "event")
         # Icon comes from icons.json (icon-translations).
+        self._tracker = tracker
+        # Gesture state for the press currently down on this datapoint: whether
+        # one is pending at all, the pending hold timer's cancel handle, and
+        # whether it was dropped as a duplicate copy (its edges withheld).
+        # ``_holding`` is "a ``hold_start`` fired and its ``hold_end`` is still
+        # owed" — it outlives the press on purpose, so a hold whose release
+        # was lost is closed by the next edge on this side.
+        self._press_pending = False
+        self._cancel_hold_timer: CALLBACK_TYPE | None = None
+        self._suppressed = False
+        self._holding = False
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel a pending hold timer so it cannot fire on a removed entity."""
+        self._stop_hold_timer()
+        await super().async_will_remove_from_hass()
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Fire an event when this datapoint is pushed over the WebSocket.
+        """Fire events when this datapoint is pushed over the WebSocket.
 
         Press detection keys off the coordinator's per-push marker rather than
         diffing snapshots. The gateway broadcasts a ``datapoint`` frame on every
@@ -119,26 +226,153 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         # THIS device (its own edges, or its status LED) fall through.
         if self._skip_foreign_device_push():
             return
+        emitted = False
+        if not self.available:
+            # Deaf from here on (socket down, or the poll failed): the release
+            # of a press in flight will never be seen, so no gesture can be
+            # completed for it — and a hold timer left running would fire
+            # ``hold_start`` for a tap whose release was simply lost.
+            self._abandon_press()
         # Fire only on a genuine WebSocket push for THIS datapoint. REST re-reads
         # (marker is None) and pushes for sibling datapoints skip the fire but
         # still write state below, so availability tracks the gateway connection
         # without ever emitting a phantom press.
-        if self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
+        elif self.coordinator.pushed_datapoint_id == self._datapoint["id"]:
             datapoint = self._find_datapoint(self._datapoint["id"])
             pressed = self._get_state_from_datapoint(datapoint)
             if pressed is not None:
-                event_type = "pressed" if pressed else "depressed"
-                _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
-                self._trigger_event(event_type)
-                self._fire_bus_event(event_type)
+                emitted = self._on_press() if pressed else self._on_release()
+        # Every emitted event already wrote its own state (see ``_emit``).
+        if not emitted:
+            self.async_write_ha_state()
+
+    @callback
+    def _on_press(self) -> bool:
+        """Handle a ``pressed`` edge; return whether anything was emitted.
+
+        Starts the measurement, unless the press is the firmware's duplicate
+        copy of the click just completed. A press while this side is already
+        down restarts the measurement — the earlier press's release was never
+        reported (a single-key element's hold, by the gateway code, leaves one
+        side down for good) — after closing an open hold, so that
+        ``hold_start``/``hold_end`` stay paired.
+        """
+        now = self.hass.loop.time()
+        emitted = self._end_open_hold()
+        if self._press_pending:
+            _LOGGER.debug(
+                "%s pressed while already down; restarting the gesture",
+                self.entity_id,
+            )
+            self._stop_hold_timer()
+        self._press_pending = True
+        self._suppressed = self._tracker.is_duplicate_press(now)
+        if self._suppressed:
+            _LOGGER.debug(
+                "Dropping duplicate press on %s (firmware copy of the last click)",
+                self.entity_id,
+            )
+        else:
+            self._emit("pressed")
+            emitted = True
+        # Armed for a dropped press too: if it is still down at the threshold
+        # it was a real hold after a quick tap, not a ~0.4 s copy.
+        self._cancel_hold_timer = async_call_later(
+            self.hass, BUTTON_HOLD_THRESHOLD, self._on_hold_threshold
+        )
+        return emitted
+
+    @callback
+    def _on_release(self) -> bool:
+        """Handle a ``depressed`` edge; return whether anything was emitted.
+
+        Completes the pending press as a click or a hold. Without a pending
+        press the edge is still re-fired (the gateway re-sends a value on a
+        mode-only change), and it closes a hold whose press was abandoned
+        while the entity was unavailable.
+        """
+        now = self.hass.loop.time()
+        self._stop_hold_timer()
+        suppressed, pending = self._suppressed, self._press_pending
+        self._press_pending = self._suppressed = False
+        if suppressed:
+            _LOGGER.debug(
+                "Dropping the duplicate press's release on %s", self.entity_id
+            )
+            return False
+        self._emit("depressed")
+        if not self._end_open_hold() and pending:
+            self._emit("click")
+            self._tracker.note_click(now)
+        return True
+
+    @callback
+    def _on_hold_threshold(self, _now: datetime) -> None:
+        """Classify the press still down at the hold threshold as a hold."""
+        self._cancel_hold_timer = None
+        if not self.available:
+            # The dispatch that flips availability abandons the press already;
+            # this only covers the timer landing first on the same loop turn.
+            self._abandon_press()
+            return
+        if self._suppressed:
+            # Reinstated: the copy of a click releases within ~0.5 s, so a
+            # press still down now is a genuine hold that followed a quick tap.
+            _LOGGER.debug(
+                "Press on %s outlasted the duplicate window; treating as a hold",
+                self.entity_id,
+            )
+            self._suppressed = False
+            self._emit("pressed")
+        self._holding = True
+        self._emit("hold_start")
+
+    @callback
+    def _end_open_hold(self) -> bool:
+        """Fire the ``hold_end`` owed for an open hold; return whether one was."""
+        if not self._holding:
+            return False
+        self._holding = False
+        self._emit("hold_end")
+        return True
+
+    @callback
+    def _abandon_press(self) -> None:
+        """Forget a press in flight without emitting anything for it."""
+        if not self._press_pending:
+            return
+        _LOGGER.debug(
+            "%s unavailable mid-press; abandoning the gesture", self.entity_id
+        )
+        self._stop_hold_timer()
+        self._press_pending = self._suppressed = False
+
+    @callback
+    def _stop_hold_timer(self) -> None:
+        """Cancel the pending hold timer, if any."""
+        if self._cancel_hold_timer is not None:
+            self._cancel_hold_timer()
+            self._cancel_hold_timer = None
+
+    @callback
+    def _emit(self, event_type: str) -> None:
+        """Fire one event on the entity and on the bus, and publish the state.
+
+        Each event gets its own state write: an event entity's state is the
+        last event, so two events from one edge (``depressed`` + ``click``)
+        written together would hide the first from state-change triggers.
+        """
+        _LOGGER.debug("Triggering %s event for %s", event_type, self.entity_id)
+        self._trigger_event(event_type)
+        self._fire_bus_event(event_type)
         self.async_write_ha_state()
 
     @callback
     def _fire_bus_event(self, event_type: str) -> None:
-        """Re-emit this edge on the Home Assistant bus for device triggers.
+        """Re-emit this event on the Home Assistant bus for device triggers.
 
         Device triggers can only attach to a bus event, not to an entity, so the
-        edge is published a second time here (this mirrors how HA's own button
+        event is published a second time here (this mirrors how HA's own button
         integrations do it). Skipped for a datapoint type with no button side, and
         when the entity is not yet in the device registry — a device trigger is
         keyed on the device id, so an event without one would match nothing.

@@ -87,10 +87,12 @@
         "description": "The poll interval sets how often the gateway is re-read over REST — live updates keep arriving over the WebSocket regardless, so a longer interval mainly reduces gateway load. Select any covers whose position is reported inverted, such as awnings. Their position is flipped so fully closed reads as 0 percent (closed) and fully open as 100 percent (open). Leave roller shutters and blinds unselected.",
         "data": {
           "poll_interval": "Poll interval (seconds)",
-          "inverted_covers": "Inverted covers (awnings)"
+          "inverted_covers": "Inverted covers (awnings)",
+          "suppress_duplicate_presses": "Ignore duplicate button presses"
         },
         "data_description": {
-          "poll_interval": "Between 30 and 3600 seconds (default 60)."
+          "poll_interval": "Between 30 and 3600 seconds (default 60).",
+          "suppress_duplicate_presses": "Current JUNG device firmware reports every tap twice. When enabled, a press on the same button within 1.2 seconds after a click is ignored, so each tap fires once. Turn this off only if your buttons report each tap once (older device firmware) and you need presses less than 1.2 seconds apart, for example double-clicks."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "pressed",
-      "depressed": "released"
+      "depressed": "released",
+      "click": "clicked",
+      "hold_start": "hold started",
+      "hold_end": "hold ended"
     }
   },
   "entity": {

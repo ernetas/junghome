@@ -22,6 +22,8 @@ from .const import (
     CONF_INVERTED_COVERS,
     CONF_POLL_INTERVAL,
     CONF_SERIAL,
+    CONF_SUPPRESS_DUPLICATE_PRESSES,
+    DEFAULT_SUPPRESS_DUPLICATE_PRESSES,
     DOMAIN,
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
@@ -132,7 +134,7 @@ def _cover_choices(coordinator: JungHomeDataUpdateCoordinator) -> dict[str, str]
 
 
 class JungHomeOptionsFlow(config_entries.OptionsFlow):
-    """Options: the REST poll interval, and covers whose position is inverted."""
+    """Options: poll interval, duplicate-press suppression, inverted covers."""
 
     def _reconciled_cover_flags(self) -> tuple[dict[str, str], list[str]]:
         """Return (selectable covers, currently flagged) reconciled with reality.
@@ -172,10 +174,18 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show/persist the poll interval and the set of inverted covers."""
+        """Show/persist the options.
+
+        Every option is read by the coordinator or a platform at setup, so a
+        change takes effect through the entry reload the update listener in
+        ``__init__`` performs on any options change.
+        """
         if user_input is not None:
             new_options: dict[str, Any] = {
                 CONF_POLL_INTERVAL: int(user_input[CONF_POLL_INTERVAL]),
+                CONF_SUPPRESS_DUPLICATE_PRESSES: bool(
+                    user_input[CONF_SUPPRESS_DUPLICATE_PRESSES]
+                ),
             }
             if CONF_INVERTED_COVERS in user_input:
                 new_options[CONF_INVERTED_COVERS] = user_input[CONF_INVERTED_COVERS]
@@ -207,7 +217,19 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
                     unit_of_measurement="s",
                     mode=selector.NumberSelectorMode.BOX,
                 )
-            )
+            ),
+            # Button duplicate suppression (event.py). Default on: current
+            # device firmware reports every tap twice. Off is for older device
+            # firmware whose users double-tap faster than the 1.2 s window.
+            vol.Required(
+                CONF_SUPPRESS_DUPLICATE_PRESSES,
+                default=bool(
+                    self.config_entry.options.get(
+                        CONF_SUPPRESS_DUPLICATE_PRESSES,
+                        DEFAULT_SUPPRESS_DUPLICATE_PRESSES,
+                    )
+                ),
+            ): selector.BooleanSelector(),
         }
         if choices:
             options = [

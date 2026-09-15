@@ -6,11 +6,13 @@ directly in the device's automation UI, which is where users look first for a
 wall switch.
 
 A device trigger can only attach to something on the Home Assistant bus, so the
-event platform re-emits every genuine edge as ``EVENT_BUTTON_ACTION`` and the
+event platform re-emits every event as ``EVENT_BUTTON_ACTION`` and the
 triggers here are thin wrappers that match it (the same shape HA's own button
-integrations use). The gateway reports only press/release — there is no native
-single/double/hold — so those two edges are all that is offered here; gestures
-are still derived in an automation via the shipped blueprint.
+integrations use). Offered per button side: the raw ``pressed``/``depressed``
+edges the gateway pushes, and the gestures the event platform derives from
+their timing — ``click``, ``hold_start``, ``hold_end`` (see ``event.py``;
+there is no double-click, which the gateway's API cannot distinguish from a
+single click on current device firmware).
 """
 
 from __future__ import annotations
@@ -120,8 +122,9 @@ async def async_get_triggers(
             CONF_SUBTYPE: subtype,
         }
         for button_type in _button_types(device)
-        # Sorted so the two edges are always offered in the same order.
-        for subtype in sorted(BUTTON_TRIGGER_SUBTYPES)
+        # The constant is ordered (edges, then gestures) so the UI always lists
+        # a button's triggers the same way.
+        for subtype in BUTTON_TRIGGER_SUBTYPES
     ]
 
 

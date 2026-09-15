@@ -87,10 +87,12 @@
         "description": "轮询间隔决定通过 REST 重新读取网关的频率——实时更新仍会通过 WebSocket 送达，因此更长的间隔主要用于降低网关负载。选择位置报告相反的窗帘，例如遮阳篷。它们的位置会被翻转，因此完全关闭显示为 0%（关闭），完全打开显示为 100%（打开）。卷帘和百叶帘请不要选择。",
         "data": {
           "poll_interval": "轮询间隔（秒）",
-          "inverted_covers": "反向窗帘（遮阳篷）"
+          "inverted_covers": "反向窗帘（遮阳篷）",
+          "suppress_duplicate_presses": "忽略重复的按键"
         },
         "data_description": {
-          "poll_interval": "30 到 3600 秒（默认 60）。"
+          "poll_interval": "30 到 3600 秒（默认 60）。",
+          "suppress_duplicate_presses": "当前的 JUNG 设备固件会将每次按键报告两次。启用后，点击后 1.2 秒内对同一按钮的按下将被忽略，因此每次按键只触发一次。仅当您的按钮每次按键只报告一次（较旧的设备固件），并且您需要间隔小于 1.2 秒的按键（例如双击）时才关闭此选项。"
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "已按下",
-      "depressed": "已松开"
+      "depressed": "已松开",
+      "click": "已点击",
+      "hold_start": "开始长按",
+      "hold_end": "长按结束"
     }
   },
   "entity": {
