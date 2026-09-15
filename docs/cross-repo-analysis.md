@@ -10,7 +10,7 @@ Firmware citations use the `disk_dump/jung-20260801/sdb2` convention from `CLAUD
 to the June `jung/sdc2` extraction; only the data partition differs.
 
 Health at audit time: 453 tests + 35 snapshots pass, 98.56 % branch coverage, ruff + mypy clean, `main` @ `54266c8`
-clean. Legend: `[ ]` open · `[x]` done.
+clean. Legend: `[ ]` open · `[x]` done. Wave 1 (2026-09-15) landed on branch `audit-2026-09-15`: 473 tests, ruff/format/mypy clean.
 
 ---
 
@@ -71,34 +71,33 @@ clean. Legend: `[ ]` open · `[x]` done.
 
 ## 2. Bugs
 
-- [ ] **P1** `custom_components/junghome/config_flow.py:501-518` — reauth on an entry whose *setup* failed with 401
+- [x] **P1** `custom_components/junghome/config_flow.py:501-518` — reauth on an entry whose *setup* failed with 401
   updates the token but never reloads: `async_update_and_abort` only updates data, and the update listener is
   registered (`__init__.py:480`) *after* the first refresh that raised `ConfigEntryAuthFailed` (`coordinator.py:382-386`).
   Entry stays `SETUP_ERROR` until a manual reload. **Reproduced** with a probe test. Mirror `async_step_reconfigure`
   (`config_flow.py:605-611`): `if entry.state is not LOADED: async_schedule_reload(...)`. Add a test that sets up with
-  a 401, completes reauth, asserts `LOADED`. `quality_scale.yaml` `reauthentication-flow: done` is over-claimed until then.
-- [ ] `entity.py:60,97-99` — event entities are available on the REST poll alone but edges only arrive over WS →
+  a 401, completes reauth, asserts `LOADED`. `quality_scale.yaml` `reauthentication-flow: done` is over-claimed until then. *(landed `4c1ccea`; the same commit fixes reconfigure double-reloading a loaded entry — the listener dispatches eagerly, so "did the listener reload?" must be read before `async_update_entry`)*
+- [x] `entity.py:60,97-99` — event entities are available on the REST poll alone but edges only arrive over WS →
   silently deaf while the socket is down; the blueprint's unavailable guard (`button_gestures.yaml:139-153`) never
-  engages. Gate `JungHomeEventEntity` availability on `ws_connected` (rename the flag to `_needs_websocket`).
-- [ ] `scene.py:50-58,103-111` — a scene deleted in the app is removed with `Entity.async_remove()` but its registry
+  engages. Gate `JungHomeEventEntity` availability on `ws_connected` (rename the flag to `_needs_websocket`). *(landed `33845e6`: flag renamed `_needs_websocket`)*
+- [x] `scene.py:50-58,103-111` — a scene deleted in the app is removed with `Entity.async_remove()` but its registry
   entry survives → permanent `unavailable` entity (docstring says the opposite; `tests/test_scene.py:90-95` accepts
-  the wrong outcome). Call `er.async_remove(entity_id)`; assert it is gone.
-- [ ] `coordinator.py:42-59,930-957` — `websocket_push_failure` repair fires after 5 failures ≈ 15–20 s of backoff,
-  i.e. on every ordinary gateway reboot (~2 min), then self-clears. Escalate on elapsed outage (≥ ~90 s) instead.
-- [ ] `coordinator.py:1026-1036,1183-1192` — any frame carrying our `message_id` resolves the pending command as
+  the wrong outcome). Call `er.async_remove(entity_id)`; assert it is gone. *(landed `66c9a8e`)*
+- [x] `coordinator.py:42-59,930-957` — `websocket_push_failure` repair fires after 5 failures ≈ 15–20 s of backoff,
+  i.e. on every ordinary gateway reboot (~2 min), then self-clears. Escalate on elapsed outage (≥ ~90 s) instead. *(landed `09b5daa`: `WEBSOCKET_OUTAGE_REPAIR_AFTER` = 180 s, not 90 — the backoff quantises attempts at ~63/123/183 s, so ≤123 s still fires inside a Pi-Zero reboot)*
+- [x] `coordinator.py:1026-1036,1183-1192` — any frame carrying our `message_id` resolves the pending command as
   success (including a correlated `error:` frame), and dict-data frames of unhandled types (`config`) are routed as
-  datapoint pushes → ERROR "without datapoint_id". Resolve only on `type == "datapoint"`, `set_exception` on `error:`.
-- [ ] `__init__.py:104-190` — capability watcher reloads on the first signature change with no debounce; a datapoint set
-  that flaps between adoptions causes a reload per adoption. Require two consecutive identical signatures.
-- [ ] `light.py:304-336` — optimistic writes overwrite the gateway-confirmed value the awaited reply already merged
+  datapoint pushes → ERROR "without datapoint_id". Resolve only on `type == "datapoint"`, `set_exception` on `error:`. *(landed `09b5daa`; correlated `error:` raises `invalid_response` — a dedicated `command_rejected` key is a follow-up across 26 locales)*
+- [x] `__init__.py:104-190` — capability watcher reloads on the first signature change with no debounce; a datapoint set
+  that flaps between adoptions causes a reload per adoption. Require two consecutive identical signatures. *(landed `33845e6`)*
+- [x] `light.py:304-336` — optimistic writes overwrite the gateway-confirmed value the awaited reply already merged
   (`_set_color_temp` stores 6500 K after the gateway clamped to 6000). Clamp before sending; re-read the confirmed
-  datapoint after the awaited command.
-- [ ] `diagnostics.py:213` — hub device diagnostics emit raw identifiers containing the anchor (host / mDNS name /
-  serial) that `TO_REDACT` scrubs elsewhere. No test covers hub diagnostics.
-- [ ] tests `tests/test_init.py:222-262,1919-1925` — the pruner's hub protection (`__init__.py:234`) and empty-poll
+  datapoint after the awaited command. *(landed `66c9a8e`)*
+- [x] `diagnostics.py:213` — hub device diagnostics emit raw identifiers containing the anchor (host / mDNS name /
+  serial) that `TO_REDACT` scrubs elsewhere. No test covers hub diagnostics. *(landed `66c9a8e`)*
+- [x] tests `tests/test_init.py:222-262,1919-1925` — the pruner's hub protection (`__init__.py:234`) and empty-poll
   guard (`:229-230`) are executed but never asserted; deleting either keeps the suite green. Assert the hub survives 10
-  adoptions and that `data=[]` prunes nothing.
-
+  adoptions and that `data=[]` prunes nothing. *(landed `33845e6`)*
 ## 3. Improvements
 
 - [ ] **Button handling for double-reporting firmware** (backlog item) — with §1.1 established: suppression must be
@@ -124,16 +123,16 @@ clean. Legend: `[ ]` open · `[x]` done.
 - [ ] `tools/ws-capture/capture_ws.py:15-17,459` still carries the refuted "sibling-channel echo" model; the `cover`
   script measures an API-driven move whose `level` reports the *target* for ~4 s, so as written it would answer the
   cover backlog wrongly.
-- [ ] `const.py:302,318`, `models.py:45`, `scene.py:4-5`, `CLAUDE.md:127-129` — the "ids regenerate / no hardware id"
+- [x] `const.py:302,318`, `models.py:45`, `scene.py:4-5`, `CLAUDE.md:127-129` — the "ids regenerate / no hardware id"
   rationale is contradicted by the firmware (device id = `"id"+md5(UUID+hex(location))[:15]`, scene id = `"id"+hex(scene no.)`);
-  the stable-id design stays correct, the rationale needs rewording.
+  the stable-id design stays correct, the rationale needs rewording. *(CLAUDE.md/README reworded in `887e0f8`; code comments still to follow)*
 - [ ] Share code with the sibling project long-term: `jhmesh` `Metadata`/`CDB.parse`, and the cover/climate/trigger/
   logbook/diagnostics boilerplate. HA ≥ 2026.8 binds a device to one config entry, so one integration with two
   transports is the only way to get one device page.
 
 ## 4. Documentation corrections
 
-- [ ] `docs/bt-mesh-direct.md` — largely superseded: `:8-10,27-39,175-176` add the GATT-proxy-client route (plain BLE
+- [x] `docs/bt-mesh-direct.md` — largely superseded: `:8-10,27-39,175-176` add the GATT-proxy-client route (plain BLE
   adapter / ESPHome proxy, no mesh chip; working in the sibling project) and mark the EFR32/ESP32 sketches
   unnecessary; `:16-19,168-169` replace "continue the gateway's sequence number" with "own unicast outside every
   `allocatedUnicastRange` and `networkExclusions`, own sequence counter, only the IV index must match, follow Secure
@@ -142,23 +141,22 @@ clean. Legend: `[ ]` open · `[x]` done.
   User Property *Server*); `:61-69` vs `tools/bt-mesh-direct/junghome_mesh.py:43-46,90-107` (prototype still blasts
   3 × 15 ms from v2.0.0 — update or delete); `:105-107` CT range assumption (`0x8262` Temperature Range) and the app's
   `Light CTL Set` 2000–10000 K; `:144-147` button events are Set-Unack not Status; add "acked Sets get no unicast
-  reply, only a doubled group publication".
-- [ ] `docs/gateway-websocket.md:216-294` and `CLAUDE.md:59-73` — replace "mechanism unestablished" with §1.1; correct
+  reply, only a doubled group publication". *(landed `887e0f8`)*
+- [x] `docs/gateway-websocket.md:216-294` and `CLAUDE.md:59-73` — replace "mechanism unestablished" with §1.1; correct
   "no native click/hold" (`:220`) and "device reporting granularity" (`:266-270`); keep the ≥ 1.2 s guidance but make
-  it per device; re-examine `:88-92` (scene-frame duplicates are most likely the same doubling — TID capture pending).
-- [ ] `CLAUDE.md:74-82` / `docs/gateway-websocket.md:219` — add the KeyMode table (0..6); reconcile "both up/down
+  it per device; re-examine `:88-92` (scene-frame duplicates are most likely the same doubling — TID capture pending). *(landed `887e0f8`)*
+- [x] `CLAUDE.md:74-82` / `docs/gateway-websocket.md:219` — add the KeyMode table (0..6); reconcile "both up/down
   always" with `trigger_request` (a descriptor promise no device model produces); a `RockerSwitch` function = one mesh
   button element. `CLAUDE.md:77-79` "manufacturer_property never becomes a datapoint" is false (PushedUp/PushedDown/
-  StatusLed are manufacturer_property with explicit cases; the real gate is `createFunctionListByDevices`).
-- [ ] `docs/gateway-architecture.md:57` (bt_tunnel = UART↔NCP bridge), `:116-117,125` (node, not provisioner),
-  `:129-130` (scenes/vendor models are reverse-engineered now).
-- [ ] `docs/gateway-rest-api.md` — the app's own use of the API: `POST /config` bodies (`project_file`, cloud
+  StatusLed are manufacturer_property with explicit cases; the real gate is `createFunctionListByDevices`). *(landed `887e0f8`)*
+- [x] `docs/gateway-architecture.md:57` (bt_tunnel = UART↔NCP bridge), `:116-117,125` (node, not provisioner),
+  `:129-130` (scenes/vendor models are reverse-engineered now). *(landed `887e0f8`)*
+- [x] `docs/gateway-rest-api.md` — the app's own use of the API: `POST /config` bodies (`project_file`, cloud
   credentials, `api_client_accept`, `api_client_reset`, `ip_dhcp`…), the `GatewayConfigDTO` fields, token/IP/fingerprint
-  over the mesh (`0xC001–0xC003`) and `GET /project/cdb` exposing keys — security note.
-- [ ] `docs/matter-bridge.md:62-66`, `docs/README.md:15-18` — the gateway-free BT-Mesh route exists now.
-- [ ] `CLAUDE.md` backlog — cover item: firmware evidence says `level_move` is structurally always 0
-  (`extractTargetValue` slices the last 2 octets), so "half-unblocked" is optimistic; no cover exists in any capture.
-
+  over the mesh (`0xC001–0xC003`) and `GET /project/cdb` exposing keys — security note. *(landed `887e0f8`)*
+- [x] `docs/matter-bridge.md:62-66`, `docs/README.md:15-18` — the gateway-free BT-Mesh route exists now. *(landed `887e0f8`)*
+- [x] `CLAUDE.md` backlog — cover item: firmware evidence says `level_move` is structurally always 0
+  (`extractTargetValue` slices the last 2 octets), so "half-unblocked" is optimistic; no cover exists in any capture. *(landed `887e0f8`)*
 ## 5. Captures that would close open questions
 
 - [ ] Simultaneous ms-resolution capture: `tools/ws-capture/capture_ws.py` + the sibling's mesh sniffer — match each WS
