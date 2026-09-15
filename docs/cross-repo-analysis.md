@@ -100,11 +100,11 @@ clean. Legend: `[ ]` open · `[x]` done. Wave 1 (2026-09-15) landed on branch `a
   adoptions and that `data=[]` prunes nothing. *(landed `33845e6`)*
 ## 3. Improvements
 
-- [ ] **Button handling for double-reporting firmware** (backlog item) — with §1.1 established: suppression must be
+- [x] **Button handling for double-reporting firmware** (backlog item) — with §1.1 established: suppression must be
   **per device**, not per datapoint (key elements alternate `up`/`down` across the two copies); window ≥ 1.2 s;
   derived `click`/`hold` on pulse width; keep `double_action` for old firmware. The blueprint's 400 ms window
   (`button_gestures.yaml:170-194`) cannot work against 0.11–1.03 s gaps. Verify on a key element *and* a rocker
-  element (they differ). Include the counter-dedupe suggestion in the upstream report.
+  element (they differ). Include the counter-dedupe suggestion in the upstream report. *(landed `be74dff`: per-device 1.2 s suppression on by default with an options switch, `click`/`hold_start`/`hold_end` derived by pulse width, no double-click detector, blueprint rebuilt; hardware verification on a rocker and a key element still owed)*
 - [x] `entity.py:121` — `via_device` tuple is deprecated in HA 2026.9 (removed 2027.8, `device_registry.py:270`);
   switch to `via_device_id` when the floor allows (≥ 2026.8). *(landed for issue #207: feature-detected on `DeviceInfo.__optional_keys__`, tuple fallback below 2026.8, floor unchanged)*
 - [x] Hardware identity — `const.py:299-334` says the gateway exposes none, but `GET /project/junghome` (fw 1.5.0+)
