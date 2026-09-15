@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50 ali junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Certifikat prehoda se razlikuje",
+        "description": "Prehod na naslovu {host} predstavlja certifikat TLS, ki se razlikuje od certifikata, pripetega za ta vnos (pripet {expected}, predstavljen {observed}). To je pričakovano le, če je bil prehod ponastavljen na tovarniške nastavitve ali zamenjan, ali če je njegova strojna programska oprema certifikat znova ustvarila. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: pojdite nazaj in preverite naslov. Doslej mu je bilo poslano le rokovanje TLS. Pošljite, da zaupate novemu certifikatu in nadaljujete."
       }
     },
     "progress": {
@@ -191,6 +195,9 @@
     "cannot_connect": {
       "message": "Napaka pri komunikaciji s prehodom Jung Home: {error}"
     },
+    "certificate_changed": {
+      "message": "Naprava na naslovu {host} ne predstavlja certifikata TLS, pripetega za ta prehod Jung Home, zato dostopni žeton ni bil poslan. Če ste prehod ponastavili ali zamenjali, potrdite novi certifikat v Nastavitve, Popravila."
+    },
     "cannot_send": {
       "message": "Prehoda Jung Home ni bilo mogoče doseči za pošiljanje ukaza; ponovno se povezuje. Poskusite znova čez trenutek."
     },
@@ -214,6 +221,21 @@
     "websocket_push_failure": {
       "title": "Posodobitve Jung Home v živo so se ustavile",
       "description": "Home Assistant se {failures}-krat zapored ni uspel znova povezati s prehodom Jung Home na naslovu {host}. Stanja naprav se ne pošiljajo več takoj in se zdaj osvežijo le ob rednem poizvedovanju prek REST. Preverite, ali je prehod vklopljen in dosegljiv v vašem omrežju. Ta težava bo izginila sama, ko bo povezava obnovljena."
+    },
+    "tls_certificate_changed": {
+      "title": "Certifikat prehoda Jung Home se je spremenil",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Zaupaj novemu certifikatu prehoda",
+            "description": "Naprava, ki odgovarja na naslovu {host}, predstavlja certifikat TLS ({observed}), ki se razlikuje od tistega, ki ga je Home Assistant pripel ob prvi povezavi s tem prehodom Jung Home ({expected}). Home Assistant je z njo prenehal komunicirati, niti dostopnega žetona ne pošilja, entitete prehoda pa ostanejo nedosegljive, dokler to ni razrešeno. Spremenjen certifikat je pričakovan le, če je bil prehod ponastavljen na tovarniške nastavitve ali zamenjan, ali če je njegova strojna programska oprema certifikat znova ustvarila. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: ne potrdite, temveč preverite svoje omrežje. Potrdite, da je bil prehod Jung Home na naslovu {host} ponastavljen ali zamenjan in da je treba certifikatu, ki ga zdaj predstavlja ({observed}), zaupati namesto pripetemu ({expected}). Home Assistant bo pripel novi certifikat, mu poslal dostopni žeton in se znova povezal."
+          }
+        },
+        "error": {
+          "cannot_connect": "Povezava s prehodom ni uspela.",
+          "different_gateway": "Naslov odgovarja, vendar pripada drugemu prehodu Jung Home kot ta vnos. Za spremembo naslova uporabite Znova konfiguriraj."
+        }
+      }
     }
   }
 }

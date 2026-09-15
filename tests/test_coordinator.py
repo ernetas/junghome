@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -28,6 +29,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.junghome.const import (
     CONF_POLL_INTERVAL,
+    CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     MAX_POLL_INTERVAL_SECONDS,
@@ -43,8 +45,18 @@ from custom_components.junghome.coordinator import (
     JungHomeDataUpdateCoordinator,
     poll_interval_from_options,
 )
+from custom_components.junghome.tls import fingerprint_ssl
+from tests.conftest import FAKE_FINGERPRINT, _auto_reply_to_datapoint_commands
 from tests.conftest import PRISTINE_DEVICES as PRISTINE
-from tests.conftest import _auto_reply_to_datapoint_commands
+
+# The real fetch methods, captured at import before the autouse conftest
+# fixtures replace them with stubs for the duration of each test.
+_REAL_FETCHES = {
+    "groups": JungHomeDataUpdateCoordinator._fetch_groups_from_api,
+    "scenes": JungHomeDataUpdateCoordinator._fetch_scenes_from_api,
+    "project": JungHomeDataUpdateCoordinator._fetch_project_export_from_api,
+    "parameter": JungHomeDataUpdateCoordinator._fetch_config_parameter,
+}
 
 
 @pytest.mark.parametrize(
@@ -2049,3 +2061,265 @@ async def test_send_failure_after_the_session_failed_the_future_is_quiet(
     gc.collect()
     await asyncio.sleep(0)
     assert not [r for r in caplog.records if "never retrieved" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# TLS certificate pinning (tls.py): where the fingerprint is learned, stored
+# and enforced by the coordinator. The wire-level proof that a pin blocks an
+# impostor before any byte is sent lives in tests/test_tls.py.
+# ---------------------------------------------------------------------------
+
+
+def _mismatch(host: str = "h") -> aiohttp.ServerFingerprintMismatch:
+    return aiohttp.ServerFingerprintMismatch(
+        bytes.fromhex(FAKE_FINGERPRINT), bytes.fromhex("cd" * 32), host, 443
+    )
+
+
+def _pinned_coordinator(
+    hass: HomeAssistant, fingerprint: str | None
+) -> JungHomeDataUpdateCoordinator:
+    data = {CONF_HOST: "h", CONF_TOKEN: "t"}
+    if fingerprint is not None:
+        data[CONF_TLS_FINGERPRINT] = fingerprint
+    entry = MockConfigEntry(domain=DOMAIN, data=data)
+    entry.add_to_hass(hass)
+    return JungHomeDataUpdateCoordinator(hass, {"host": "h", "token": "t"}, entry)
+
+
+async def test_tofu_learns_the_pin_and_persists_it_after_the_first_success(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """An entry from before pinning learns its gateway's certificate on first use.
+
+    The learn is a bare handshake to the entry's CURRENT host (stubbed to
+    ``FAKE_FINGERPRINT``); the fetch itself goes out pinned to what the
+    learn saw, and only once that authenticated fetch has succeeded is the
+    fingerprint written into the entry — from then on it is read from there
+    and never learned again.
+    """
+    coordinator = _pinned_coordinator(hass, None)
+    entry = coordinator.config_entry
+    assert entry is not None
+    aioclient_mock.get("https://h/api/junghome/functions", json=[])
+    learn = AsyncMock(return_value=FAKE_FINGERPRINT)
+    with patch.object(coordinator, "_async_learn_fingerprint", learn):
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+        learn.assert_awaited_once_with("h")
+
+        # Pinned now: a further request reads the entry, no learn.
+        await coordinator.async_refresh()
+        learn.assert_awaited_once()
+    await coordinator.async_shutdown()
+
+
+async def test_tofu_does_not_persist_a_pin_the_gateway_never_answered_on(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A failed first fetch leaves the entry unpinned (nothing proven yet)."""
+    coordinator = _pinned_coordinator(hass, None)
+    entry = coordinator.config_entry
+    assert entry is not None
+    aioclient_mock.get("https://h/api/junghome/functions", status=500)
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert CONF_TLS_FINGERPRINT not in entry.data
+    await coordinator.async_shutdown()
+
+
+async def test_requests_carry_the_stored_pin(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Every REST request passes ``ssl=`` pinned to the entry's fingerprint.
+
+    ``aioclient_mock`` does not record ``ssl``, so the session's request
+    entry point is wrapped to capture it. A stored pin is used as-is — the
+    learn seam must not be touched.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    base = "https://h/api/junghome"
+    aioclient_mock.get(f"{base}/functions", json=[])
+    aioclient_mock.get(f"{base}/groups", json=[])
+    aioclient_mock.get(f"{base}/scenes/", json=[])
+    aioclient_mock.get(f"{base}/project/junghome", status=404)
+    aioclient_mock.get(f"{base}/config/parameter/version_release", json="2.1.3")
+    aioclient_mock.get(f"{base}/config/parameter/version_build", json="2840")
+    aioclient_mock.post(f"{base}/scenes/id0001", json={})
+    session = async_get_clientsession(hass, verify_ssl=False)
+    original = session._request
+    seen: list[object] = []
+
+    async def _spy(method, url, **kwargs):
+        seen.append(kwargs.get("ssl"))
+        return await original(method, url, **kwargs)
+
+    learn = AsyncMock(side_effect=AssertionError("must not learn"))
+    with (
+        patch.object(session, "_request", _spy),
+        patch.object(coordinator, "_async_learn_fingerprint", learn),
+        # The autouse stubs replace these with AsyncMocks; run the real ones.
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            _REAL_FETCHES["groups"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_scenes_from_api",
+            _REAL_FETCHES["scenes"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_project_export_from_api",
+            _REAL_FETCHES["project"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_config_parameter",
+            _REAL_FETCHES["parameter"],
+        ),
+    ):
+        await coordinator._async_update_data()
+        await coordinator.async_fetch_groups()
+        await coordinator.async_fetch_scenes()
+        await coordinator.async_fetch_node_identities()
+        await coordinator.async_fetch_gateway_version()
+        await coordinator.activate_scene("id0001")
+    assert len(seen) == 7
+    assert all(ssl is fingerprint_ssl(FAKE_FINGERPRINT) for ssl in seen)
+    learn.assert_not_called()
+
+
+async def test_websocket_upgrade_carries_the_pin(hass: HomeAssistant) -> None:
+    """The WS upgrade (which carries the token) is pinned like a REST request."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    coordinator.data = []
+    session = Mock()
+    session.ws_connect = Mock(return_value=_EmptyWS())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        pytest.raises(ConnectionError),
+    ):
+        await coordinator._run_websocket()
+    session.ws_connect.assert_called_once_with(
+        "wss://h/ws",
+        headers={"token": "t"},
+        heartbeat=30,
+        ssl=fingerprint_ssl(FAKE_FINGERPRINT),
+    )
+
+
+async def test_poll_reports_a_certificate_mismatch_and_recovers(
+    hass: HomeAssistant,
+) -> None:
+    """A responder with the wrong certificate fails the poll and raises the issue.
+
+    aiohttp raises the mismatch at the handshake, so the request (and the
+    token) never went out; the coordinator must neither retry unpinned nor
+    re-learn: entities go unavailable (``UpdateFailed``) and the user gets
+    a fixable repair issue naming both digests. A later poll that succeeds
+    (the gateway back on its address) withdraws the issue.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    entry = coordinator.config_entry
+    assert entry is not None
+    registry = ir.async_get(hass)
+    with (
+        patch.object(coordinator, "_fetch_devices_from_api", side_effect=_mismatch()),
+        pytest.raises(UpdateFailed) as excinfo,
+    ):
+        await coordinator._async_update_data()
+    assert excinfo.value.translation_key == "certificate_changed"
+    issue = registry.async_get_issue(DOMAIN, coordinator._tls_issue_id)
+    assert issue is not None
+    assert issue.is_fixable is True
+    assert issue.severity is ir.IssueSeverity.ERROR
+    assert issue.translation_key == "tls_certificate_changed"
+    assert issue.data == {"entry_id": entry.entry_id}
+    assert issue.translation_placeholders == {
+        "host": "h",
+        "expected": "AB:" * 31 + "AB",
+        "observed": "CD:" * 31 + "CD",
+    }
+    assert coordinator.last_error is not None
+    assert "expected AB:AB" in coordinator.last_error
+    # The pin is untouched: no silent re-learn.
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+    with patch.object(coordinator, "_fetch_devices_from_api", return_value=[]):
+        await coordinator._async_update_data()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id) is None
+
+
+async def test_scene_recall_reports_a_certificate_mismatch(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The scene POST is the third token-carrying path; same contract."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    aioclient_mock.post("https://h/api/junghome/scenes/id0001", exc=_mismatch())
+    with pytest.raises(HomeAssistantError) as excinfo:
+        await coordinator.activate_scene("id0001")
+    assert excinfo.value.translation_key == "certificate_changed"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, coordinator._tls_issue_id)
+
+
+async def test_websocket_loop_reports_a_certificate_mismatch_and_keeps_backing_off(
+    hass: HomeAssistant,
+) -> None:
+    """A mismatched upgrade raises the issue and counts as a failed reconnect.
+
+    The loop keeps its ordinary backoff rather than stopping: every retry is
+    another aborted handshake (no token), so a transient impostor costs
+    nothing and the real gateway back on its address is picked up without a
+    reload.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    attempts = 0
+
+    async def _mismatching(self: JungHomeDataUpdateCoordinator) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 2:
+            self._closing = True
+        raise _mismatch()
+
+    async def _sleep(delay: float) -> None:
+        pass
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", _mismatching),
+        patch("custom_components.junghome.coordinator.asyncio.sleep", _sleep),
+    ):
+        await coordinator._websocket_loop()
+    assert attempts == 2
+    assert coordinator._reconnect_failures == 2
+    assert ir.async_get(hass).async_get_issue(DOMAIN, coordinator._tls_issue_id)
+
+
+async def test_stop_clears_the_certificate_issue(hass: HomeAssistant) -> None:
+    """Unloading while the issue stands must not strand it in the repairs UI."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    registry = ir.async_get(hass)
+    with (
+        patch.object(coordinator, "_fetch_devices_from_api", side_effect=_mismatch()),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_update_data()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id)
+    await coordinator.stop()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id) is None
+
+
+async def test_a_corrupt_stored_pin_is_treated_as_absent(hass: HomeAssistant) -> None:
+    """A hand-edited fingerprint that is not a SHA-256 digest is re-learned."""
+    coordinator = _pinned_coordinator(hass, "not-a-digest")
+    learn = AsyncMock(return_value=FAKE_FINGERPRINT)
+    with patch.object(coordinator, "_async_learn_fingerprint", learn):
+        assert await coordinator._async_ssl() is fingerprint_ssl(FAKE_FINGERPRINT)
+    learn.assert_awaited_once_with("h")

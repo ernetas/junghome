@@ -155,6 +155,24 @@ CONF_SERIAL = "serial"
 # change) from entity identity (anchor, never changes).
 CONF_IDENTITY_ANCHOR = "identity_anchor"
 
+# Entry-data key: the SHA-256 fingerprint (64 lower-case hex characters) of
+# the TLS certificate this entry's gateway presents. The gateway's certificate
+# is self-signed, so certificate-authority verification is impossible and the
+# integration talks over Home Assistant's no-verify session — without a pin,
+# ANY HTTPS responder at the stored address would be handed the API token.
+# The JUNG app pins the certificate by the fingerprint it reads over the mesh
+# (docs/gateway-rest-api.md, security notes); Home Assistant has no mesh
+# path, so the fingerprint is learned on first contact (trust on first use)
+# and enforced on every request and WebSocket upgrade from then on — see
+# ``tls.py``. Learned at registration for new entries; an entry created
+# before pinning existed learns it on its next successful connect to its
+# CURRENT host (coordinator TOFU) and carries it from then on. A later
+# mismatch never re-learns silently: it raises the ``tls_certificate_changed``
+# repair issue, whose fix flow re-pins only after the user confirms. The
+# fingerprint is not a secret (it is public on every TLS handshake), so
+# diagnostics list it.
+CONF_TLS_FINGERPRINT = "tls_fingerprint"
+
 # Entry-data key: the device slugs whose Home Assistant area has already been
 # considered for auto-placement from the gateway's group (room) data.
 #

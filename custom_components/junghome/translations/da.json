@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home-gatewayens IP-adresse eller værtsnavn (for eksempel 192.168.1.50 eller junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Gatewayens certifikat afviger",
+        "description": "Gatewayen på {host} præsenterer et TLS-certifikat, der afviger fra det, der er fastgjort for denne post (fastgjort {expected}, præsenteret {observed}). Det er kun forventeligt, hvis gatewayen er blevet nulstillet til fabriksindstillinger eller udskiftet, eller hvis dens firmware har genskabt certifikatet. Hvis intet af det er sket, svarer en anden enhed muligvis på denne adresse: Gå tilbage og kontrollér adressen. Indtil videre er der kun sendt et TLS-handshake til den. Send for at stole på det nye certifikat og fortsætte."
       }
     },
     "progress": {
@@ -191,6 +195,9 @@
     "cannot_connect": {
       "message": "Fejl under kommunikation med Jung Home-gatewayen: {error}"
     },
+    "certificate_changed": {
+      "message": "Enheden på {host} præsenterer ikke det TLS-certifikat, der er fastgjort for denne Jung Home-gateway, så adgangstokenet blev ikke sendt. Hvis du har nulstillet eller udskiftet gatewayen, skal du bekræfte det nye certifikat under Indstillinger, Reparationer."
+    },
     "cannot_send": {
       "message": "Jung Home-gatewayen kunne ikke nås til at sende kommandoen; den er ved at oprette forbindelse igen. Prøv igen om et øjeblik."
     },
@@ -214,6 +221,21 @@
     "websocket_push_failure": {
       "title": "Live-opdateringer fra Jung Home er stoppet",
       "description": "Home Assistant kunne ikke oprette forbindelse til Jung Home-gatewayen på {host} {failures} gange i træk. Enhedstilstande sendes ikke længere med det samme og opdateres nu kun ved den periodiske REST-polling. Kontrollér, at gatewayen er tændt og kan nås på dit netværk. Dette problem forsvinder af sig selv, når forbindelsen er genoprettet."
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home-gatewayens certifikat er ændret",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Stol på gatewayens nye certifikat",
+            "description": "Enheden, der svarer på {host}, præsenterer et TLS-certifikat ({observed}), der afviger fra det, Home Assistant fastgjorde ved første forbindelse til denne Jung Home-gateway ({expected}). Home Assistant er holdt op med at tale med den, ikke engang adgangstokenet sendes, og gatewayens enheder forbliver utilgængelige, indtil dette er løst. Et ændret certifikat er kun forventeligt, hvis gatewayen er blevet nulstillet til fabriksindstillinger eller udskiftet, eller hvis dens firmware har genskabt certifikatet. Hvis intet af det er sket, svarer en anden enhed muligvis på denne adresse: Bekræft ikke, men kontrollér dit netværk. Bekræft, at Jung Home-gatewayen på {host} er blevet nulstillet eller udskiftet, og at det certifikat, den præsenterer nu ({observed}), skal have tillid i stedet for det fastgjorte ({expected}). Home Assistant fastgør det nye certifikat, sender adgangstokenet til det og opretter forbindelse igen."
+          }
+        },
+        "error": {
+          "cannot_connect": "Kunne ikke oprette forbindelse til gatewayen.",
+          "different_gateway": "Adressen svarer, men tilhører en anden Jung Home-gateway end denne post. Brug Omkonfigurer for at ændre adressen i stedet."
+        }
+      }
     }
   }
 }

@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home 网关的 IP 地址或主机名（例如 192.168.1.50 或 junghome.local）。"
         }
+      },
+      "reconfigure_certificate": {
+        "title": "网关证书不一致",
+        "description": "{host} 处的网关出示的 TLS 证书与为此条目固定的证书不同（已固定 {expected}，当前出示 {observed}）。只有在网关已恢复出厂设置或已更换，或其固件重新生成了证书时才会出现这种情况。如果以上都没有发生，可能是另一台设备在此地址上应答：请返回并检查地址。到目前为止只向其发送了 TLS 握手。提交以信任新证书并继续。"
       }
     },
     "progress": {
@@ -191,6 +195,9 @@
     "cannot_connect": {
       "message": "与 Jung Home 网关通信时出错：{error}"
     },
+    "certificate_changed": {
+      "message": "{host} 处的设备未出示为此 Jung Home 网关固定的 TLS 证书，因此未发送访问令牌。如果您重置或更换了网关，请在“设置”、“修复”中确认新证书。"
+    },
     "cannot_send": {
       "message": "无法连接到 Jung Home 网关以发送命令；正在重新连接。请稍后重试。"
     },
@@ -214,6 +221,21 @@
     "websocket_push_failure": {
       "title": "Jung Home 实时更新已停止",
       "description": "Home Assistant 连续 {failures} 次未能重新连接到位于 {host} 的 Jung Home 网关。设备状态不再即时推送，现在仅在定期的 REST 轮询时刷新。请检查网关是否已开启并可在您的网络中访问。连接恢复后，此问题将自动消失。"
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home 网关证书已更改",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "信任网关的新证书",
+            "description": "在 {host} 应答的设备出示的 TLS 证书（{observed}）与 Home Assistant 首次连接此 Jung Home 网关时固定的证书（{expected}）不同。Home Assistant 已停止与其通信，甚至不会发送访问令牌，在此问题解决之前网关的实体将保持不可用。只有在网关已恢复出厂设置或已更换，或其固件重新生成了证书时，证书才会更改。如果以上都没有发生，可能是另一台设备在此地址上应答：请不要确认，改为检查您的网络。 请确认 {host} 处的 Jung Home 网关已重置或更换，并且应信任其当前出示的证书（{observed}）而非已固定的证书（{expected}）。Home Assistant 将固定新证书，向其发送访问令牌并重新连接。"
+          }
+        },
+        "error": {
+          "cannot_connect": "连接网关失败。",
+          "different_gateway": "该地址有应答，但属于与此条目不同的 Jung Home 网关。请改用“重新配置”来更改地址。"
+        }
+      }
     }
   }
 }

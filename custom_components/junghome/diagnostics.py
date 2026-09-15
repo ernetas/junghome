@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 
-from .const import DOMAIN, device_slug, gateway_device_id
+from .const import CONF_TLS_FINGERPRINT, DOMAIN, device_slug, gateway_device_id
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -142,6 +142,12 @@ async def async_get_config_entry_diagnostics(
             # TO_REDACT keeps out of `data`, so it takes the literal sweep.
             "title": _scrub(entry.title, secrets),
         },
+        # The SHA-256 fingerprint of the gateway certificate this entry pins
+        # (`tls.py`). Deliberately NOT redacted: a certificate fingerprint is
+        # public — every TLS handshake presents it — and a report about
+        # "certificate changed" or "cannot connect" is unreadable without it.
+        # None on an entry that has not pinned yet.
+        "pinned_tls_fingerprint_sha256": entry.data.get(CONF_TLS_FINGERPRINT),
         # The gateway's own software version ("2.1.3 (2840)"), read over REST.
         "gateway_version": coordinator.gateway_version,
         # The API contract version the gateway announces in the WebSocket

@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50 tai junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Yhdyskäytävän varmenne poikkeaa",
+        "description": "Osoitteessa {host} oleva yhdyskäytävä esittää TLS-varmenteen, joka poikkeaa tälle merkinnälle kiinnitetystä (kiinnitetty {expected}, esitetty {observed}). Tämä on odotettavissa vain, jos yhdyskäytävä on palautettu tehdasasetuksiin tai vaihdettu tai sen laiteohjelmisto on luonut varmenteen uudelleen. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: palaa takaisin ja tarkista osoite. Sille on toistaiseksi lähetetty vain TLS-kättely. Lähetä, jos haluat luottaa uuteen varmenteeseen ja jatkaa."
       }
     },
     "progress": {
@@ -191,6 +195,9 @@
     "cannot_connect": {
       "message": "Virhe viestinnässä Jung Home -yhdyskäytävän kanssa: {error}"
     },
+    "certificate_changed": {
+      "message": "Osoitteessa {host} oleva laite ei esitä tälle Jung Home -yhdyskäytävälle kiinnitettyä TLS-varmennetta, joten käyttöoikeustunnusta ei lähetetty. Jos palautit tai vaihdoit yhdyskäytävän, vahvista uusi varmenne kohdassa Asetukset, Korjaukset."
+    },
     "cannot_send": {
       "message": "Jung Home -yhdyskäytävään ei saatu yhteyttä komennon lähettämiseksi; se yhdistää uudelleen. Yritä hetken kuluttua uudelleen."
     },
@@ -214,6 +221,21 @@
     "websocket_push_failure": {
       "title": "Jung Homen reaaliaikaiset päivitykset ovat pysähtyneet",
       "description": "Home Assistant ei onnistunut muodostamaan yhteyttä uudelleen Jung Home -yhdyskäytävään osoitteessa {host} {failures} kertaa peräkkäin. Laitteiden tiloja ei enää lähetetä välittömästi, vaan ne päivittyvät nyt vain säännöllisessä REST-kyselyssä. Tarkista, että yhdyskäytävä on käynnissä ja tavoitettavissa verkossasi. Tämä ongelma poistuu itsestään, kun yhteys palautuu."
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home -yhdyskäytävän varmenne on muuttunut",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Luota yhdyskäytävän uuteen varmenteeseen",
+            "description": "Osoitteessa {host} vastaava laite esittää TLS-varmenteen ({observed}), joka poikkeaa siitä, jonka Home Assistant kiinnitti muodostaessaan ensimmäisen yhteyden tähän Jung Home -yhdyskäytävään ({expected}). Home Assistant on lopettanut yhteydenpidon siihen, edes käyttöoikeustunnusta ei lähetetä, ja yhdyskäytävän entiteetit pysyvät poissa käytöstä, kunnes tämä on ratkaistu. Varmenteen muuttuminen on odotettavissa vain, jos yhdyskäytävä on palautettu tehdasasetuksiin tai vaihdettu tai sen laiteohjelmisto on luonut varmenteen uudelleen. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: älä vahvista, vaan tarkista verkkosi. Vahvista, että osoitteessa {host} oleva Jung Home -yhdyskäytävä on palautettu tai vaihdettu ja että sen nyt esittämään varmenteeseen ({observed}) tulee luottaa kiinnitetyn ({expected}) sijaan. Home Assistant kiinnittää uuden varmenteen, lähettää sille käyttöoikeustunnuksen ja muodostaa yhteyden uudelleen."
+          }
+        },
+        "error": {
+          "cannot_connect": "Yhteyden muodostaminen yhdyskäytävään epäonnistui.",
+          "different_gateway": "Osoite vastaa, mutta se kuuluu eri Jung Home -yhdyskäytävälle kuin tämä merkintä. Muuta osoite sen sijaan Määritä uudelleen -toiminnolla."
+        }
+      }
     }
   }
 }

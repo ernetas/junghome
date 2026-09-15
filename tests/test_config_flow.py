@@ -9,11 +9,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -32,6 +34,7 @@ from custom_components.junghome.const import (
     CONF_POLL_INTERVAL,
     CONF_SERIAL,
     CONF_SUPPRESS_DUPLICATE_PRESSES,
+    CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_BUTTON_ACTION,
@@ -39,7 +42,8 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from tests.conftest import PRISTINE_DEVICES
+from custom_components.junghome.tls import fingerprint_ssl
+from tests.conftest import FAKE_FINGERPRINT, PRISTINE_DEVICES
 from tests.conftest import _fake_run_websocket as _fake_live_websocket
 
 # A single cover so the options flow has something to list. stable_unique_id =
@@ -364,6 +368,7 @@ async def test_zeroconf_confirm_app_approval_prefills_host(
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "tok-z",
             CONF_IDENTITY_ANCHOR: "junghome-abc.local",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         await hass.async_block_till_done()
     entry = hass.config_entries.async_entries(DOMAIN)[0]
@@ -391,6 +396,7 @@ async def test_zeroconf_confirm_password_prefills_host(hass: HomeAssistant) -> N
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "pw-z",
             CONF_IDENTITY_ANCHOR: "junghome-abc.local",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         await hass.async_block_till_done()
     entry = hass.config_entries.async_entries(DOMAIN)[0]
@@ -458,6 +464,7 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "tok-123",
             CONF_IDENTITY_ANCHOR: "1.2.3.4",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         await hass.async_block_till_done()
 
@@ -499,6 +506,7 @@ async def test_register_shows_progress_while_pending(hass: HomeAssistant) -> Non
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "tok-waited",
             CONF_IDENTITY_ANCHOR: "1.2.3.4",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         await hass.async_block_till_done()
 
@@ -546,6 +554,7 @@ async def test_register_failed_form_allows_retry(hass: HomeAssistant) -> None:
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "tok-retry",
             CONF_IDENTITY_ANCHOR: "1.2.3.4",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         assert attempts == 2
         await hass.async_block_till_done()
@@ -655,7 +664,7 @@ async def test_reconfigure_flow(hass: HomeAssistant, aioclient_mock) -> None:
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     fetch, run_ws = _no_network()
     with fetch, run_ws:
         result = await entry.start_reconfigure_flow(hass)
@@ -690,7 +699,7 @@ async def test_reconfigure_reloads_once_and_keeps_unique_id(
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     fetch, run_ws = _no_network()
     with fetch, run_ws:
         await hass.config_entries.async_setup(entry.entry_id)
@@ -766,6 +775,7 @@ async def test_user_flow_password_success(hass: HomeAssistant) -> None:
             CONF_HOST: "1.2.3.4",
             CONF_TOKEN: "pw-tok",
             CONF_IDENTITY_ANCHOR: "1.2.3.4",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         }
         await hass.async_block_till_done()
 
@@ -902,9 +912,7 @@ async def test_reconfigure_rejects_unreachable_host(
         domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get(
-        "https://5.6.7.9/api/junghome/functions", exc=aiohttp.ClientError
-    )
+    aioclient_mock.get("https://5.6.7.9/api/junghome/version/", exc=aiohttp.ClientError)
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
@@ -930,7 +938,7 @@ async def test_reconfigure_accepts_host_that_rejects_the_token(
         domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", status=401)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", status=401)
 
     fetch, run_ws = _no_network()
     with fetch, run_ws:
@@ -952,7 +960,7 @@ async def test_reconfigure_rejects_host_that_times_out(
         domain=DOMAIN, unique_id="1.2.3.4", data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"}
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.9/api/junghome/functions", exc=TimeoutError)
+    aioclient_mock.get("https://5.6.7.9/api/junghome/version/", exc=TimeoutError)
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
@@ -1359,7 +1367,7 @@ async def test_reconfigure_reloads_an_entry_stuck_in_setup_retry(
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert not entry.update_listeners
 
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     fetch, run_ws = _no_network()
     with (
         fetch,
@@ -1377,13 +1385,34 @@ async def test_reconfigure_reloads_an_entry_stuck_in_setup_retry(
     schedule_reload.assert_called_once_with(entry.entry_id)
 
 
-async def test_zeroconf_ip_change_updates_the_stored_host(
-    hass: HomeAssistant,
-) -> None:
-    """Re-discovery at a new address updates the entry (discovery-update-info).
+_LEARN = (
+    "custom_components.junghome.config_flow.JungHomeConfigFlow._async_learn_fingerprint"
+)
+_OTHER_FINGERPRINT = "cd" * 32
 
-    Covers the `updates={CONF_HOST: ...}` path on a *loaded* entry, which the
-    other zeroconf abort tests never reach.
+
+async def _setup_failing(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Set ``entry`` up against a gateway that cannot be reached (SETUP_RETRY)."""
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(side_effect=aiohttp.ClientError("unreachable")),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_zeroconf_does_not_move_a_healthy_entry(hass: HomeAssistant) -> None:
+    """An mDNS packet must not redirect a LOADED, healthy entry (S1).
+
+    The packet is unauthenticated and the serial/hostname it names are public
+    (the gateway broadcasts them), so a forged announcement used to move the
+    entry's host — and its next poll, token and all — to any address on the
+    LAN, no user interaction involved. A healthy entry is talking to its
+    gateway at the stored address right now: nothing to fix, nothing to
+    trust. No reload, no request to the announced address, not even a
+    certificate read.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1391,30 +1420,249 @@ async def test_zeroconf_ip_change_updates_the_stored_host(
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
     )
     entry.add_to_hass(hass)
-
-    info = ZeroconfServiceInfo(
-        ip_address="9.9.9.9",
-        ip_addresses=["9.9.9.9"],
-        port=443,
-        hostname="junghome-abc.local.",
-        type="_junghome._tcp.local.",
-        name="junghome._junghome._tcp.local.",
-        properties={},
-    )
     fetch, run_ws = _no_network()
     with fetch, run_ws:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         assert entry.state is ConfigEntryState.LOADED
+        assert entry.runtime_data.last_update_success
 
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "zeroconf"}, data=info
-        )
+        with (
+            patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn,
+            patch.object(
+                hass.config_entries,
+                "async_reload",
+                wraps=hass.config_entries.async_reload,
+            ) as reload,
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": "zeroconf"},
+                data=_zeroconf_info(host="9.9.9.9"),
+            )
+            await hass.async_block_till_done()
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+        assert entry.data[CONF_HOST] == "1.2.3.4"
+        learn.assert_not_called()
+        reload.assert_not_called()
+        await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
 
-    assert result["type"] == FlowResultType.ABORT
+
+async def test_zeroconf_moves_a_failing_entry_whose_certificate_matches(
+    hass: HomeAssistant,
+) -> None:
+    """The legitimate case: the gateway got a new lease while HA could not reach it.
+
+    The entry is in SETUP_RETRY at the old address, and the responder at the
+    announced one presents the pinned certificate — which only the gateway
+    can — so the host is adopted and the entry reloaded straight away rather
+    than on its next retry timer.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "x",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    await _setup_failing(hass, entry)
+
+    fetch, run_ws = _no_network()
+    with (
+        fetch,
+        run_ws,
+        patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn,
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info(host="9.9.9.9")
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "already_configured"
+    learn.assert_awaited_once_with("9.9.9.9")
+    assert entry.data[CONF_HOST] == "9.9.9.9"
+    schedule_reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_zeroconf_refuses_a_failing_entry_when_the_certificate_differs(
+    hass: HomeAssistant,
+) -> None:
+    """A failing entry still does not follow a packet to a stranger's address.
+
+    The responder at the announced address presents a certificate other than
+    the pinned one, so the announcement is refused: host unchanged, no
+    reload, and (the point) no request that could carry the token.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "x",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    await _setup_failing(hass, entry)
+
+    with (
+        patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)),
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info(host="9.9.9.9")
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+    assert entry.data[CONF_TLS_FINGERPRINT] == _OTHER_FINGERPRINT
+    schedule_reload.assert_not_called()
+
+
+async def test_zeroconf_ignores_an_announced_address_it_cannot_reach(
+    hass: HomeAssistant,
+) -> None:
+    """A certificate read that fails leaves a failing entry untouched."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "x",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    await _setup_failing(hass, entry)
+    with patch(_LEARN, AsyncMock(side_effect=aiohttp.ClientError("refused"))):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info(host="9.9.9.9")
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+
+
+async def test_zeroconf_moves_a_loaded_entry_whose_poll_is_failing(
+    hass: HomeAssistant,
+) -> None:
+    """A loaded entry that has lost its gateway counts as failing too.
+
+    The gateway moved while the entry was loaded: the coordinator's poll has
+    failed (``last_update_success`` False). The certificate at the announced
+    address matches, so the host is adopted and the entry's own update
+    listener reloads it — exactly once.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "x",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    fetch = AsyncMock(return_value=[])
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        fetch.side_effect = aiohttp.ClientError("gone")
+        await coordinator.async_refresh()
+        assert not coordinator.last_update_success
+
+        fetch.side_effect = None
+        with (
+            patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)),
+            patch.object(
+                hass.config_entries,
+                "async_reload",
+                wraps=hass.config_entries.async_reload,
+            ) as reload,
+        ):
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": "zeroconf"},
+                data=_zeroconf_info(host="9.9.9.9"),
+            )
+            await hass.async_block_till_done()
+        assert result["reason"] == "already_configured"
+        assert entry.data[CONF_HOST] == "9.9.9.9"
+        reload.assert_called_once_with(entry.entry_id)
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_zeroconf_unpinned_failing_entry_trusts_its_first_contact(
+    hass: HomeAssistant,
+) -> None:
+    """An entry from before pinning that cannot reach its gateway follows the packet.
+
+    It has no certificate to verify against, so this is the one case that
+    still trusts the announcement — the same trust-on-first-use its next
+    successful connect extends anyway (documented residual for legacy
+    entries; a healthy unpinned entry is never moved, see above).
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "x"},
+    )
+    entry.add_to_hass(hass)
+    await _setup_failing(hass, entry)
+    with (
+        patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn,
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info(host="9.9.9.9")
+        )
+        await hass.async_block_till_done()
     assert result["reason"] == "already_configured"
     assert entry.data[CONF_HOST] == "9.9.9.9"
+    learn.assert_not_called()  # nothing to compare against
+    schedule_reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_zeroconf_same_address_reloads_a_retrying_entry(
+    hass: HomeAssistant,
+) -> None:
+    """A gateway announcing itself at the stored address is retried at once.
+
+    Parity with Home Assistant's own discovery handling for entries in
+    SETUP_RETRY: the gateway just came back, so do not wait for the timer.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "x",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    await _setup_failing(hass, entry)
+    with patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "zeroconf"}, data=_zeroconf_info(host="1.2.3.4")
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+    schedule_reload.assert_called_once_with(entry.entry_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1452,7 +1700,12 @@ async def test_zeroconf_with_serial_keys_entry_on_serial(
 async def test_zeroconf_serial_rediscovery_updates_host(
     hass: HomeAssistant,
 ) -> None:
-    """An IP change reaches a serial-keyed entry no matter how it was added."""
+    """An IP change reaches a serial-keyed entry no matter how it was added.
+
+    ...once the entry is actually failing at its stored address and the
+    announced one presents its certificate: the serial in the packet is
+    public and proves nothing on its own.
+    """
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=_SERIAL_TXT["serial"],
@@ -1461,14 +1714,27 @@ async def test_zeroconf_serial_rediscovery_updates_host(
             CONF_TOKEN: "t",
             CONF_SERIAL: _SERIAL_TXT["serial"],
             CONF_IDENTITY_ANCHOR: _SERIAL_TXT["serial"],
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
         },
     )
     entry.add_to_hass(hass)
+    # Never set up (NOT_LOADED) is not "failing": nothing is adopted.
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "zeroconf"},
         data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
     )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+
+    await _setup_failing(hass, entry)
+    with patch.object(hass.config_entries, "async_schedule_reload"):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "zeroconf"},
+            data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+        )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     assert entry.data[CONF_HOST] == "5.6.7.8"
@@ -1482,6 +1748,9 @@ async def test_zeroconf_adopts_legacy_hostname_keyed_entry(
     The critical assertion is the last pair: the hub-device identifier and the
     scene unique_id scope must be EXACTLY what they were before the migration,
     or the re-keying would orphan the hub device and every scene entity.
+
+    The announcement names the address the entry already talks to, which is
+    what lets an entry with no pin yet trust its serial; the host stays.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1495,17 +1764,126 @@ async def test_zeroconf_adopts_legacy_hostname_keyed_entry(
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "zeroconf"},
-        data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+        data=_zeroconf_info(host="1.2.3.4", properties=_SERIAL_TXT),
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
 
     assert entry.unique_id == _SERIAL_TXT["serial"]
     assert entry.data[CONF_SERIAL] == _SERIAL_TXT["serial"]
-    assert entry.data[CONF_HOST] == "5.6.7.8"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
     assert entry.data[CONF_IDENTITY_ANCHOR] == "junghome-abc.local"
     assert gateway_device_id(entry) == hub_before
     assert entry_scope(entry) == scope_before
+
+
+async def test_zeroconf_legacy_entry_is_not_rekeyed_from_an_unverifiable_packet(
+    hass: HomeAssistant,
+) -> None:
+    """A healthy, unpinned legacy entry ignores a packet from another address.
+
+    Migrating its identity onto a serial it cannot verify would let one forged
+    packet re-key the entry (and lock reconfigure/rediscovery to the wrong
+    serial). It migrates on the next same-address announcement — every HA
+    restart produces one — or once pinned, on a certificate-verified one.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "zeroconf"},
+        data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.unique_id == "junghome-abc.local"
+    assert CONF_SERIAL not in entry.data
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+
+
+async def test_zeroconf_pinned_legacy_entry_is_rekeyed_from_a_verified_packet(
+    hass: HomeAssistant,
+) -> None:
+    """A pinned, hostname-keyed entry migrates when the announced address proves itself.
+
+    Healthy, so the host stays; the responder at the new address presents the
+    pinned certificate, so its serial is trusted and the identity migrates.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    with patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "zeroconf"},
+            data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+        )
+    assert result["reason"] == "already_configured"
+    learn.assert_awaited_once_with("5.6.7.8")
+    assert entry.unique_id == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_IDENTITY_ANCHOR] == "junghome-abc.local"
+    assert entry.data[CONF_HOST] == "1.2.3.4"  # healthy (not failing): host kept
+
+    # ...and with a certificate that does NOT match, nothing at all changes.
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-xyz.local",
+        data={
+            CONF_HOST: "1.2.3.5",
+            CONF_TOKEN: "t",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    other.add_to_hass(hass)
+    with patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "zeroconf"},
+            data=_zeroconf_info(
+                hostname="junghome-xyz.local.",
+                host="5.6.7.9",
+                properties={**_SERIAL_TXT, "serial": "ser-xyz"},
+            ),
+        )
+    assert result["reason"] == "already_configured"
+    assert other.unique_id == "junghome-xyz.local"
+    assert CONF_SERIAL not in other.data
+
+
+async def test_zeroconf_failing_legacy_entry_adopts_serial_and_host(
+    hass: HomeAssistant,
+) -> None:
+    """A legacy entry that cannot reach its gateway adopts both from the packet."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="junghome-abc.local",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    hub_before = gateway_device_id(entry)
+    await _setup_failing(hass, entry)
+    with patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "zeroconf"},
+            data=_zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT),
+        )
+    assert result["reason"] == "already_configured"
+    assert entry.unique_id == _SERIAL_TXT["serial"]
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    assert gateway_device_id(entry) == hub_before
+    schedule_reload.assert_called_once_with(entry.entry_id)
 
 
 async def test_zeroconf_adopts_legacy_manual_host_keyed_entry(
@@ -1632,7 +2010,7 @@ async def test_reconfigure_rejects_a_different_gateway(
         },
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-OTHER")):
         result = await entry.start_reconfigure_flow(hass)
         result = await hass.config_entries.flow.async_configure(
@@ -1659,7 +2037,7 @@ async def test_reconfigure_accepts_matching_serial(
         },
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     fetch, run_ws = _no_network()
     with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-orig")), fetch, run_ws:
         result = await entry.start_reconfigure_flow(hass)
@@ -1687,7 +2065,7 @@ async def test_reconfigure_migrates_a_legacy_entry_to_serial(
     entry.add_to_hass(hass)
     hub_before = gateway_device_id(entry)
     scope_before = entry_scope(entry)
-    aioclient_mock.get("https://5.6.7.8/api/junghome/functions", json=[])
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
     fetch, run_ws = _no_network()
     with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")), fetch, run_ws:
         result = await entry.start_reconfigure_flow(hass)
@@ -1728,15 +2106,18 @@ async def test_reconfigure_to_an_already_configured_gateway_aborts(
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
     )
     entry.add_to_hass(hass)
-    aioclient_mock.get("https://9.9.9.9/api/junghome/functions", json=[])
+    # A second address of the owner's gateway: the host check cannot see it,
+    # the serial it answers with can.
+    aioclient_mock.get("https://9.9.9.10/api/junghome/version/", json="1.5.0")
     with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")):
         result = await entry.start_reconfigure_flow(hass)
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_HOST: "9.9.9.9"}
+            result["flow_id"], {CONF_HOST: "9.9.9.10"}
         )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     assert entry.unique_id == "1.2.3.4"  # unchanged
+    assert entry.data[CONF_HOST] == "1.2.3.4"
 
 
 @pytest.mark.real_serial_fetch
@@ -1744,22 +2125,25 @@ async def test_fetch_serial_over_rest(hass: HomeAssistant, aioclient_mock) -> No
     """The REST helper parses the raw-string body and tolerates failures."""
     url = "https://gw/api/junghome/config/parameter/system_serial"
     aioclient_mock.get(url, json="0000000084fb4b1b")
-    assert await _flow(hass)._async_fetch_serial("gw", "tok") == "0000000084fb4b1b"
+    assert (
+        await _flow(hass)._async_fetch_serial("gw", "tok", FAKE_FINGERPRINT)
+        == "0000000084fb4b1b"
+    )
 
     # Older firmware: parameter unknown -> 404 -> None.
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, status=404)
-    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+    assert await _flow(hass)._async_fetch_serial("gw", "tok", FAKE_FINGERPRINT) is None
 
     # The middleware populates the value asynchronously after boot; an empty
     # string must read as "not known", not become a unique_id.
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, json="")
-    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+    assert await _flow(hass)._async_fetch_serial("gw", "tok", FAKE_FINGERPRINT) is None
 
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, exc=aiohttp.ClientError())
-    assert await _flow(hass)._async_fetch_serial("gw", "tok") is None
+    assert await _flow(hass)._async_fetch_serial("gw", "tok", FAKE_FINGERPRINT) is None
 
 
 async def test_reauth_on_a_loaded_entry_reloads_via_the_listener(
@@ -1861,5 +2245,472 @@ async def test_reauth_recovers_an_entry_whose_setup_failed_on_auth(
         assert entry.runtime_data.config["token"] == "fresh-tok"
         reload.assert_called_once_with(entry.entry_id)
 
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+# ---------------------------------------------------------------------------
+# TLS certificate pinning in the flows
+# ---------------------------------------------------------------------------
+
+
+async def test_reconfigure_probe_carries_no_token(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The reconfigure probe is the unauthenticated version read, token-free (S3).
+
+    It used to be ``GET /functions`` with the token, sent to a freshly typed
+    address before anything had established what answered there — and a 401
+    from that address was accepted as "reachable", skipping straight past
+    the serial check. Now the responder's certificate is read first (a bare
+    handshake), the probe hits ``version`` without a token, and only the
+    serial read — pinned — carries it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "secret-token"},
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
+    fetch, run_ws = _no_network()
+    with fetch, run_ws, patch(_FETCH_SERIAL, AsyncMock(return_value=None)) as serial:
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+    assert result["reason"] == "reconfigure_successful"
+    calls = [
+        (m[0].lower(), str(m[1]), (m[3] or {}).get("token"))
+        for m in aioclient_mock.mock_calls
+    ]
+    assert calls == [("get", "https://5.6.7.8/api/junghome/version/", None)]
+    # The serial read (the one request that does carry the token) went out
+    # pinned to the certificate the address presented.
+    serial.assert_awaited_once_with("5.6.7.8", "secret-token", FAKE_FINGERPRINT)
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+
+async def test_reconfigure_unreadable_certificate_is_cannot_connect(
+    hass: HomeAssistant,
+) -> None:
+    """A host that cannot complete a TLS handshake fails the form, nothing sent."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"},
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch(_LEARN, AsyncMock(side_effect=aiohttp.ClientError("refused"))),
+        patch(_FETCH_SERIAL, AsyncMock(return_value=None)) as serial,
+    ):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    serial.assert_not_called()
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+
+async def test_reconfigure_different_certificate_requires_confirmation(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A new address with a different certificate is confirmed before use.
+
+    The certificate is the only identity the flow can check without sending
+    the token, and it differs from the pin — a different device, or the same
+    gateway after a reset — so the user is asked. Nothing is stored and
+    nothing but the handshake has gone to the address until they confirm; on
+    confirm the new certificate becomes the pin and the usual commit (probe,
+    serial check) runs against it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-orig",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-orig",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
+    fetch, run_ws = _no_network()
+    with (
+        fetch,
+        run_ws,
+        patch(_FETCH_SERIAL, AsyncMock(return_value="ser-orig")) as serial,
+    ):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reconfigure_certificate"
+        assert result["description_placeholders"] == {
+            "host": "5.6.7.8",
+            "expected": "CD:" * 31 + "CD",
+            "observed": "AB:" * 31 + "AB",
+        }
+        # Nothing committed, nothing sent beyond the handshake.
+        assert entry.data[CONF_HOST] == "1.2.3.4"
+        assert aioclient_mock.mock_calls == []
+        serial.assert_not_called()
+
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+    serial.assert_awaited_once_with("5.6.7.8", "t", FAKE_FINGERPRINT)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_reconfigure_confirmed_certificate_still_checks_the_serial(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Confirming a new certificate does not waive the serial check."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-orig",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-orig",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
+    with patch(_FETCH_SERIAL, AsyncMock(return_value="ser-OTHER")):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        assert result["step_id"] == "reconfigure_certificate"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {"base": "different_gateway"}
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+    assert entry.data[CONF_TLS_FINGERPRINT] == _OTHER_FINGERPRINT
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+
+async def test_reconfigure_matching_certificate_needs_no_confirmation(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The same gateway (same certificate) at a new address commits directly."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-orig",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-orig",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get("https://5.6.7.8/api/junghome/version/", json="1.5.0")
+    fetch, run_ws = _no_network()
+    with fetch, run_ws, patch(_FETCH_SERIAL, AsyncMock(return_value="ser-orig")):
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "5.6.7.8"}
+        )
+        await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_HOST] == "5.6.7.8"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_manual_flow_refuses_to_move_an_entry_to_a_different_certificate(
+    hass: HomeAssistant,
+) -> None:
+    """Typing an address that claims a configured serial is not enough.
+
+    The serial comes from the responder itself, so any HTTPS host could
+    claim it; the existing entry's host moves only if the responder presents
+    the certificate that entry pinned. Here it does not: abort, untouched.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-777",
+        data={
+            CONF_HOST: "9.9.9.9",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-777",
+            CONF_IDENTITY_ANCHOR: "ser-777",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch(_REGISTER, AsyncMock(return_value="tok")),
+        patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "9.9.9.9"
+    assert entry.data[CONF_TLS_FINGERPRINT] == _OTHER_FINGERPRINT
+
+
+async def test_manual_flow_pins_an_unpinned_existing_entry_it_finds(
+    hass: HomeAssistant,
+) -> None:
+    """Rediscovering an unpinned entry by typing its address pins it too."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-777",
+        data={
+            CONF_HOST: "9.9.9.9",
+            CONF_TOKEN: "t",
+            CONF_SERIAL: "ser-777",
+            CONF_IDENTITY_ANCHOR: "ser-777",
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch(_REGISTER, AsyncMock(return_value="tok")),
+        patch(_FETCH_SERIAL, AsyncMock(return_value="ser-777")),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+        result = await _advance_progress(hass, result)
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "1.2.3.4"
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+
+async def test_host_form_fails_when_the_certificate_cannot_be_read(
+    hass: HomeAssistant,
+) -> None:
+    """The pin is learned before registration; no handshake, no registration."""
+    with (
+        patch(_LEARN, AsyncMock(side_effect=TimeoutError)),
+        patch(_REGISTER, AsyncMock(return_value="tok")) as register,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await _choose(hass, result, "app_approval")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOST: "1.2.3.4"}
+        )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "app_approval"
+    assert result["errors"] == {"base": "cannot_connect"}
+    register.assert_not_called()
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+
+async def test_reauth_registers_against_the_pinned_certificate(
+    hass: HomeAssistant,
+) -> None:
+    """Reauth re-registers with the gateway the entry pinned, not with whoever answers.
+
+    The flow seeds its pin from the entry, so no certificate is learned and
+    the registration request goes out pinned to the stored digest; the
+    fresh token is stored next to the unchanged pin.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: "old",
+            CONF_TLS_FINGERPRINT: _OTHER_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    seen: list[str | None] = []
+
+    async def _register(self: JungHomeConfigFlow) -> str:
+        seen.append(self._fingerprint)
+        return "new-tok"
+
+    fetch, run_ws = _no_network()
+    with (
+        patch(_REGISTER, _register),
+        patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn,
+        fetch,
+        run_ws,
+    ):
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        await hass.async_block_till_done()
+    assert result["reason"] == "reauth_successful"
+    assert seen == [_OTHER_FINGERPRINT]
+    learn.assert_not_called()
+    assert entry.data[CONF_TOKEN] == "new-tok"
+    assert entry.data[CONF_TLS_FINGERPRINT] == _OTHER_FINGERPRINT
+
+
+async def test_reauth_of_an_unpinned_entry_pins_on_first_contact(
+    hass: HomeAssistant,
+) -> None:
+    """A legacy entry with no pin learns one as part of the reauth registration."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "old"},
+    )
+    entry.add_to_hass(hass)
+
+    async def _register(self: JungHomeConfigFlow) -> str:
+        await self._async_ssl()  # what the real registration does first
+        return "new-tok"
+
+    fetch, run_ws = _no_network()
+    with patch(_REGISTER, _register), fetch, run_ws:
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+        result = await _advance_progress(hass, result)
+        await hass.async_block_till_done()
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_TOKEN] == "new-tok"
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+
+async def test_registration_helpers_send_the_pin(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Both registration requests pass ``ssl=`` pinned to the learned digest.
+
+    ``aioclient_mock`` does not record ``ssl``, so the session's request
+    entry point is wrapped to capture it.
+    """
+    aioclient_mock.post("https://gw/api/junghome/register", json={"token": "abc"})
+    aioclient_mock.post(
+        "https://gw/api/junghome/register/by-password", json={"token": "pw"}
+    )
+    session = async_get_clientsession(hass, verify_ssl=False)
+    original = session._request
+    seen: list[object] = []
+
+    async def _spy(method, url, **kwargs):
+        seen.append(kwargs.get("ssl"))
+        return await original(method, url, **kwargs)
+
+    with patch.object(session, "_request", _spy):
+        flow = _flow(hass)
+        assert await flow._async_register() == "abc"
+        assert await flow._async_register_by_password("pw") == "pw"
+    assert seen == [fingerprint_ssl(FAKE_FINGERPRINT)] * 2
+    assert flow._fingerprint == FAKE_FINGERPRINT
+
+
+async def test_zeroconf_leaves_an_ignored_entry_alone(hass: HomeAssistant) -> None:
+    """An ignored discovery stays ignored: no adoption, no reload, plain abort."""
+    for unique_id, info in (
+        (_SERIAL_TXT["serial"], _zeroconf_info(host="5.6.7.8", properties=_SERIAL_TXT)),
+        ("junghome-abc.local", _zeroconf_info(host="5.6.7.8")),
+    ):
+        ignored = MockConfigEntry(
+            domain=DOMAIN, unique_id=unique_id, source=config_entries.SOURCE_IGNORE
+        )
+        ignored.add_to_hass(hass)
+        with patch(_LEARN, AsyncMock(return_value=FAKE_FINGERPRINT)) as learn:
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": "zeroconf"}, data=info
+            )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+        assert CONF_HOST not in ignored.data
+        learn.assert_not_called()
+
+
+async def test_finish_pins_even_when_no_step_learned_first(
+    hass: HomeAssistant,
+) -> None:
+    """``async_step_finish`` never creates an entry without a pin.
+
+    Every real path learns it in ``_async_apply_host``; this is the
+    defensive fallback for a flow driven straight to ``finish``.
+    """
+    flow = _flow(hass, host="1.2.3.4")
+    flow._token = "tok"
+    flow.context = {"source": SOURCE_USER}
+    result = await flow.async_step_finish()
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+
+@pytest.mark.real_project_fetch
+async def test_forged_discovery_cannot_redirect_the_token_of_a_loaded_entry(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The reviewer's S1 reproduction, inverted: the token stays home.
+
+    A serial-keyed entry is loaded and healthy at HOST_A (real REST path
+    through ``aioclient_mock`` so every request's destination is recorded).
+    One unauthenticated mDNS packet naming its (public) serial from HOST_B
+    used to rewrite the host, reload the entry and send the token to
+    HOST_B. Now: abort, host unchanged, no reload, and not a single request
+    to HOST_B.
+    """
+    host_a, host_b, serial, token = "192.168.1.50", "192.168.1.66", "0022D1059602", "t"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=serial,
+        data={
+            CONF_HOST: host_a,
+            CONF_TOKEN: token,
+            CONF_SERIAL: serial,
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    aioclient_mock.get(f"https://{host_a}/api/junghome/functions", json=[])
+    aioclient_mock.get(f"https://{host_a}/api/junghome/project/junghome", status=404)
+    with patch.object(
+        JungHomeDataUpdateCoordinator, "_run_websocket", _fake_live_websocket
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+
+        info = _zeroconf_info(
+            hostname="junghome-0022d1059602.local.",
+            host=host_b,
+            properties={"serial": serial, "version": "2.1.3"},
+        )
+        with patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload:
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": "zeroconf"}, data=info
+            )
+            await hass.async_block_till_done()
+
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+        assert entry.data[CONF_HOST] == host_a
+        reload.assert_not_called()
+        assert [m for m in aioclient_mock.mock_calls if host_b in str(m[1])] == []
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
