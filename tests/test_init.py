@@ -250,6 +250,8 @@ async def test_stale_device_pruned(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
         coordinator = entry.runtime_data
+        hub = dev_reg.async_get_device(identifiers={(DOMAIN, gateway_device_id(entry))})
+        assert hub is not None
         # Not pruned on the first pass — the debounce rides out a partial poll.
         assert dev_reg.async_get(stale.id) is not None
         # Absent across the threshold of further polls -> pruned.
@@ -257,6 +259,73 @@ async def test_stale_device_pruned(hass: HomeAssistant) -> None:
             coordinator.async_set_updated_data(coordinator.data)
             await hass.async_block_till_done()
         assert dev_reg.async_get(stale.id) is None
+        # The synthetic hub device was just as absent from every one of those
+        # lists (the gateway never reports itself in `functions`), so the very
+        # pass that pruned the ghost must have singled the hub out to keep.
+        assert dev_reg.async_get(hub.id) is not None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_empty_or_failed_polls_prune_nothing(hass: HomeAssistant) -> None:
+    """An empty device list and a failed fetch never count as a missed poll.
+
+    Every device is absent from an empty list, so without the guard a gateway
+    answering ``[]`` for STALE_DEVICE_PRUNE_MISSES polls (a reboot, a half-up
+    middleware) would delete every device the user has — and a failed fetch
+    leaves the previous list in place, so it must count as nothing at all.
+    Pinned by driving the real poll path, not by injecting the list directly.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    ghost = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "ghost_device")}
+    )
+    fetch = AsyncMock(return_value=DEVICES)
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+
+        def registered() -> int:
+            return len(dr.async_entries_for_config_entry(dev_reg, entry.entry_id))
+
+        before = registered()
+        assert before > 1  # the hub plus the fixture's devices (and the ghost)
+
+        # The gateway answers with an empty list, over the whole threshold.
+        fetch.return_value = []
+        for _ in range(STALE_DEVICE_PRUNE_MISSES):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+        assert coordinator.data == []
+        assert registered() == before
+        assert dev_reg.async_get(ghost.id) is not None
+
+        # The fetch fails outright, over the whole threshold, with a real list
+        # adopted just before so there is something the failures could wrongly
+        # be measured against.
+        fetch.return_value = DEVICES
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        fetch.side_effect = aiohttp.ClientError("gateway unreachable")
+        for _ in range(STALE_DEVICE_PRUNE_MISSES):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+        assert coordinator.last_update_success is False
+        assert registered() == before
+        assert dev_reg.async_get(ghost.id) is not None
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -648,14 +717,77 @@ async def test_datapoint_set_change_reloads_entry(hass: HomeAssistant) -> None:
         )
 
         # The gateway now re-enumerates the same cover WITH a slat angle datapoint;
-        # the capability fingerprint changes, so a reload is scheduled to rebuild it.
+        # the capability fingerprint changes. One sighting is not trusted (the
+        # datapoints of a re-enumerating device arrive across several polls),
+        # so the reload waits for the next adoption to confirm the change.
         with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            coordinator.async_set_updated_data([with_angle])
+            await hass.async_block_till_done()
+            reload.assert_not_called()
             coordinator.async_set_updated_data([with_angle])
             await hass.async_block_till_done()
         reload.assert_called_once_with(entry.entry_id)
 
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_capability_change_seen_once_does_not_reload(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A datapoint set that flaps for one adoption (A -> B -> A) never reloads.
+
+    A partial poll can momentarily drop a cover's ``angle`` datapoint, and a
+    re-enumerating device's datapoints arrive across several polls. Reloading
+    on the first sighting rebuilt the entry from that transient set and — the
+    rebuilt watcher having seeded its baseline from it — reloaded again when
+    the next poll restored the full set: a reload per adoption for as long as
+    the flap lasted. The watcher must let the change go unconfirmed instead.
+    """
+    coordinator = init_integration.runtime_data
+    full = copy.deepcopy(coordinator.data)
+    without_angle = copy.deepcopy(full)
+    blind = next(d for d in without_angle if d["id"] == "idblind1")
+    blind["datapoints"] = [dp for dp in blind["datapoints"] if dp["type"] != "angle"]
+    assert [dp["type"] for dp in blind["datapoints"]] == ["level"]  # fixture sanity
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_set_updated_data(without_angle)  # B: seen once
+        await hass.async_block_till_done()
+        coordinator.async_set_updated_data(full)  # back to A: candidate dropped
+        await hass.async_block_till_done()
+        # A fresh B later is a fresh first sighting, not a second one.
+        coordinator.async_set_updated_data(without_angle)
+        await hass.async_block_till_done()
+        coordinator.async_set_updated_data(full)
+        await hass.async_block_till_done()
+    reload.assert_not_called()
+
+
+async def test_capability_change_confirmed_by_second_adoption_reloads_once(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A datapoint set that persists across two adoptions (A -> B -> B) reloads once.
+
+    The second sighting confirms the change; the reload is scheduled exactly
+    once, and a third identical adoption must not schedule another (the
+    closure is dead until the reload rebuilds it).
+    """
+    coordinator = init_integration.runtime_data
+    without_angle = copy.deepcopy(coordinator.data)
+    blind = next(d for d in without_angle if d["id"] == "idblind1")
+    blind["datapoints"] = [dp for dp in blind["datapoints"] if dp["type"] != "angle"]
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        coordinator.async_set_updated_data(without_angle)  # B: seen once
+        await hass.async_block_till_done()
+        reload.assert_not_called()
+        coordinator.async_set_updated_data(without_angle)  # B again: confirmed
+        await hass.async_block_till_done()
+        reload.assert_called_once_with(init_integration.entry_id)
+        coordinator.async_set_updated_data(without_angle)
+        await hass.async_block_till_done()
+    reload.assert_called_once_with(init_integration.entry_id)
 
 
 async def test_value_only_change_does_not_reload_entry(
@@ -689,8 +821,9 @@ async def test_capability_watch_runs_only_on_device_list_adoptions(
     — per-datapoint pushes, scenes broadcasts, the WS-drop notification —
     instead of recomputing every device's signature on each of them. Proven by
     mutating the stored list in place: a plain listener dispatch must not see
-    the change (the guard skipped the walk), while the next adoption of that
-    same list must still schedule the capability reload.
+    the change (the guard skipped the walk) — neither as the first sighting nor
+    as the confirming second one — while two adoptions of that same list must
+    still schedule the capability reload.
     """
     coordinator = init_integration.runtime_data
     for device in coordinator.data:
@@ -703,7 +836,12 @@ async def test_capability_watch_runs_only_on_device_list_adoptions(
         await hass.async_block_till_done()
     reload.assert_not_called()
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        coordinator.async_set_updated_data(coordinator.data)
+        coordinator.async_set_updated_data(coordinator.data)  # first sighting
+        await hass.async_block_till_done()
+        coordinator.async_update_listeners()  # not an adoption: cannot confirm
+        await hass.async_block_till_done()
+        reload.assert_not_called()
+        coordinator.async_set_updated_data(coordinator.data)  # confirmed
         await hass.async_block_till_done()
     reload.assert_called_once_with(init_integration.entry_id)
 
@@ -711,19 +849,26 @@ async def test_capability_watch_runs_only_on_device_list_adoptions(
 async def test_entity_availability_tracks_connection(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """available splits by control path: WS for controllables, REST otherwise.
+    """available splits by what the entity needs the WebSocket for.
 
-    Read-only entities (sensor, event) follow ``last_update_success`` — the REST
+    Pure state readers (sensor) follow ``last_update_success`` — the REST
     poll / WebSocket-push signal — and never key off ``ws_connected``, so a
     stale-True socket flag can't keep them "available" with frozen values after
-    the gateway has gone unreachable (issue #120). Controllable entities (light,
-    socket, LED switch) additionally require a live WebSocket, because commands
-    only travel over it: with the socket down they read unavailable rather than
-    accept commands that would silently fail.
+    the gateway has gone unreachable (issue #120). Entities whose function needs
+    the socket additionally require it live: controllables (light, socket, LED
+    switch) because commands only travel over it — with the socket down they
+    read unavailable rather than accept commands that would silently fail — and
+    button events because edges only *arrive* over it (the REST poll re-reads
+    values and fires nothing), so a deaf button must not look live.
     """
     coordinator = init_integration.runtime_data
-    controllable = ("light.strip", "switch.boiler", "switch.button_a_status_led")
-    read_only = ("sensor.boiler_power", "event.button_a_up")
+    needs_websocket = (
+        "light.strip",
+        "switch.boiler",
+        "switch.button_a_status_led",
+        "event.button_a_up",
+    )
+    read_only = ("sensor.boiler_power",)
 
     def states(entities: tuple[str, ...]) -> set[str]:
         return {
@@ -736,16 +881,17 @@ async def test_entity_availability_tracks_connection(
     coordinator.last_update_success = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states(controllable) == {"available"}
+    assert states(needs_websocket) == {"available"}
     assert states(read_only) == {"available"}
 
-    # WS down but REST still polling: controllables can't be commanded, so they
-    # go unavailable; read-only entities keep reporting their polled state.
+    # WS down but REST still polling: controllables can't be commanded and
+    # buttons can't be heard, so they go unavailable; read-only entities keep
+    # reporting their polled state.
     coordinator.ws_connected = False
     coordinator.last_update_success = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states(controllable) == {"unavailable"}
+    assert states(needs_websocket) == {"unavailable"}
     assert states(read_only) == {"available"}
 
     # Gateway gone: REST poll failing -> everything unavailable, even if the
@@ -754,7 +900,7 @@ async def test_entity_availability_tracks_connection(
     coordinator.last_update_success = False
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states(controllable) == {"unavailable"}
+    assert states(needs_websocket) == {"unavailable"}
     assert states(read_only) == {"unavailable"}
 
     # Fully recovered -> everything available again.
@@ -762,7 +908,7 @@ async def test_entity_availability_tracks_connection(
     coordinator.last_update_success = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    assert states(controllable) == {"available"}
+    assert states(needs_websocket) == {"available"}
     assert states(read_only) == {"available"}
 
 
@@ -1917,11 +2063,26 @@ async def test_gateway_connectivity_reflects_disconnect(
 
 
 async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) -> None:
-    """The synthetic gateway device survives the stale-device prune."""
+    """The synthetic gateway device survives the stale-device prune.
+
+    The gateway never lists itself in ``functions``, so from the pruner's point
+    of view the hub is a device missing from every single adoption. Without the
+    explicit hub protection it would be removed — with the connectivity sensor
+    and every ``via_device`` link — as soon as the debounce ran out.
+    """
+    coordinator = init_integration.runtime_data
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_device(identifiers={(DOMAIN, "gateway_1.2.3.4")})
     assert device is not None
     assert device.name == "JUNG HOME Gateway"
+
+    # Absent from the whole debounce window's worth of adoptions (and one more,
+    # in case an off-by-one ever lands on the threshold itself).
+    for _ in range(STALE_DEVICE_PRUNE_MISSES + 1):
+        coordinator.async_set_updated_data(coordinator.data)
+        await hass.async_block_till_done()
+    assert dev_reg.async_get(device.id) is not None
+    assert dev_reg.async_get(device.id).config_entries == {init_integration.entry_id}
 
 
 async def test_devices_linked_to_gateway_hub(

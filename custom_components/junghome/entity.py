@@ -49,15 +49,18 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
 
     _attr_has_entity_name = True
 
-    # Whether this entity's control path needs the live WebSocket. Commands
-    # (turn on/off, brightness, position, target temperature, status LED) only
-    # ever go out over the WebSocket — REST is poll-only — so a controllable
-    # entity with the socket down cannot be actuated and must read unavailable.
-    # Read-only entities (sensor/binary_sensor/event) leave this False and stay
-    # available on the REST signal alone. Controllable platforms set it True.
-    # Scenes are the one control path over REST, so the scene platform (which is
-    # not a JungHomeEntity) keeps its own REST-only availability.
-    _controllable_over_websocket = False
+    # Whether this entity's function needs the live WebSocket. Commands (turn
+    # on/off, brightness, position, target temperature, status LED) only ever
+    # go out over the WebSocket, and button edges only ever arrive over it —
+    # REST is a poll of last-known values — so with the socket down a
+    # controllable entity cannot be actuated and an event entity cannot hear a
+    # press. Both must read unavailable rather than look live while inert or
+    # deaf. Pure state readers (sensor/binary_sensor) leave this False and stay
+    # available on the REST signal alone; the controllable platforms and the
+    # event platform set it True. Scenes are the one control path over REST,
+    # so the scene platform (which is not a JungHomeEntity) keeps its own
+    # REST-only availability.
+    _needs_websocket = False
 
     def __init__(
         self,
@@ -87,14 +90,19 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         "available" with frozen values long after the gateway vanished (which
         silently fabricated energy readings; see issue #120).
 
-        Controllable entities additionally require a live WebSocket, because
-        commands only travel over it: with the socket down they can report
-        their last polled state but cannot be actuated, so they read
-        unavailable rather than accept commands that would silently fail.
-        ``ws_connected`` drives this and the connectivity diagnostic sensor;
-        it never *grants* availability on its own.
+        Entities whose function needs the socket (``_needs_websocket``)
+        additionally require a live WebSocket. Commands only travel over it:
+        a controllable entity with the socket down could report its last
+        polled state but not be actuated, so it reads unavailable rather than
+        accept commands that would silently fail. Button edges only *arrive*
+        over it (a REST poll re-reads the same values and fires nothing — see
+        ``event.py``): an event entity with the socket down is deaf, so it
+        reads unavailable rather than let an automation wait on a release it
+        can never report (the shipped blueprint aborts a gesture on exactly
+        that transition). ``ws_connected`` drives this and the connectivity
+        diagnostic sensor; it never *grants* availability on its own.
         """
-        if self._controllable_over_websocket and not self.coordinator.ws_connected:
+        if self._needs_websocket and not self.coordinator.ws_connected:
             return False
         return self.coordinator.last_update_success
 
@@ -170,7 +178,7 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         ``last_update_success = True``, and ``ws_connected`` is necessarily
         True (the push arrived on the live session, and the flag is only
         cleared when that session ends) — so ``available`` computes True for
-        every entity of this entry, controllable or not. A push therefore can
+        every entity of this entry, socket-dependent or not. A push therefore can
         never make an entity UNavailable, but it can make one available again
         (a failed poll marked everything unavailable; the push proves the
         gateway alive). The skip is allowed only while the state machine
