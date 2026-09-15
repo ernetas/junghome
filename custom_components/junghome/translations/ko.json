@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home 게이트웨이의 IP 주소 또는 호스트 이름(예: 192.168.1.50 또는 junghome.local)입니다."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "게이트웨이 인증서가 다릅니다",
+        "description": "{host}의 게이트웨이가 이 항목에 고정된 인증서와 다른 TLS 인증서를 제시합니다(고정됨 {expected}, 제시됨 {observed}). 이는 게이트웨이가 공장 초기화되었거나 교체되었거나 펌웨어가 인증서를 다시 생성한 경우에만 예상되는 상황입니다. 해당 사항이 없다면 이 주소에서 다른 장치가 응답하고 있을 수 있습니다. 돌아가서 주소를 확인하세요. 지금까지는 TLS 핸드셰이크만 전송되었습니다. 새 인증서를 신뢰하고 계속하려면 제출하세요."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Jung Home 게이트웨이와 통신하는 중 오류가 발생했습니다: {error}"
     },
+    "certificate_changed": {
+      "message": "{host}의 장치가 이 Jung Home 게이트웨이에 고정된 TLS 인증서를 제시하지 않아 액세스 토큰을 보내지 않았습니다. 게이트웨이를 초기화하거나 교체했다면 설정, 복구에서 새 인증서를 확인하세요."
+    },
     "cannot_send": {
       "message": "명령을 보내기 위해 Jung Home 게이트웨이에 연결할 수 없습니다. 다시 연결하는 중입니다. 잠시 후 다시 시도하세요."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Jung Home 실시간 업데이트가 중단되었습니다",
       "description": "Home Assistant가 {host}의 Jung Home 게이트웨이에 {failures}회 연속으로 다시 연결하지 못했습니다. 기기 상태가 더 이상 즉시 전송되지 않으며 이제 주기적인 REST 폴링에서만 새로 고쳐집니다. 게이트웨이의 전원이 켜져 있고 네트워크에서 연결할 수 있는지 확인하세요. 연결이 복구되면 이 문제는 자동으로 사라집니다."
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home 게이트웨이 인증서가 변경되었습니다",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "게이트웨이의 새 인증서 신뢰",
+            "description": "{host}에서 응답하는 장치가 Home Assistant가 이 Jung Home 게이트웨이에 처음 연결할 때 고정한 인증서({expected})와 다른 TLS 인증서({observed})를 제시합니다. Home Assistant는 해당 장치와의 통신을 중단했고 액세스 토큰도 보내지 않으며, 해결될 때까지 게이트웨이의 엔티티는 사용할 수 없는 상태로 유지됩니다. 인증서 변경은 게이트웨이가 공장 초기화되었거나 교체되었거나 펌웨어가 인증서를 다시 생성한 경우에만 예상됩니다. 해당 사항이 없다면 이 주소에서 다른 장치가 응답하고 있을 수 있습니다. 확인하지 말고 네트워크를 점검하세요. {host}의 Jung Home 게이트웨이가 초기화되었거나 교체되었으며, 현재 제시하는 인증서({observed})를 고정된 인증서({expected}) 대신 신뢰해야 함을 확인하세요. Home Assistant가 새 인증서를 고정하고 액세스 토큰을 보낸 뒤 다시 연결합니다."
+          }
+        },
+        "error": {
+          "cannot_connect": "게이트웨이에 연결하지 못했습니다.",
+          "different_gateway": "이 주소는 응답하지만 이 항목과 다른 Jung Home 게이트웨이에 속합니다. 주소를 변경하려면 재구성을 사용하세요."
+        }
+      }
     }
   }
 }

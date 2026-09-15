@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_POLL_INTERVAL,
+    CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_SCENE_RECALLED,
@@ -38,6 +39,12 @@ from .const import (
     scene_unique_id,
 )
 from .models import Device, NodeIdentity, Scene, parse_project_export
+from .tls import (
+    async_learn_fingerprint,
+    fingerprint_ssl,
+    format_fingerprint,
+    normalize_fingerprint,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +101,11 @@ WS_SEND_TIMEOUT = 10
 COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
+# Repair-issue translation key for "the gateway presents a certificate other
+# than the pinned one" (see `_report_fingerprint_mismatch`). Fixable: the fix
+# flow in repairs.py re-learns the fingerprint, but only once the user has
+# confirmed the gateway was reset or replaced — never silently.
+ISSUE_TLS_MISMATCH = "tls_certificate_changed"
 
 # Minimum spacing, in seconds, between two reads of the gateway's project
 # export (`GET /project/junghome`) after the one at setup. The export is read
@@ -390,6 +402,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Repair-issue id, scoped to this entry so two gateways each report
         # their own outage instead of overwriting one shared issue.
         self._push_failure_issue_id = f"{ISSUE_PUSH_FAILURE}_{config_entry.entry_id}"
+        # TLS certificate pinning (tls.py). Every request and the WebSocket
+        # upgrade pass ``ssl=`` from ``_async_ssl``: the fingerprint stored in
+        # the entry, or — for an entry created before pinning existed — one
+        # learned from the gateway on first contact and held here until the
+        # first authenticated fetch on it succeeds, at which point
+        # ``_persist_learned_fingerprint`` writes it into the entry (trust on
+        # first use, against the entry's CURRENT host). Read from the entry
+        # live rather than snapshotted at construction, so a fix flow that
+        # re-pins reaches the next request even before its reload lands.
+        self._learned_fingerprint: str | None = None
+        # Per-entry repair issue for a mismatch (``_report_fingerprint_mismatch``),
+        # and whether it is currently raised, so a poll that succeeds again
+        # (a transient impostor, or the real gateway back on its address)
+        # clears it without touching the registry on every healthy poll.
+        self._tls_issue_id = f"{ISSUE_TLS_MISMATCH}_{config_entry.entry_id}"
+        self._tls_mismatch_reported = False
         super().__init__(
             hass,
             _LOGGER,
@@ -441,6 +469,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_key="cannot_connect",
                 translation_placeholders={"error": str(err)},
             ) from err
+        except aiohttp.ServerFingerprintMismatch as err:
+            # The responder at the stored address is not the gateway this
+            # entry pinned. aiohttp raised this at the TLS handshake, before
+            # the request — so the token never left — and it must stay that
+            # way: no fallback, no re-learn. Surface it as a repair issue
+            # (fixable only by the user confirming the gateway was reset or
+            # replaced) and fail the poll so every entity reads unavailable
+            # rather than quietly polling a stranger every minute. Ordered
+            # before the generic ClientError arm it would otherwise land in.
+            self._report_fingerprint_mismatch(err)
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="certificate_changed",
+                translation_placeholders={"host": str(self.config["host"])},
+            ) from err
         except aiohttp.ClientError as err:
             self._record_error(err)
             raise UpdateFailed(
@@ -474,6 +517,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             else:
                 overlay = dict(self._poll_push_overlay or {})
 
+        # The gateway answered an authenticated request on the pinned
+        # connection: an entry that was still learning its fingerprint keeps
+        # it from here on, and a mismatch reported earlier (a transient
+        # impostor, or the gateway back on its address) is over.
+        self._persist_learned_fingerprint()
+        self._clear_fingerprint_mismatch()
         _LOGGER.debug("API Response: %s", response)
         if self._functions_broadcasts_seen != broadcasts_seen and self.data is not None:
             # A `functions` broadcast adopted a fresher, authoritative device
@@ -587,16 +636,141 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
 
+    def _stored_fingerprint(self) -> str | None:
+        """Return the fingerprint pinned in the entry, if it holds a valid one."""
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
+            return None
+        return normalize_fingerprint(entry.data.get(CONF_TLS_FINGERPRINT))
+
+    async def _async_learn_fingerprint(self, host: str) -> str:
+        """Learn the certificate fingerprint ``host`` presents (see tls.py).
+
+        A thin, patchable seam over the module helper: the test suite stubs it
+        the way it stubs every other network read, so the setup fixtures never
+        open a socket.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        return await async_learn_fingerprint(session, host)
+
+    async def _async_ssl(self) -> aiohttp.Fingerprint:
+        """Return the ``ssl=`` argument every request and WS upgrade must pass.
+
+        The pinned certificate: the fingerprint stored in the entry, else the
+        one learned earlier in this coordinator's life, else — trust on first
+        use, for an entry created before pinning existed — the one the
+        gateway at the entry's CURRENT host presents right now. The learn is
+        a bare TLS handshake that aiohttp aborts before any request (tls.py),
+        so even that first contact sends no token to an unverified peer: the
+        request that follows is already pinned to what the learn saw. Held in
+        ``_learned_fingerprint`` and written into the entry only once an
+        authenticated fetch has succeeded on it
+        (``_persist_learned_fingerprint``).
+        """
+        fingerprint = self._stored_fingerprint() or self._learned_fingerprint
+        if fingerprint is None:
+            fingerprint = await self._async_learn_fingerprint(self.config["host"])
+            self._learned_fingerprint = fingerprint
+            _LOGGER.info(
+                "Learned the Jung Home gateway's TLS certificate fingerprint "
+                "(%s); it is pinned from now on",
+                format_fingerprint(fingerprint),
+            )
+        return fingerprint_ssl(fingerprint)
+
+    @callback
+    def _persist_learned_fingerprint(self) -> None:
+        """Store the fingerprint learned on first use once it has proven itself.
+
+        Called after every successful authenticated ``/functions`` fetch; a
+        no-op unless this coordinator learned the fingerprint itself and the
+        entry still lacks one. The write touches neither host, token nor
+        options, so the entry's update listener does not reload it.
+        """
+        entry = self.config_entry
+        if (
+            self._learned_fingerprint is None
+            or entry is None
+            or self._stored_fingerprint() is not None
+        ):
+            return
+        self.hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_TLS_FINGERPRINT: self._learned_fingerprint},
+        )
+
+    @callback
+    def _report_fingerprint_mismatch(
+        self, err: aiohttp.ServerFingerprintMismatch
+    ) -> None:
+        """Raise the repair issue for a responder with the wrong certificate.
+
+        Shared by the REST poll and the WebSocket loop: whichever hits the
+        mismatch first reports it, the other re-reports the same issue id.
+        The issue names both digests so a user comparing against the JUNG
+        app or the gateway itself can tell a regenerated certificate from an
+        impostor; its fix flow (repairs.py) re-pins only after the user
+        confirms. ``last_error`` gets a readable line rather than aiohttp's
+        tuple repr (the host in it is scrubbed by diagnostics as usual).
+        """
+        expected = err.expected.hex()
+        observed = err.got.hex()
+        self.last_error = (
+            f"TLS certificate of {self.config['host']} changed: expected "
+            f"{format_fingerprint(expected)}, got {format_fingerprint(observed)}"
+        )
+        self.last_error_at = dt_util.utcnow()
+        if not self._tls_mismatch_reported:
+            _LOGGER.error(
+                "The Jung Home gateway at %s presents a TLS certificate that "
+                "does not match the pinned one (expected %s, got %s); refusing "
+                "to send the access token until the change is confirmed in "
+                "Settings > Repairs",
+                self.config["host"],
+                format_fingerprint(expected),
+                format_fingerprint(observed),
+            )
+        self._tls_mismatch_reported = True
+        entry_id = self.config_entry.entry_id if self.config_entry else ""
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._tls_issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_TLS_MISMATCH,
+            translation_placeholders={
+                "host": str(self.config["host"]),
+                "expected": format_fingerprint(expected),
+                "observed": format_fingerprint(observed),
+            },
+            data={"entry_id": entry_id},
+        )
+
+    @callback
+    def _clear_fingerprint_mismatch(self) -> None:
+        """Withdraw the mismatch issue once the pinned gateway answers again."""
+        if not self._tls_mismatch_reported:
+            return
+        self._tls_mismatch_reported = False
+        _LOGGER.info(
+            "The Jung Home gateway at %s presents the pinned TLS certificate again",
+            self.config["host"],
+        )
+        ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
+
     async def _fetch_devices_from_api(self, host: str, token: str) -> list[Device]:
         """Fetch devices from the Jung Home API."""
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
-        # cert without building an SSL context on the event loop.
+        # cert without building an SSL context on the event loop. The pin
+        # (`ssl=`) is what actually authenticates the peer — see tls.py.
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/functions"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
 
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
 
@@ -625,10 +799,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         for the WebSocket handshake to deliver the groups a moment later.
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/groups"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
         if not isinstance(data, list):
@@ -653,9 +828,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         url = f"https://{host}/api/junghome/config/parameter/{parameter}"
         headers = {"token": f"{token}"}
         try:
+            ssl = await self._async_ssl()
             async with (
                 asyncio.timeout(30),
-                session.get(url, headers=headers) as response,
+                session.get(url, headers=headers, ssl=ssl) as response,
             ):
                 if response.status != 200:
                     return None
@@ -710,10 +886,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/scenes/"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
         if not isinstance(data, list):
@@ -789,11 +966,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         fields out of it and drops it.
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/project/junghome"
         headers = {"token": f"{token}"}
         async with (
             asyncio.timeout(30),
-            session.get(url, headers=headers) as response,
+            session.get(url, headers=headers, ssl=ssl) as response,
         ):
             if response.status != 200:
                 _LOGGER.debug(
@@ -1091,8 +1269,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "Content-Type": "application/json",
         }
         try:
+            ssl = await self._async_ssl()
             async with asyncio.timeout(30):
-                async with session.post(url, headers=headers) as response:
+                async with session.post(url, headers=headers, ssl=ssl) as response:
                     response.raise_for_status()
         except aiohttp.ClientResponseError as err:
             if err.status in (401, 403):
@@ -1113,6 +1292,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 ) from err
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="cannot_send"
+            ) from err
+        except aiohttp.ServerFingerprintMismatch as err:
+            # Same contract as the poll: the token was never sent, the user
+            # gets the repair issue, and the service call fails with the
+            # reason rather than a "reconnecting, try again" that never
+            # comes true.
+            self._report_fingerprint_mismatch(err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="certificate_changed",
+                translation_placeholders={"host": str(self.config["host"])},
             ) from err
         except (aiohttp.ClientError, TimeoutError) as err:
             raise HomeAssistantError(
@@ -1147,6 +1337,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                         self.config_entry.async_start_reauth(self.hass)
                     return
                 self._record_error(err)
+                self._log_disconnected(err)
+                self._note_reconnect_failure()
+            except aiohttp.ServerFingerprintMismatch as err:
+                # The upgrade was refused at the TLS handshake (no token
+                # sent). Report it like the poll does, then keep the ordinary
+                # backoff: each retry is another aborted handshake, so a
+                # transient impostor costs nothing and the real gateway back
+                # on its address is picked up without a reload.
+                self._report_fingerprint_mismatch(err)
                 self._log_disconnected(err)
                 self._note_reconnect_failure()
             except Exception as err:
@@ -1356,9 +1555,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         headers = {"token": f"{self.config['token']}"}
         # Only the handshake is bounded — wrapping the `async with` below would
         # tear down a perfectly healthy session after WS_CONNECT_TIMEOUT. Once
-        # connected, `heartbeat=30` is what detects a silently dead peer.
+        # connected, `heartbeat=30` is what detects a silently dead peer. The
+        # upgrade carries the token, so it is pinned exactly like a REST
+        # request (`ssl=` is honoured by ws_connect — see tls.py).
         async with asyncio.timeout(WS_CONNECT_TIMEOUT):
-            ws = await session.ws_connect(url, headers=headers, heartbeat=30)
+            ssl = await self._async_ssl()
+            ws = await session.ws_connect(url, headers=headers, heartbeat=30, ssl=ssl)
         async with ws:
             self.websocket = ws
             # Connected: resync state we may have missed while disconnected.
@@ -1762,6 +1964,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # the entry while degraded stranded it in the repairs UI forever, naming
         # a gateway that may no longer be configured. A no-op when unraised.
         ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
+        # Same for the certificate-mismatch issue: a reload (the fix flow's
+        # own, or a reconfigure onto a confirmed new certificate) rebuilds the
+        # coordinator, which re-raises it on the next poll if it still holds.
+        ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:

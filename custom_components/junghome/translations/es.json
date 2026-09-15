@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Dirección IP o nombre de host de la pasarela Jung Home (por ejemplo, 192.168.1.50 o junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "El certificado de la pasarela difiere",
+        "description": "La pasarela en {host} presenta un certificado TLS distinto del fijado para esta entrada (fijado {expected}, presentado {observed}). Esto solo es esperable si la pasarela se restableció de fábrica o se sustituyó, o si su firmware regeneró el certificado. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: vuelve atrás y comprueba la dirección. Hasta ahora solo se le ha enviado un saludo TLS. Envía para confiar en el nuevo certificado y continuar."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Error de comunicación con la pasarela Jung Home: {error}"
     },
+    "certificate_changed": {
+      "message": "El dispositivo en {host} no presenta el certificado TLS fijado para esta pasarela Jung Home, por lo que no se envió el token de acceso. Si restableciste o sustituiste la pasarela, confirma el nuevo certificado en Ajustes, Reparaciones."
+    },
     "cannot_send": {
       "message": "No se pudo contactar con la pasarela Jung Home para enviar el comando; se está reconectando. Vuelve a intentarlo dentro de un momento."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Las actualizaciones en directo de Jung Home se han detenido",
       "description": "Home Assistant no ha podido volver a conectarse a la pasarela Jung Home en {host} {failures} veces seguidas. Los estados de los dispositivos ya no se envían al instante y ahora solo se actualizan en el sondeo REST periódico. Comprueba que la pasarela esté encendida y sea accesible en tu red. Este problema desaparecerá por sí solo cuando se restablezca la conexión."
+    },
+    "tls_certificate_changed": {
+      "title": "El certificado de la pasarela Jung Home ha cambiado",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Confiar en el nuevo certificado de la pasarela",
+            "description": "El dispositivo que responde en {host} presenta un certificado TLS ({observed}) distinto del que Home Assistant fijó al conectarse por primera vez a esta pasarela Jung Home ({expected}). Home Assistant ha dejado de comunicarse con él, ni siquiera envía el token de acceso, y las entidades de la pasarela permanecen no disponibles hasta que esto se resuelva. Un cambio de certificado solo es esperable si la pasarela se restableció de fábrica o se sustituyó, o si su firmware regeneró el certificado. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: no confirmes, comprueba tu red. Confirma que la pasarela Jung Home en {host} se restableció o se sustituyó y que el certificado que presenta ahora ({observed}) debe ser de confianza en lugar del fijado ({expected}). Home Assistant fijará el nuevo certificado, le enviará el token de acceso y se reconectará."
+          }
+        },
+        "error": {
+          "cannot_connect": "No se pudo conectar con la pasarela.",
+          "different_gateway": "La dirección responde, pero pertenece a una pasarela Jung Home distinta de esta entrada. Usa Reconfigurar para cambiar la dirección."
+        }
+      }
     }
   }
 }

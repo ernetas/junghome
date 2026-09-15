@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı (örneğin 192.168.1.50 veya junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Ağ geçidi sertifikası farklı",
+        "description": "{host} adresindeki ağ geçidi, bu kayıt için sabitlenmiş olandan farklı bir TLS sertifikası sunuyor (sabitlenen {expected}, sunulan {observed}). Bu yalnızca ağ geçidi fabrika ayarlarına sıfırlandıysa, değiştirildiyse veya donanım yazılımı sertifikayı yeniden oluşturduysa beklenir. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: geri dönüp adresi kontrol edin. Şimdiye kadar ona yalnızca bir TLS el sıkışması gönderildi. Yeni sertifikaya güvenmek ve devam etmek için gönderin."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Jung Home ağ geçidiyle iletişim kurulurken hata oluştu: {error}"
     },
+    "certificate_changed": {
+      "message": "{host} adresindeki cihaz, bu Jung Home ağ geçidi için sabitlenmiş TLS sertifikasını sunmuyor, bu nedenle erişim belirteci gönderilmedi. Ağ geçidini sıfırladıysanız veya değiştirdiyseniz yeni sertifikayı Ayarlar, Onarımlar altında onaylayın."
+    },
     "cannot_send": {
       "message": "Komutu göndermek için Jung Home ağ geçidine ulaşılamadı; yeniden bağlanıyor. Birazdan tekrar deneyin."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Jung Home canlı güncellemeleri durdu",
       "description": "Home Assistant, {host} adresindeki Jung Home ağ geçidine art arda {failures} kez yeniden bağlanamadı. Cihaz durumları artık anında gönderilmiyor ve yalnızca düzenli REST yoklamasında yenileniyor. Ağ geçidinin açık ve ağınızda erişilebilir olduğundan emin olun. Bağlantı yeniden kurulduğunda bu sorun kendiliğinden ortadan kalkar."
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home ağ geçidi sertifikası değişti",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Ağ geçidinin yeni sertifikasına güven",
+            "description": "{host} adresinde yanıt veren cihaz, Home Assistant'ın bu Jung Home ağ geçidine ilk bağlandığında sabitlediğinden ({expected}) farklı bir TLS sertifikası ({observed}) sunuyor. Home Assistant onunla iletişimi durdurdu, erişim belirteci bile gönderilmiyor ve bu çözülene kadar ağ geçidinin varlıkları kullanılamaz durumda kalıyor. Sertifika değişikliği yalnızca ağ geçidi fabrika ayarlarına sıfırlandıysa, değiştirildiyse veya donanım yazılımı sertifikayı yeniden oluşturduysa beklenir. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: onaylamayın, bunun yerine ağınızı kontrol edin. {host} adresindeki Jung Home ağ geçidinin sıfırlandığını veya değiştirildiğini ve şu anda sunduğu sertifikaya ({observed}) sabitlenmiş olan ({expected}) yerine güvenilmesi gerektiğini onaylayın. Home Assistant yeni sertifikayı sabitleyecek, erişim belirtecini ona gönderecek ve yeniden bağlanacaktır."
+          }
+        },
+        "error": {
+          "cannot_connect": "Ağ geçidine bağlanılamadı.",
+          "different_gateway": "Adres yanıt veriyor ancak bu kayıttan farklı bir Jung Home ağ geçidine ait. Adresi değiştirmek için Yeniden yapılandır'ı kullanın."
+        }
+      }
     }
   }
 }

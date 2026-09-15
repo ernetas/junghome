@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home (per exemple 192.168.1.50 o junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "El certificat de la passarel·la difereix",
+        "description": "La passarel·la a {host} presenta un certificat TLS diferent del fixat per a aquesta entrada (fixat {expected}, presentat {observed}). Això només és esperable si la passarel·la s'ha restablert de fàbrica o s'ha substituït, o si el seu microprogramari ha regenerat el certificat. Si no ha passat res d'això, pot ser que un altre dispositiu estigui responent en aquesta adreça: torna enrere i comprova l'adreça. Fins ara només se li ha enviat una encaixada TLS. Envia per confiar en el certificat nou i continuar."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Error en comunicar amb la passarel·la Jung Home: {error}"
     },
+    "certificate_changed": {
+      "message": "El dispositiu a {host} no presenta el certificat TLS fixat per a aquesta passarel·la Jung Home, de manera que no s'ha enviat el testimoni d'accés. Si has restablert o substituït la passarel·la, confirma el certificat nou a Configuració, Reparacions."
+    },
     "cannot_send": {
       "message": "No s'ha pogut contactar amb la passarel·la Jung Home per enviar l'ordre; s'està tornant a connectar. Torna-ho a provar d'aquí a un moment."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Les actualitzacions en directe de Jung Home s'han aturat",
       "description": "Home Assistant no ha pogut tornar a connectar-se a la passarel·la Jung Home a {host} {failures} vegades seguides. Els estats dels dispositius ja no s'envien a l'instant i ara només s'actualitzen en el sondeig REST periòdic. Comprova que la passarel·la estigui engegada i sigui accessible a la teva xarxa. Aquest problema desapareixerà tot sol quan es restableixi la connexió."
+    },
+    "tls_certificate_changed": {
+      "title": "El certificat de la passarel·la Jung Home ha canviat",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Confia en el certificat nou de la passarel·la",
+            "description": "El dispositiu que respon a {host} presenta un certificat TLS ({observed}) diferent del que Home Assistant va fixar en connectar-se per primera vegada a aquesta passarel·la Jung Home ({expected}). Home Assistant ha deixat de comunicar-s'hi, ni tan sols envia el testimoni d'accés, i les entitats de la passarel·la romanen no disponibles fins que això es resolgui. Un canvi de certificat només és esperable si la passarel·la s'ha restablert de fàbrica o s'ha substituït, o si el seu microprogramari ha regenerat el certificat. Si no ha passat res d'això, pot ser que un altre dispositiu estigui responent en aquesta adreça: no confirmis, comprova la xarxa. Confirma que la passarel·la Jung Home a {host} s'ha restablert o substituït i que el certificat que presenta ara ({observed}) ha de ser de confiança en lloc del fixat ({expected}). Home Assistant fixarà el certificat nou, li enviarà el testimoni d'accés i es tornarà a connectar."
+          }
+        },
+        "error": {
+          "cannot_connect": "No s'ha pogut connectar amb la passarel·la.",
+          "different_gateway": "L'adreça respon, però pertany a una passarel·la Jung Home diferent d'aquesta entrada. Fes servir Reconfigura per canviar l'adreça."
+        }
+      }
     }
   }
 }

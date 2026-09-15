@@ -61,6 +61,10 @@
         "data_description": {
           "host": "IP adresa alebo názov hostiteľa brány Jung Home (napríklad 192.168.1.50 alebo junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Certifikát brány sa líši",
+        "description": "Brána na adrese {host} predkladá certifikát TLS, ktorý sa líši od certifikátu pripnutého k tomuto záznamu (pripnutý {expected}, predložený {observed}). To je očakávané len vtedy, ak bola brána obnovená do výrobných nastavení alebo vymenená, alebo jej firmvér certifikát znova vygeneroval. Ak nič z toho nenastalo, na tejto adrese môže odpovedať iné zariadenie: vráťte sa a adresu skontrolujte. Zatiaľ mu bol odoslaný iba TLS handshake. Odošlite, ak chcete novému certifikátu dôverovať a pokračovať."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Chyba pri komunikácii s bránou Jung Home: {error}"
     },
+    "certificate_changed": {
+      "message": "Zariadenie na adrese {host} nepredkladá certifikát TLS pripnutý k tejto bráne Jung Home, preto nebol prístupový token odoslaný. Ak ste bránu resetovali alebo vymenili, potvrďte nový certifikát v Nastavenia, Opravy."
+    },
     "cannot_send": {
       "message": "Bránu Jung Home sa nepodarilo kontaktovať na odoslanie príkazu; prebieha opätovné pripájanie. Skúste to o chvíľu znova."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Živé aktualizácie Jung Home sa zastavili",
       "description": "Home Assistantu sa {failures}× po sebe nepodarilo znova pripojiť k bráne Jung Home na adrese {host}. Stavy zariadení sa už neodosielajú okamžite a obnovujú sa len pri pravidelnom dopytovaní cez REST. Skontrolujte, či je brána zapnutá a dostupná vo vašej sieti. Tento problém zmizne sám, hneď ako sa spojenie obnoví."
+    },
+    "tls_certificate_changed": {
+      "title": "Certifikát brány Jung Home sa zmenil",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Dôverovať novému certifikátu brány",
+            "description": "Zariadenie odpovedajúce na adrese {host} predkladá certifikát TLS ({observed}), ktorý sa líši od toho, ktorý Home Assistant pripol pri prvom pripojení k tejto bráne Jung Home ({expected}). Home Assistant s ním prestal komunikovať, neposiela ani prístupový token a entity brány zostávajú nedostupné, kým sa to nevyrieši. Zmena certifikátu je očakávaná len vtedy, ak bola brána obnovená do výrobných nastavení alebo vymenená, alebo jej firmvér certifikát znova vygeneroval. Ak nič z toho nenastalo, na tejto adrese môže odpovedať iné zariadenie: nepotvrdzujte, radšej skontrolujte svoju sieť. Potvrďte, že brána Jung Home na adrese {host} bola resetovaná alebo vymenená a že certifikátu, ktorý teraz predkladá ({observed}), sa má dôverovať namiesto pripnutého ({expected}). Home Assistant nový certifikát pripne, odošle mu prístupový token a znova sa pripojí."
+          }
+        },
+        "error": {
+          "cannot_connect": "Pripojenie k bráne zlyhalo.",
+          "different_gateway": "Adresa odpovedá, ale patrí inej bráne Jung Home než tomuto záznamu. Na zmenu adresy použite Prekonfigurovať."
+        }
+      }
     }
   }
 }

@@ -61,6 +61,10 @@
         "data_description": {
           "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50 vagy junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Az átjáró tanúsítványa eltér",
+        "description": "A(z) {host} címen található átjáró olyan TLS-tanúsítványt mutat be, amely eltér az ehhez a bejegyzéshez rögzítettől (rögzített {expected}, bemutatott {observed}). Ez csak akkor várható, ha az átjárót gyári beállításokra állították vissza vagy kicserélték, vagy a firmware újragenerálta a tanúsítványt. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: lépjen vissza, és ellenőrizze a címet. Eddig csak egy TLS-kézfogást küldtünk neki. A folytatáshoz és az új tanúsítvány megbízhatóként való elfogadásához küldje el az űrlapot."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Hiba a Jung Home átjáróval való kommunikáció során: {error}"
     },
+    "certificate_changed": {
+      "message": "A(z) {host} címen található eszköz nem az ehhez a Jung Home átjáróhoz rögzített TLS-tanúsítványt mutatja be, ezért a hozzáférési token nem került elküldésre. Ha visszaállította vagy kicserélte az átjárót, erősítse meg az új tanúsítványt a Beállítások, Javítások menüben."
+    },
     "cannot_send": {
       "message": "A Jung Home átjáró nem volt elérhető a parancs elküldéséhez; éppen újracsatlakozik. Próbáld újra egy pillanat múlva."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "A Jung Home élő frissítései leálltak",
       "description": "A Home Assistant {failures} alkalommal egymás után nem tudott újracsatlakozni a(z) {host} címen lévő Jung Home átjáróhoz. Az eszközállapotok már nem érkeznek azonnal, csak az időszakos REST-lekérdezéskor frissülnek. Ellenőrizd, hogy az átjáró be van-e kapcsolva és elérhető-e a hálózaton. Ez a probléma magától eltűnik, amint a kapcsolat helyreáll."
+    },
+    "tls_certificate_changed": {
+      "title": "A Jung Home átjáró tanúsítványa megváltozott",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Az átjáró új tanúsítványának megbízhatóként való elfogadása",
+            "description": "A(z) {host} címen válaszoló eszköz olyan TLS-tanúsítványt ({observed}) mutat be, amely eltér attól, amelyet a Home Assistant az ehhez a Jung Home átjáróhoz való első csatlakozáskor rögzített ({expected}). A Home Assistant nem kommunikál vele tovább, még a hozzáférési tokent sem küldi el, és az átjáró entitásai nem elérhetők maradnak, amíg ez meg nem oldódik. A tanúsítvány változása csak akkor várható, ha az átjárót gyári beállításokra állították vissza vagy kicserélték, vagy a firmware újragenerálta a tanúsítványt. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: ne erősítse meg, hanem ellenőrizze a hálózatát. Erősítse meg, hogy a(z) {host} címen található Jung Home átjárót visszaállították vagy kicserélték, és hogy a most bemutatott tanúsítványt ({observed}) a rögzített ({expected}) helyett megbízhatónak kell tekinteni. A Home Assistant rögzíti az új tanúsítványt, elküldi neki a hozzáférési tokent, és újracsatlakozik."
+          }
+        },
+        "error": {
+          "cannot_connect": "Nem sikerült csatlakozni az átjáróhoz.",
+          "different_gateway": "A cím válaszol, de egy másik Jung Home átjáróhoz tartozik, mint ez a bejegyzés. A cím módosításához használja az Újrakonfigurálás lehetőséget."
+        }
+      }
     }
   }
 }

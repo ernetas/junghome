@@ -183,6 +183,19 @@ bit 1 = "a client is asking for a name"
   commit either.
 - The TLS certificate is self-signed; the app pins it with a custom trust
   manager that accepts only the certificate whose SHA-256 matches the
-  fingerprint it read over the mesh. Clients that skip verification (this
-  integration uses `verify_ssl=False`) are open to on-path interception of the
-  token.
+  fingerprint it read over the mesh. A client that merely skips verification
+  is open to on-path interception of the token — and, worse, to redirection:
+  the mDNS TXT record carries `serial`/`mac`/`version` but **no
+  fingerprint**, and the serial is public, so a forged `_junghome._tcp`
+  announcement naming a configured serial could point a client at any
+  address. This integration therefore pins too, without the mesh: it learns
+  the fingerprint on first contact (trust on first use — a bare TLS
+  handshake pinned to an impossible digest, whose `ServerFingerprintMismatch`
+  reports the real one; no request is sent) and passes
+  `ssl=aiohttp.Fingerprint(...)` on every request and WebSocket upgrade over
+  Home Assistant's `verify_ssl=False` session, so a mismatch aborts at the
+  handshake before the `token` header exists. A changed certificate is
+  surfaced as a repair issue and re-pinned only after the user confirms;
+  discovery moves an entry's address only when the entry cannot reach its
+  gateway and the new address presents the pinned certificate
+  (`custom_components/junghome/tls.py`, `config_flow.py`, `repairs.py`).

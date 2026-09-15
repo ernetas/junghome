@@ -61,6 +61,10 @@
         "data_description": {
           "host": "IP-Adresse oder Hostname des Jung Home Gateways (zum Beispiel 192.168.1.50 oder junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Gateway-Zertifikat weicht ab",
+        "description": "Das Gateway unter {host} präsentiert ein TLS-Zertifikat, das von dem für diesen Eintrag gepinnten abweicht (gepinnt {expected}, präsentiert {observed}). Das ist nur zu erwarten, wenn das Gateway auf Werkseinstellungen zurückgesetzt oder ersetzt wurde oder seine Firmware das Zertifikat neu erzeugt hat. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Gehe zurück und prüfe die Adresse. Bisher wurde nur ein TLS-Handshake dorthin gesendet. Sende ab, um dem neuen Zertifikat zu vertrauen und fortzufahren."
       }
     },
     "progress": {
@@ -152,6 +156,9 @@
     "cannot_connect": {
       "message": "Fehler bei der Kommunikation mit dem Jung Home Gateway: {error}"
     },
+    "certificate_changed": {
+      "message": "Das Gerät unter {host} präsentiert nicht das für dieses Jung Home Gateway gepinnte TLS-Zertifikat, daher wurde das Zugriffstoken nicht gesendet. Wenn du das Gateway zurückgesetzt oder ersetzt hast, bestätige das neue Zertifikat unter Einstellungen, Reparaturen."
+    },
     "cannot_send": {
       "message": "Das Jung Home Gateway war nicht erreichbar, um den Befehl zu senden; es stellt die Verbindung gerade wieder her. Versuche es in einem Moment erneut."
     },
@@ -175,6 +182,21 @@
     "websocket_push_failure": {
       "title": "Live-Aktualisierungen von Jung Home sind ausgefallen",
       "description": "Home Assistant konnte sich {failures}-mal in Folge nicht wieder mit dem Jung Home Gateway unter {host} verbinden. Gerätezustände werden nicht mehr sofort übertragen und nur noch beim regelmäßigen REST-Abruf aktualisiert. Prüfe, ob das Gateway eingeschaltet und im Netzwerk erreichbar ist. Dieses Problem verschwindet von selbst, sobald die Verbindung wiederhergestellt ist."
+    },
+    "tls_certificate_changed": {
+      "title": "Zertifikat des Jung Home Gateways hat sich geändert",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Dem neuen Zertifikat des Gateways vertrauen",
+            "description": "Das Gerät, das unter {host} antwortet, präsentiert ein TLS-Zertifikat ({observed}), das von dem abweicht, das Home Assistant beim ersten Verbinden mit diesem Jung Home Gateway gepinnt hat ({expected}). Home Assistant kommuniziert nicht mehr mit ihm, nicht einmal das Zugriffstoken wird gesendet, und die Entitäten des Gateways bleiben nicht verfügbar, bis dies geklärt ist. Ein geändertes Zertifikat ist nur zu erwarten, wenn das Gateway auf Werkseinstellungen zurückgesetzt oder ersetzt wurde oder seine Firmware das Zertifikat neu erzeugt hat. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Bestätige nicht, sondern prüfe dein Netzwerk. Bestätige, dass das Jung Home Gateway unter {host} zurückgesetzt oder ersetzt wurde und dass dem Zertifikat, das es jetzt präsentiert ({observed}), anstelle des gepinnten ({expected}) vertraut werden soll. Home Assistant pinnt dann das neue Zertifikat, sendet das Zugriffstoken dorthin und verbindet sich neu."
+          }
+        },
+        "error": {
+          "cannot_connect": "Verbindung zum Gateway fehlgeschlagen.",
+          "different_gateway": "Die Adresse antwortet, gehört aber zu einem anderen Jung Home Gateway als diesem Eintrag. Verwende stattdessen Neu konfigurieren, um die Adresse zu ändern."
+        }
+      }
     }
   }
 }

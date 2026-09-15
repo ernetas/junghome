@@ -108,10 +108,42 @@ it to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
 The issued token is stored in the config entry. Devices added or removed in
 the Jung Home app afterwards are picked up automatically. The entry is keyed
 on the gateway's **hardware serial** (read from mDNS or the gateway itself),
-so if the gateway's IP later changes, discovery updates the stored address
-automatically — however the entry was added. On networks without mDNS (e.g.
-across VLANs) use **Reconfigure** to point the entry at the new address; it
-verifies the address actually belongs to *this* gateway before saving.
+so if the gateway's IP later changes while Home Assistant cannot reach it at
+the old one, discovery updates the stored address automatically — however
+the entry was added — provided the gateway at the new address presents the
+pinned certificate (see [Security](#security)). An entry that is connected
+and healthy is never moved by a discovery packet. On networks without mDNS
+(e.g. across VLANs) use **Reconfigure** to point the entry at the new
+address; it verifies the address actually belongs to *this* gateway before
+saving.
+
+### Security
+
+The gateway's HTTPS certificate is self-signed, so it cannot be verified
+against a certificate authority. Instead the integration **pins** it: the
+certificate's SHA-256 fingerprint is learned the first time an entry
+connects (at registration for new entries; on the next successful
+connection for entries created before this existed) and stored in the
+entry. From then on every request and the WebSocket connection is made
+only to a server presenting that exact certificate — the check happens at
+the TLS handshake, before the access token or anything else is sent — so
+a device impersonating the gateway on your network, or a forged mDNS
+announcement naming the gateway's (public) serial, cannot obtain the token.
+This is what the JUNG HOME app does too, with a fingerprint it reads over
+the mesh. The remaining assumption is the **first connection**: whatever
+answers at the gateway's address when an entry first pins is trusted, so
+set up (and upgrade) on a network you trust.
+
+If the gateway ever presents a different certificate — after a factory
+reset, a replacement, or a firmware update that regenerates it — the
+integration stops talking to it (its entities become unavailable) and
+raises a **"Jung Home gateway certificate changed"** repair issue under
+**Settings → System → Repairs**. Confirm it there only if you know why the
+certificate changed; the fix re-pins the new certificate and reconnects.
+If nothing changed on your side, another device is answering at the
+gateway's address — check your network instead. **Reconfigure** to an
+address that presents a different certificate asks for the same
+confirmation before anything is sent to it.
 
 ## Options
 
@@ -253,6 +285,17 @@ over it and button presses only arrive over it. Sensors and binary sensors
 stay available on the REST poll alone. So "sensors fine, lights unavailable" points at the WebSocket
 specifically — see the repair notice above.
 
+**"Jung Home gateway certificate changed" repair notice.**
+The device answering at the gateway's address presents a TLS certificate
+other than the one pinned when the entry first connected, so the integration
+has stopped sending anything to it — the access token included — and the
+entities are unavailable. Expected after a factory reset, a gateway
+replacement or a firmware update that regenerates the certificate: confirm
+the repair to pin the new certificate and reconnect (it still checks the
+gateway's serial, so a *different* gateway is refused — use Reconfigure for
+that). If none of that happened, do not confirm; something else is answering
+at that address. See [Security](#security).
+
 **Home Assistant asks you to re-authenticate.**
 The gateway rejected the stored token, usually because it was revoked in the
 app or the gateway was factory-reset. Follow the reauth prompt: press submit
@@ -282,7 +325,9 @@ diagnostics (**⋮ → Download diagnostics** on the entry) —
 integration doesn't yet map, which is exactly what an issue report needs.
 
 **Filing a bug.** Attach the diagnostics download. The gateway token and host
-are redacted; device labels are kept because they are the identity anchor.
+are redacted; device labels are kept because they are the identity anchor,
+and the pinned certificate fingerprint is listed (it is public — every TLS
+handshake presents it).
 
 ## Known limitations
 

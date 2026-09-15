@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.syrupy import (
 )
 from syrupy.assertion import SnapshotAssertion
 
+from custom_components.junghome.config_flow import JungHomeConfigFlow
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 
@@ -48,6 +49,13 @@ DEVICES: list[dict] = load_json_fixture("functions.json")
 # otherwise pass or fail depending on execution order. Snapshot setups start
 # from this pristine copy instead.
 PRISTINE_DEVICES: list[dict] = deepcopy(DEVICES)
+
+# The certificate fingerprint every stubbed TLS probe reports (see
+# ``mock_tls_fingerprint_learn``): a syntactically valid SHA-256 hex digest,
+# so it round-trips through ``tls.fingerprint_ssl`` like a real one. Tests that
+# pin an entry up front store this so the stub "matches"; a test that wants a
+# mismatch stores anything else.
+FAKE_FINGERPRINT = "ab" * 32
 
 
 def bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -244,6 +252,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "_fetch_project_export_from_api (pair with aioclient_mock); by default "
         "it is stubbed to avoid a socket.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_tls_probe: let the test run the real certificate-fingerprint "
+        "learn (a TLS handshake — pair with a local TLS server or "
+        "aioclient_mock); by default it is stubbed to FAKE_FINGERPRINT.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -363,5 +377,37 @@ def mock_project_export_fetch(request):
         JungHomeDataUpdateCoordinator,
         "_fetch_project_export_from_api",
         AsyncMock(return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_tls_fingerprint_learn(request):
+    """Keep the certificate-fingerprint learn off the network.
+
+    Every request the integration sends is pinned to the gateway's TLS
+    certificate (``tls.py``), and an entry or flow that holds no fingerprint
+    yet learns one first with a bare TLS handshake — a real socket, which the
+    test harness rejects, and one ``aioclient_mock`` cannot answer either (a
+    mocked response never presents a certificate). Stub the learn on both
+    seams (the coordinator's and the config flow's) to a fixed digest so every
+    existing test behaves as before, with one visible difference: an entry
+    that connects successfully now records ``FAKE_FINGERPRINT``. Tests of the
+    real learn opt out with ``@pytest.mark.real_tls_probe``.
+    """
+    if request.node.get_closest_marker("real_tls_probe") is not None:
+        yield
+        return
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_async_learn_fingerprint",
+            AsyncMock(return_value=FAKE_FINGERPRINT),
+        ),
+        patch.object(
+            JungHomeConfigFlow,
+            "_async_learn_fingerprint",
+            AsyncMock(return_value=FAKE_FINGERPRINT),
+        ),
     ):
         yield

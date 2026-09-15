@@ -74,11 +74,16 @@ rules:
     comment: >-
       Entries are keyed on the gateway hardware serial (mDNS TXT record for
       discovered entries; REST config/parameter/system_serial for manual
-      ones), so a discovery updates the stored host regardless of how the
-      entry was added. Legacy host/hostname-keyed entries are migrated to the
-      serial in place on rediscovery or reconfigure, with their identity
-      anchor frozen first (see const.entry_anchor). Only an entry against
-      firmware that exposes no serial anywhere stays host-keyed.
+      ones), so a discovery can update the stored host regardless of how the
+      entry was added — but only when the entry cannot reach its gateway at
+      the stored address (SETUP_RETRY/SETUP_ERROR or a failing poll) and the
+      announced address presents the pinned TLS certificate (tls.py): the
+      packet is unauthenticated and the serial it carries is public, so a
+      healthy entry is never moved by one. Legacy host/hostname-keyed
+      entries are migrated to the serial in place on rediscovery or
+      reconfigure under the same verification, with their identity anchor
+      frozen first (see const.entry_anchor). Only an entry against firmware
+      that exposes no serial anywhere stays host-keyed.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
@@ -119,7 +124,10 @@ rules:
       STAYS UP for STABLE_SESSION_SECONDS (a bare connect is not proof of
       recovery — a flapping socket would clear and re-raise the issue forever),
       and on unload. It is not user-fixable: only the gateway or the network
-      coming back resolves it.
+      coming back resolves it. A gateway presenting a certificate other than
+      the pinned one raises the fixable error issue `tls_certificate_changed`
+      (repairs.py): the integration stops sending anything — the token
+      included — until the user confirms the change, which re-pins.
   stale-devices: done
 
   # Platinum
