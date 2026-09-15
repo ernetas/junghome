@@ -236,9 +236,10 @@ def _make_stale_device_pruner(
 ) -> Callable[[], None]:
     """Build the callback that prunes devices the gateway no longer reports.
 
-    Returned as a closure over a per-device count of consecutive polls each
-    device has been missing, so pruning is debounced: a device must be absent
-    for ``STALE_DEVICE_PRUNE_MISSES`` polls before it is removed. A single
+    Returned as a closure over a per-device count of consecutive device-list
+    adoptions (REST polls and ``functions`` broadcasts) each device has been
+    missing, so pruning is debounced: a device must be absent from
+    ``STALE_DEVICE_PRUNE_MISSES`` adoptions before it is removed. A single
     partial poll (which the gateway occasionally returns, notably right after a
     reload) therefore no longer destroys a live device's entities.
     """
@@ -287,7 +288,7 @@ def _make_stale_device_pruner(
             # user otherwise discovers by noticing something has silently gone.
             _LOGGER.warning(
                 "Jung Home: removing device %s (%s) — the gateway has not "
-                "reported it for %s consecutive polls. If it is still installed, "
+                "listed it in %s consecutive device lists. If it is still installed, "
                 "check that it is reachable; it will be re-added when the gateway "
                 "reports it again",
                 device_entry.name or device_entry.id,

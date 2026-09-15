@@ -206,7 +206,14 @@ instead of re-deriving:
   re-enumerated, which is what those updates did. The gateway *does* expose
   hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
   unicast / locations — tracker §3), but the label-keyed design stays.
-  Don't reintroduce id-based identifiers.
+  Don't reintroduce id-based identifiers. That export IS read at setup
+  (`coordinator.async_fetch_node_identities`, `models.parse_project_export`,
+  re-read debounced when a function has no identity) and attached as
+  `serial_number` on every function of the node plus a `CONNECTION_BLUETOOTH`
+  connection on the node's primary-element function ONLY — the registry also
+  resolves devices by connection, so a node-wide connection would merge a
+  multi-gang push-button into one HA device. Never as an identifier. The
+  identities (UUID/MAC/unicast) are deliberately not redacted in diagnostics.
 - **Entry identity vs. entity identity are decoupled.** Entries are keyed
   (`unique_id`) on the gateway hardware serial when known (mDNS TXT
   `serial=`, or REST `config/parameter/system_serial`), and legacy entries
@@ -305,7 +312,7 @@ instead of re-deriving:
   duplicate keys.
 - Reuse the shared session: `async_get_clientsession(hass, verify_ssl=False)`
   (self-signed gateway cert); never build SSL contexts on the event loop.
-- CI: `test.yml` (pytest + mypy --strict), `lint.yml` (ruff, pinned),
+- CI: `test.yml` (pytest + mypy, strict via `pyproject.toml`), `lint.yml` (ruff, pinned),
   `validate.yml` (hassfest + HACS), `floor.yml` (imports the integration
   against the `hacs.json` minimum HA — a floor break means *raise the floor*,
   not block the release), `release.yml` (tag-gated on all checks). Coverage
@@ -344,8 +351,15 @@ them without new evidence wastes a session.
   update listener dispatches synchronously inside `async_update_entry`, so
   core re-reads UNLOAD_IN_PROGRESS and its own reload never fires.
   `reload_on_update=False` is passed to state intent only.
-- **Raw gateway labels in sensor names stay untranslated** — they are
-  user-authored app data; there is nothing correct to translate them to.
+- **Only unknown sensor labels stay untranslated.** The known quantities
+  (`QUANTITY_DESCRIPTIONS` in `sensor.py`: power, energy, voltage, current,
+  frequency, temperature, illuminance, humidity — matched on unit AND label)
+  are named via `entity.sensor.<key>` translation keys whose English text is
+  the gateway's own label, so nothing changes for English installs; any other
+  label is user-authored app data with nothing correct to translate it to and
+  keeps today's raw name. Voltage/current/frequency register disabled by
+  default; a correlated `error:` reply raises `command_rejected` with the
+  gateway's text.
 - **Status LED is an `EntityCategory.CONFIG` switch** — it configures the
   button's look, not a load; still fully actuable.
 - **Scene entities set `has_entity_name = False`** — no backing device to

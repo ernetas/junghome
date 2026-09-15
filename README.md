@@ -229,6 +229,15 @@ commands and button presses only travel over the WebSocket. It clears itself onc
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
+**Voltage, current and frequency sensors are missing.**
+They register disabled by default on new installs (they are noisy diagnostics);
+enable them from the device page. Existing installs keep them as they were.
+
+**Devices show a serial number.**
+On gateway firmware 2.1.x+ (API 1.5.0) each device carries its node's
+Bluetooth address as serial number, read from the gateway's project export;
+older firmware shows none.
+
 **Entities are unavailable but the gateway is up.**
 Controllable entities (lights, sockets, covers, thermostats, status LEDs)
 and button event entities require the live WebSocket: commands only go out

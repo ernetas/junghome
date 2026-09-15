@@ -190,8 +190,8 @@ class JungHomeScene(CoordinatorEntity[JungHomeDataUpdateCoordinator], SceneEntit
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate the scene.
 
-        Re-resolve the volatile scene id from the label each time, so a firmware
-        update that regenerated ids doesn't leave us posting to a dead id.
+        Re-resolve the scene id from the label each time, so a scene the app
+        renumbered doesn't leave us posting to a dead id.
         """
         scene_id = next(
             (

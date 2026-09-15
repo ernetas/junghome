@@ -227,7 +227,7 @@ def test_support_summary_flags_unhandled_types() -> None:
 
 
 async def test_stale_device_pruned(hass: HomeAssistant) -> None:
-    """A device absent for enough consecutive polls is removed, not on the first.
+    """A device absent from enough consecutive device lists is removed, not on the first.
 
     Pruning is debounced so a single partial poll (e.g. right after a reload)
     doesn't destroy a live device's entities; the device must be missing for

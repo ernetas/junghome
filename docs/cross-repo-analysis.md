@@ -87,7 +87,7 @@ clean. Legend: `[ ]` open · `[x]` done. Wave 1 (2026-09-15) landed on branch `a
   i.e. on every ordinary gateway reboot (~2 min), then self-clears. Escalate on elapsed outage (≥ ~90 s) instead. *(landed `09b5daa`: `WEBSOCKET_OUTAGE_REPAIR_AFTER` = 180 s, not 90 — the backoff quantises attempts at ~63/123/183 s, so ≤123 s still fires inside a Pi-Zero reboot)*
 - [x] `coordinator.py:1026-1036,1183-1192` — any frame carrying our `message_id` resolves the pending command as
   success (including a correlated `error:` frame), and dict-data frames of unhandled types (`config`) are routed as
-  datapoint pushes → ERROR "without datapoint_id". Resolve only on `type == "datapoint"`, `set_exception` on `error:`. *(landed `09b5daa`; correlated `error:` raises `invalid_response` — a dedicated `command_rejected` key is a follow-up across 26 locales)*
+  datapoint pushes → ERROR "without datapoint_id". Resolve only on `type == "datapoint"`, `set_exception` on `error:`. *(landed `09b5daa`; correlated `error:` raises `invalid_response` — `command_rejected` landed in `79f327c`)*
 - [x] `__init__.py:104-190` — capability watcher reloads on the first signature change with no debounce; a datapoint set
   that flaps between adoptions causes a reload per adoption. Require two consecutive identical signatures. *(landed `33845e6`)*
 - [x] `light.py:304-336` — optimistic writes overwrite the gateway-confirmed value the awaited reply already merged
@@ -107,22 +107,22 @@ clean. Legend: `[ ]` open · `[x]` done. Wave 1 (2026-09-15) landed on branch `a
   element (they differ). Include the counter-dedupe suggestion in the upstream report.
 - [x] `entity.py:121` — `via_device` tuple is deprecated in HA 2026.9 (removed 2027.8, `device_registry.py:270`);
   switch to `via_device_id` when the floor allows (≥ 2026.8). *(landed for issue #207: feature-detected on `DeviceInfo.__optional_keys__`, tuple fallback below 2026.8, floor unchanged)*
-- [ ] Hardware identity — `const.py:299-334` says the gateway exposes none, but `GET /project/junghome` (fw 1.5.0+)
+- [x] Hardware identity — `const.py:299-334` says the gateway exposes none, but `GET /project/junghome` (fw 1.5.0+)
   carries node UUID / MAC / unicast / locations (the same `ExportDto` the sibling project parses with `jhmesh.cdb` /
   `jhmesh.devices.Metadata`). Add `connections={(bluetooth, mac)}`, `serial_number`, and a stable join key; scene
   `value` (mesh scene number) is a stabler scene key than the label. Keys inside the export must never reach logs or
-  diagnostics.
-- [ ] `sensor.py:136` — sensor names are raw gateway labels (untranslatable); use `SensorEntityDescription` with
+  diagnostics. *(landed `2448564`: `serial_number` on every function, `CONNECTION_BLUETOOTH` on the primary-element function only — node-wide would merge multi-gang nodes; scene-`value` join key not done)*
+- [x] `sensor.py:136` — sensor names are raw gateway labels (untranslatable); use `SensorEntityDescription` with
   `translation_key`, `suggested_display_precision`, and `entity_registry_enabled_default=False` for noisy diagnostics
-  (voltage/current), as the sibling does (`sensor.py:25-42` there).
-- [ ] `manifest.json` — add `loggers` (relevant once `jhmesh` is shared).
-- [ ] mypy config in-repo (`[tool.mypy] strict = true` + overrides) instead of CLI-only (`test.yml:33`).
-- [ ] `__init__.py:46-47`, README "10 consecutive polls" — the debounce counts `data_generation`, which `functions`
-  broadcasts also bump; reword or count polls only.
-- [ ] `logbook.py:28` "was recalled" is untranslated English.
-- [ ] `tools/ws-capture/capture_ws.py:15-17,459` still carries the refuted "sibling-channel echo" model; the `cover`
+  (voltage/current), as the sibling does (`sensor.py:25-42` there). *(landed `79f327c`; "Present Illuminance" alias left open)*
+- [x] `manifest.json` — add `loggers` (relevant once `jhmesh` is shared). *(won't do: `loggers` is for library loggers; the package has none)*
+- [x] mypy config in-repo (`[tool.mypy] strict = true` + overrides) instead of CLI-only (`test.yml:33`). *(landed `48e80d0`)*
+- [x] `__init__.py:46-47`, README "10 consecutive polls" — the debounce counts `data_generation`, which `functions`
+  broadcasts also bump; reword or count polls only. *(landed `48e80d0` + phase2 wording)*
+- [x] `logbook.py:28` "was recalled" is untranslated English. *(documented limitation: the logbook API has no translation hook)*
+- [x] `tools/ws-capture/capture_ws.py:15-17,459` still carries the refuted "sibling-channel echo" model; the `cover`
   script measures an API-driven move whose `level` reports the *target* for ~4 s, so as written it would answer the
-  cover backlog wrongly.
+  cover backlog wrongly. *(landed `48e80d0`)*
 - [x] `const.py:302,318`, `models.py:45`, `scene.py:4-5`, `CLAUDE.md:127-129` — the "ids regenerate / no hardware id"
   rationale is contradicted by the firmware (device id = `"id"+md5(UUID+hex(location))[:15]`, scene id = `"id"+hex(scene no.)`);
   the stable-id design stays correct, the rationale needs rewording. *(CLAUDE.md/README reworded in `887e0f8`; code comments still to follow)*
