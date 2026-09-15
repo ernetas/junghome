@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import random
+import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -28,11 +30,11 @@ from custom_components.junghome.const import (
     DOMAIN,
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
+    WEBSOCKET_OUTAGE_REPAIR_AFTER,
     scene_unique_id,
 )
 from custom_components.junghome.coordinator import (
     INITIAL_RECONNECT_DELAY,
-    MAX_RECONNECT_FAILURES,
     STABLE_SESSION_SECONDS,
     JungHomeDataUpdateCoordinator,
     poll_interval_from_options,
@@ -586,6 +588,152 @@ async def test_uncorrelated_error_frame_does_not_resolve_a_pending_command(
     assert exc_info.value.translation_key == "command_timeout"
 
 
+def _ws_replying_with(
+    coordinator: JungHomeDataUpdateCoordinator,
+    build_reply: Callable[[str], dict],
+) -> AsyncMock:
+    """A fake socket that answers every send with `build_reply(message_id)`."""
+    ws = AsyncMock()
+    ws.closed = False
+
+    def _reply(raw: str) -> None:
+        message_id = json.loads(raw)["message_id"]
+        coordinator._dispatch_text_frame(json.dumps(build_reply(message_id)))
+
+    ws.send_str.side_effect = _reply
+    return ws
+
+
+async def test_correlated_error_frame_rejects_the_pending_command(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An `error:` frame that echoes our message_id fails the command at once.
+
+    Current firmware never correlates a rejection, but a frame that does carry
+    the id is unambiguous — and it used to resolve the command as a SUCCESS,
+    because any frame with our id was taken as the confirmation before its
+    type was even looked at. It must surface as a service error, immediately
+    (no waiting out COMMAND_REPLY_TIMEOUT), with the gateway's own reason in
+    the log since the exception text is a fixed translation.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.websocket = _ws_replying_with(
+        coordinator,
+        lambda message_id: {
+            "type": "message",
+            "data": "error: could not set datapoint (dp-1) value",
+            "message_id": message_id,
+        },
+    )
+
+    # No COMMAND_REPLY_TIMEOUT patch: the rejection must settle the await
+    # itself; the wait_for is only a guard against regressing to the timeout.
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await asyncio.wait_for(coordinator.turn_on_switch("dp-1"), timeout=1)
+    assert exc_info.value.translation_key == "invalid_response"
+    assert coordinator._pending_replies == {}
+    assert "could not set datapoint (dp-1)" in caplog.text
+
+
+async def test_correlated_error_frame_for_a_settled_command_is_a_no_op(
+    hass: HomeAssistant,
+) -> None:
+    """A late or duplicate correlated `error:` frame must not raise.
+
+    Same hardening as the success path: an id that already timed out (no
+    longer pending) or whose future is already settled is left alone —
+    `set_exception` on a done future would raise InvalidStateError out of
+    the frame handler.
+    """
+    coordinator = _coordinator(hass)
+    done: asyncio.Future[dict] = hass.loop.create_future()
+    done.set_result({})
+    coordinator._pending_replies["ha-done"] = done
+
+    for message_id in ("ha-done", "ha-gone"):
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "message", "data": "error: late", "message_id": message_id}
+            )
+        )
+
+    assert done.result() == {}  # untouched
+    coordinator._pending_replies.clear()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"type": "config", "data": {"id": "dp-1", "values": []}},
+        {"type": "message", "data": "ok"},
+        {"type": "functions", "data": []},
+    ],
+    ids=["object-of-unhandled-type", "info-message", "list-broadcast"],
+)
+async def test_correlated_frame_of_another_type_is_not_a_confirmation(
+    hass: HomeAssistant, frame: dict
+) -> None:
+    """Only a `datapoint` frame confirms a set, whatever else echoes the id.
+
+    The confirmation is the re-read datapoint (websocket-server-service.js);
+    a frame of any other type carrying our message_id proves nothing about
+    whether the value landed, so the command must keep waiting and settle on
+    the timeout exactly as if nothing had answered.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.websocket = _ws_replying_with(
+        coordinator, lambda message_id: {**frame, "message_id": message_id}
+    )
+
+    with (
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError) as exc_info,
+    ):
+        await coordinator.turn_on_switch("dp-1")
+    assert exc_info.value.translation_key == "command_timeout"
+    assert coordinator._pending_replies == {}
+
+
+async def test_unhandled_object_frame_is_ignored_quietly(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A `config`-style object frame is neither a push nor an error.
+
+    Every object-carrying frame that was not a scene recall used to be routed
+    as a datapoint push, so a frame of a type the integration does not handle
+    logged an ERROR about a "missing datapoint_id" it never claimed to have —
+    and one that happened to carry an `id` would have been merged as if it
+    were a datapoint. It is logged at DEBUG and nothing else moves.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_pushable_device()]
+    listener = Mock()
+    coordinator.async_add_listener(listener)
+
+    with caplog.at_level(logging.DEBUG):
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {
+                    "type": "config",
+                    "data": {"id": "dev1-001", "values": [{"key": "x", "value": "1"}]},
+                }
+            )
+        )
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any(
+        r.levelno == logging.DEBUG and "config frame (ignored)" in r.getMessage()
+        for r in caplog.records
+    )
+    listener.assert_not_called()
+    assert coordinator.data[0]["datapoints"][0]["values"] == []
+    # Adding a listener armed the poll timer; a bare coordinator must shut it down.
+    await coordinator.async_shutdown()
+
+
 async def test_ws_drop_fails_inflight_commands_immediately(
     hass: HomeAssistant,
 ) -> None:
@@ -881,52 +1029,134 @@ class _EmptyWS:
         raise StopAsyncIteration
 
 
-async def _run_failing_loop(
-    coordinator: JungHomeDataUpdateCoordinator, attempts: int
-) -> None:
-    """Drive `_websocket_loop` through exactly `attempts` failed reconnects."""
+async def _drive_failing_loop(
+    coordinator: JungHomeDataUpdateCoordinator,
+    is_last_attempt: Callable[[int], bool],
+    freezer: FrozenDateTimeFactory | None,
+) -> int:
+    """Drive `_websocket_loop` through failed reconnects; return how many.
+
+    `is_last_attempt` gets the 1-based attempt number at the moment that
+    attempt fails and says whether the loop should exit after it. With a
+    `freezer`, each backoff sleep advances the frozen clock by the delay it
+    asked for (freezegun patches `time.monotonic` too), so the elapsed outage
+    the coordinator measures follows the real 1, 2, 4, 8 ... s schedule.
+    Without one the sleeps are instantaneous and only the count moves.
+    """
     calls: list[int] = []
 
     async def always_failing(self: JungHomeDataUpdateCoordinator) -> None:
         calls.append(1)
-        if len(calls) >= attempts:
+        if is_last_attempt(len(calls)):
             self._closing = True  # exit the loop once we've failed enough
         raise ConnectionError("drop")
 
+    async def sleep(delay: float) -> None:
+        if freezer is not None:
+            freezer.tick(timedelta(seconds=delay))
+
     with (
         patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", always_failing),
-        patch("custom_components.junghome.coordinator.asyncio.sleep", AsyncMock()),
+        patch("custom_components.junghome.coordinator.asyncio.sleep", sleep),
     ):
         await coordinator._websocket_loop()
 
-    assert len(calls) == attempts
+    return len(calls)
 
 
-async def test_repair_issue_raised_after_repeated_reconnect_failures(
-    hass: HomeAssistant,
+async def _run_failing_loop(
+    coordinator: JungHomeDataUpdateCoordinator, attempts: int
 ) -> None:
-    """Sustained reconnect failure surfaces the silent REST-only degradation."""
-    coordinator = _coordinator(hass)
-    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+    """Drive `_websocket_loop` through exactly `attempts` failed reconnects."""
+    ran = await _drive_failing_loop(coordinator, lambda n: n >= attempts, None)
+    assert ran == attempts
 
-    issue = ir.async_get(hass).async_get_issue(
-        DOMAIN, coordinator._push_failure_issue_id
+
+async def _run_outage(
+    coordinator: JungHomeDataUpdateCoordinator,
+    freezer: FrozenDateTimeFactory,
+    seconds: float,
+) -> int:
+    """Fail reconnects on the real backoff until the outage has lasted `seconds`.
+
+    The last failure is the first one to land `seconds` or more after the
+    first, so the outage ends at the earliest moment the backoff schedule
+    allows past `seconds`; returns the number of failed attempts.
+    """
+    started = time.monotonic()
+    return await _drive_failing_loop(
+        coordinator, lambda _n: time.monotonic() - started >= seconds, freezer
     )
+
+
+async def test_repair_issue_raised_once_the_outage_has_lasted(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Sustained reconnect failure surfaces the silent REST-only degradation.
+
+    The trigger is how long the WebSocket has been down, judged at each failed
+    reconnect; the attempt count only decorates the issue text. Once raised,
+    every further failure re-creates the issue, so one the user dismissed by
+    hand comes back for as long as the outage lasts.
+    """
+    coordinator = _coordinator(hass)
+    attempts = await _run_outage(coordinator, freezer, WEBSOCKET_OUTAGE_REPAIR_AFTER)
+
+    registry = ir.async_get(hass)
+    issue = registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
     assert issue is not None
     assert issue.is_fixable is False
     assert issue.severity is ir.IssueSeverity.WARNING
     assert issue.translation_key == "websocket_push_failure"
+    assert issue.translation_placeholders == {"host": "h", "failures": str(attempts)}
+
+    registry.async_delete(DOMAIN, coordinator._push_failure_issue_id)
+    coordinator._closing = False
+    await _run_failing_loop(coordinator, 1)
+    issue = registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+    assert issue is not None
     assert issue.translation_placeholders == {
         "host": "h",
-        "failures": str(MAX_RECONNECT_FAILURES),
+        "failures": str(attempts + 1),
     }
 
 
-async def test_no_repair_issue_below_failure_threshold(hass: HomeAssistant) -> None:
-    """An ordinary blip the backoff rides out must not nag the user."""
-    coordinator = _coordinator(hass)
-    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES - 1)
+async def test_no_repair_issue_for_a_reboot_length_outage(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """An ordinary gateway reboot must not nag the user.
 
+    The Pi Zero gateway takes about two minutes to reboot (a firmware update
+    reboots it too). The old trigger was five consecutive failures, which the
+    1 + 2 + 4 + 8 s backoff reaches in ~15-20 s when the port refuses — so
+    every reboot raised the issue and then cleared it half a minute after the
+    gateway came back. Two minutes of the real backoff schedule is well past
+    that count and must stay silent.
+    """
+    coordinator = _coordinator(hass)
+    attempts = await _run_outage(coordinator, freezer, 120)
+
+    assert attempts > 5, "the schedule no longer reproduces the old trigger"
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
+        is None
+    )
+
+
+async def test_failure_count_alone_never_raises_the_repair_issue(
+    hass: HomeAssistant,
+) -> None:
+    """Many failures inside the threshold are still one short outage.
+
+    With the sleeps mocked away the whole run takes milliseconds of monotonic
+    time, so however many attempts fail, the outage never reaches the
+    threshold and the count must not be what escalates.
+    """
+    coordinator = _coordinator(hass)
+    await _run_failing_loop(coordinator, 50)
+
+    assert coordinator._reconnect_failures == 50
+    assert coordinator._outage_started_at is not None
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
         is None
@@ -973,7 +1203,7 @@ async def test_repair_issue_cleared_once_session_proves_stable(
     """
     coordinator = _coordinator(hass)
     coordinator.data = []
-    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+    await _run_outage(coordinator, freezer, WEBSOCKET_OUTAGE_REPAIR_AFTER)
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
 
@@ -1006,10 +1236,17 @@ async def test_repair_issue_cleared_once_session_proves_stable(
         )
         assert coordinator._reconnect_failures == 0
         assert coordinator._reconnect_delay == INITIAL_RECONNECT_DELAY
+        assert coordinator._outage_started_at is None
 
         coordinator._closing = True
         ws.release.set()
         await task
+
+    # The outage clock restarted: a fresh blip after the recovery is judged
+    # on its own duration, not tacked onto the outage that was just cleared.
+    coordinator._closing = False
+    await _run_failing_loop(coordinator, 3)
+    assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id) is None
 
 
 async def test_flapping_session_keeps_escalating(hass: HomeAssistant) -> None:
@@ -1022,7 +1259,8 @@ async def test_flapping_session_keeps_escalating(hass: HomeAssistant) -> None:
     """
     coordinator = _coordinator(hass)
     coordinator.data = []
-    coordinator._reconnect_failures = MAX_RECONNECT_FAILURES - 1
+    coordinator._reconnect_failures = 4
+    coordinator._outage_started_at = 1234.5
     coordinator._reconnect_delay = 8
 
     session = Mock()
@@ -1037,9 +1275,11 @@ async def test_flapping_session_keeps_escalating(hass: HomeAssistant) -> None:
     ):
         await coordinator._run_websocket()
 
-    # The instant close neither reset the backoff nor cleared the counter.
+    # The instant close neither reset the backoff nor cleared the counter,
+    # and the outage clock kept running from where it started.
     assert coordinator._reconnect_delay == 8
-    assert coordinator._reconnect_failures == MAX_RECONNECT_FAILURES - 1
+    assert coordinator._reconnect_failures == 4
+    assert coordinator._outage_started_at == 1234.5
 
 
 async def test_clean_server_close_is_counted_as_a_failure(
@@ -1067,11 +1307,13 @@ async def test_clean_server_close_is_counted_as_a_failure(
         await coordinator._run_websocket()
 
 
-async def test_stop_clears_the_repair_issue(hass: HomeAssistant) -> None:
+async def test_stop_clears_the_repair_issue(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
     """Unloading while degraded must not strand the issue in the repairs UI."""
     coordinator = _coordinator(hass)
     coordinator.data = []
-    await _run_failing_loop(coordinator, MAX_RECONNECT_FAILURES)
+    await _run_outage(coordinator, freezer, WEBSOCKET_OUTAGE_REPAIR_AFTER)
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, coordinator._push_failure_issue_id)
 
