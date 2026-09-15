@@ -221,6 +221,52 @@ def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
     return low_k, high_k
 
 
+# Registry lookups scoped to one config entry, on every supported core.
+#
+# HA 2026.9 made device identifiers and connections unique per config entry
+# (not registry-wide), added ``async_get_device_by_identifier`` /
+# ``async_get_device_by_connection`` for the scoped lookup, and deprecated the
+# registry-wide ``async_get_device`` (removed in 2027.8; its ``report_usage``
+# raises when no integration frame is on the stack). Older cores have only the
+# registry-wide call. Every device this integration looks up is one of its own
+# entry's, so a walk of that entry's devices asks the same question wherever
+# the scoped lookup is missing — and the deprecated call is made on no core.
+# Feature-detected (``getattr``), never version-compared; the floor is
+# HA 2025.12.4.
+def device_by_identifier(
+    registry: dr.DeviceRegistry, entry_id: str, identifier: tuple[str, str]
+) -> dr.DeviceEntry | None:
+    """Return the config entry's device holding ``identifier``, if any."""
+    lookup = getattr(registry, "async_get_device_by_identifier", None)
+    if lookup is not None:
+        return cast("dr.DeviceEntry | None", lookup(identifier, entry_id))
+    return next(
+        (
+            device
+            for device in dr.async_entries_for_config_entry(registry, entry_id)
+            if identifier in device.identifiers
+        ),
+        None,
+    )
+
+
+def device_by_connection(
+    registry: dr.DeviceRegistry, entry_id: str, connection: tuple[str, str]
+) -> dr.DeviceEntry | None:
+    """Return the config entry's device holding ``connection``, if any."""
+    lookup = getattr(registry, "async_get_device_by_connection", None)
+    if lookup is not None:
+        return cast("dr.DeviceEntry | None", lookup(connection, entry_id))
+    return next(
+        (
+            device
+            for device in dr.async_entries_for_config_entry(registry, entry_id)
+            if connection in device.connections
+        ),
+        None,
+    )
+
+
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     """Class to manage fetching data from the Jung Home API."""
 
@@ -843,7 +889,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         _LOGGER.debug(
             "Resolved hardware identity for %d gateway functions", len(identities)
         )
-        self._apply_node_identities()
+        self.apply_node_identities()
 
     def node_identity_for(self, device: Device) -> NodeIdentity | None:
         """Return the hardware identity behind a gateway function, if known.
@@ -897,28 +943,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         )
 
     @callback
-    def _apply_node_identities(self) -> None:
-        """Write the resolved identities onto devices already in the registry.
+    def apply_node_identities(self) -> None:
+        """Write the resolved identities onto every device of the entry.
 
-        An entity's ``device_info`` is only read when it is first added, so a
-        device registered before its identity was known — every device on an
-        install upgraded to this version whose entities were added before a
-        re-read resolved them, or a device the gateway reported while the
-        export still lacked its node — would otherwise wait for a reload. The
-        values written mirror ``JungHomeEntity.device_info`` exactly: the
-        node's Bluetooth address as ``serial_number`` on every function of the
-        node, and as a ``CONNECTION_BLUETOOTH`` connection on the function at
-        the node's primary element only (a connection resolves devices in the
-        registry, so it must be unique per device — see ``NodeIdentity``).
-
-        A connection already held by *another* device — a device page another
-        integration keeps for the same radio — is left alone rather than
-        merged or collided with (``async_update_device`` raises on a
-        collision); the serial number is still written.
+        The registry's identity rows are written from here and from
+        ``link_node_identity`` only — never from ``device_info``. Runs when
+        the identity map is (re)resolved, so a device registered before its
+        identity was known — every device on an install upgraded to this
+        version, or one the gateway reported while the export still lacked
+        its node — is filled in without a reload; and after a device of this
+        entry is removed (the stale-device pruner, a manual delete), because
+        the removed device may have held the node's Bluetooth connection that
+        its relabelled successor is waiting for (see ``_write_node_identity``).
 
         Colliding slugs are skipped (``duplicate_slugs``): two functions
         sharing one registry device would otherwise take turns writing their
-        own node's address over each other on every adoption.
+        own node's address over each other on every pass.
         """
         if not self.node_identities or self.config_entry is None:
             return
@@ -928,9 +968,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             device_slug(d): d for d in devices if device_slug(d) not in colliding
         }
         registry = dr.async_get(self.hass)
-        for device_entry in dr.async_entries_for_config_entry(
-            registry, self.config_entry.entry_id
-        ):
+        entry_id = self.config_entry.entry_id
+        for device_entry in dr.async_entries_for_config_entry(registry, entry_id):
             identity = next(
                 (
                     self.node_identity_for(by_slug[identifier])
@@ -939,26 +978,95 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 ),
                 None,
             )
-            if identity is None or identity.mac is None:
-                continue
-            changes: dict[str, Any] = {}
-            if device_entry.serial_number != identity.mac:
-                changes["serial_number"] = identity.mac
-            connection = (dr.CONNECTION_BLUETOOTH, identity.mac)
-            if identity.primary and connection not in device_entry.connections:
-                holder = registry.async_get_device(connections={connection})
-                if holder is None:
-                    changes["merge_connections"] = {connection}
-                else:
-                    _LOGGER.debug(
-                        "Not linking %s to Bluetooth address %s: already held by "
-                        "device %s",
-                        device_entry.name,
-                        identity.mac,
-                        holder.id,
-                    )
-            if changes:
-                registry.async_update_device(device_entry.id, **changes)
+            if identity is not None:
+                self._write_node_identity(registry, entry_id, device_entry, identity)
+
+    @callback
+    def link_node_identity(self, device_id: str, device: Device) -> None:
+        """Write ``device``'s identity onto its just-registered registry row.
+
+        Called from ``JungHomeEntity.async_added_to_hass`` — the first moment
+        the device's registry row exists. ``device_info`` deliberately carries
+        no connection (see its docstring), so this is how a device registered
+        while its identity is already known gets one: every device of a fresh
+        install, a device the gateway starts reporting later, a pruned device
+        the gateway reports again. Same collision guard as
+        ``apply_node_identities``; a device whose identity is still unknown is
+        picked up by that pass once the export re-read resolves it.
+        """
+        if self.config_entry is None:
+            return
+        identity = self.node_identity_for(device)
+        if identity is None or device_slug(device) in duplicate_slugs(self.data or []):
+            return
+        registry = dr.async_get(self.hass)
+        device_entry = registry.async_get(device_id)
+        # ``isinstance`` rather than a None check: from HA 2026.9 ``async_get``
+        # may also return a child device, which no entity of ours ever has.
+        if isinstance(device_entry, dr.DeviceEntry):
+            self._write_node_identity(
+                registry, self.config_entry.entry_id, device_entry, identity
+            )
+
+    def _write_node_identity(
+        self,
+        registry: dr.DeviceRegistry,
+        entry_id: str,
+        device_entry: dr.DeviceEntry,
+        identity: NodeIdentity,
+    ) -> None:
+        """Write one function's identity onto one registry device.
+
+        The node's Bluetooth address goes on as ``serial_number`` on every
+        function of the node, and as a ``CONNECTION_BLUETOOTH`` connection on
+        the function at the node's primary element only (a connection
+        resolves devices in the registry, so it must be unique per device —
+        see ``NodeIdentity``) — and only when no other live device of this
+        entry holds it. That holder check is the point of writing the
+        connection here rather than in ``device_info``: a relabelled function
+        registers under a new slug while the old device is still live (the
+        pruner keeps it for ``STALE_DEVICE_PRUNE_MISSES`` adoptions), and a
+        connection in ``device_info`` made ``async_get_or_create`` resolve the
+        new slug to the OLD device by connection and merge the two — the old
+        entity then stayed registered and live forever, and the pruner never
+        removed a device whose identifiers were all still current. Now the
+        successor is a fresh device, the old one is pruned as documented, and
+        the successor gains the connection on the pass that follows the prune.
+
+        On cores before HA 2026.9 a connection is unique across ALL config
+        entries, so a device another integration keeps for the same radio
+        (the Bluetooth-direct sibling) blocks the link with a collision the
+        per-entry lookup cannot see; the write is let raise and the address
+        left to its holder. The serial number is written either way.
+        """
+        if identity.mac is None:
+            return
+        if device_entry.serial_number != identity.mac:
+            registry.async_update_device(device_entry.id, serial_number=identity.mac)
+        connection = (dr.CONNECTION_BLUETOOTH, identity.mac)
+        if not identity.primary or connection in device_entry.connections:
+            return
+        holder = device_by_connection(registry, entry_id, connection)
+        if holder is not None:
+            _LOGGER.debug(
+                "Not linking %s to Bluetooth address %s: held by device %s (%s)",
+                device_entry.name,
+                identity.mac,
+                holder.id,
+                holder.name,
+            )
+            return
+        try:
+            registry.async_update_device(
+                device_entry.id, new_connections=device_entry.connections | {connection}
+            )
+        except dr.DeviceConnectionCollisionError as err:
+            _LOGGER.debug(
+                "Not linking %s to Bluetooth address %s: %s",
+                device_entry.name,
+                identity.mac,
+                err,
+            )
 
     def area_for_device(self, device: Device) -> str | None:
         """Return the room/area name for a device from its parent groups.

@@ -238,11 +238,17 @@ def gateway_device_id(entry: "ConfigEntry") -> str:
 def entry_scope(entry: "ConfigEntry") -> str:
     """Return a per-gateway prefix for ids that aren't tied to a device.
 
-    Device-backed ids are already unique per gateway, because they carry the
-    device slug. Scenes have no device, so their id was the scene label alone —
-    and Home Assistant requires a unique_id to be unique across *all* config
-    entries of an integration, so two gateways each holding a "Movie night"
-    scene collided and the second entity was rejected.
+    Scenes have no device, so their id was the scene label alone — and Home
+    Assistant requires a unique_id to be unique across *all* config entries
+    of an integration, so two gateways each holding a "Movie night" scene
+    collided and the second entity was rejected. Device-backed ids are NOT
+    scoped this way: they are the device slug plus a datapoint suffix
+    (``stable_unique_id``), so two gateways each reporting a function with
+    the same label produce the same unique_id and the second entity is
+    rejected exactly as the scenes were. That is a known limitation of the
+    label-keyed scheme (multi-gateway installs must keep labels distinct
+    across gateways), accepted rather than fixed: prefixing device ids would
+    re-key every existing install's entities.
 
     Anchored on ``entry_anchor`` (frozen at entry creation; survives
     reconfigure and unique_id migration). Same anchor as
@@ -369,9 +375,12 @@ def device_slug(device: Device) -> str:
     The hardware identity the ``functions`` payload lacks *is* available on
     API 1.5.0+ (``GET /project/junghome``: node UUID / Bluetooth address /
     unicast / element location — ``models.parse_project_export``); it is
-    attached to the registry device as ``serial_number`` and, on the node's
-    primary function, a Bluetooth ``connection`` (``entity.py``), never used
-    as an identifier — existing registrations must keep merging on the slug.
+    attached to the registry device as ``serial_number`` (``entity.py``) and,
+    on the node's primary function, a Bluetooth ``connection`` written by the
+    coordinator after registration (never through ``device_info`` — the
+    registry also matches on connections, and a relabelled function would
+    merge into its old device), never used as an identifier — existing
+    registrations must keep merging on the slug.
 
     The fallback inspects the slug *result*, not the raw candidate: HA's
     ``slugify`` maps symbol/whitespace-only strings (e.g. ``"❤"`` or ``"   "``)

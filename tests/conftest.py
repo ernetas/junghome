@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.syrupy import (
     HomeAssistantSnapshotExtension,
@@ -48,6 +49,29 @@ DEVICES: list[dict] = load_json_fixture("functions.json")
 # otherwise pass or fail depending on execution order. Snapshot setups start
 # from this pristine copy instead.
 PRISTINE_DEVICES: list[dict] = deepcopy(DEVICES)
+
+
+def find_device(hass: HomeAssistant, slug: str) -> dr.DeviceEntry | None:
+    """Return the junghome device registered under ``slug``, if any.
+
+    The one registry lookup the tests use. ``async_get_device(identifiers=…)``
+    is deprecated from HA 2026.9 and its report *raises* when the caller has no
+    integration frame on the stack — i.e. from every test — while the scoped
+    replacement (``async_get_device_by_identifier``) does not exist before
+    2026.9. Walking the junghome entries' devices works on every core and asks
+    the same question: which of our devices carries this slug.
+    """
+    registry = dr.async_get(hass)
+    identifier = (DOMAIN, slug)
+    return next(
+        (
+            device
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+            if identifier in device.identifiers
+        ),
+        None,
+    )
 
 
 def bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -258,12 +282,16 @@ def fail_on_home_assistant_deprecation_reports(caplog: pytest.LogCaptureFixture)
     2026.6 — survived unnoticed in the reauth path.
 
     The reports name the integration, so this catches ours and stays quiet for
-    anything HA reports about itself.
+    anything HA reports about itself. Both the test body and its fixture setup
+    are scanned: ``init_integration`` and friends run the whole setup path —
+    migrations, the identity back-fill, the first prune — inside a fixture,
+    so a report raised there would otherwise never be seen.
     """
     yield
     offenders = [
         record.getMessage()
-        for record in caplog.get_records("call")
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
         if record.name == "homeassistant.helpers.frame"
         and record.levelno >= logging.WARNING
     ]

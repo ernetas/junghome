@@ -232,8 +232,15 @@ instead of re-deriving:
   `serial_number` on every function of the node plus a `CONNECTION_BLUETOOTH`
   connection on the node's primary-element function ONLY — the registry also
   resolves devices by connection, so a node-wide connection would merge a
-  multi-gang push-button into one HA device. Never as an identifier. The
-  identities (UUID/MAC/unicast) are deliberately not redacted in diagnostics.
+  multi-gang push-button into one HA device. **The connection is written by
+  the coordinator after registration** (`link_node_identity` from
+  `async_added_to_hass`, `apply_node_identities` on identity resolution and
+  after a device removal), **never through `device_info`**, and only when no
+  other live device of the entry holds it: a connection in `device_info` made
+  a relabelled function's new slug resolve to its OLD device by connection
+  and merge (old entity live forever, pruner never fired — the b8
+  regression). Never as an identifier. The identities (UUID/MAC/unicast) are
+  deliberately not redacted in diagnostics.
 - **Entry identity vs. entity identity are decoupled.** Entries are keyed
   (`unique_id`) on the gateway hardware serial when known (mDNS TXT
   `serial=`, or REST `config/parameter/system_serial`), and legacy entries
