@@ -87,10 +87,12 @@
         "description": "A lekérdezési időköz határozza meg, milyen gyakran olvassa be újra az átjárót a REST-en keresztül — az élő frissítések továbbra is a WebSocketen érkeznek, így a hosszabb időköz főleg az átjáró terhelését csökkenti. Válaszd ki azokat az árnyékolókat, amelyek a pozíciójukat fordítva jelentik, például a napellenzőket. A pozíciójuk megfordul, így a teljesen zárt állapot 0 százalékként (zárva), a teljesen nyitott pedig 100 százalékként (nyitva) jelenik meg. A redőnyöket és a zsalukat hagyd kijelöletlenül.",
         "data": {
           "poll_interval": "Lekérdezési időköz (másodperc)",
-          "inverted_covers": "Fordított árnyékolók (napellenzők)"
+          "inverted_covers": "Fordított árnyékolók (napellenzők)",
+          "suppress_duplicate_presses": "Ismétlődő gombnyomások figyelmen kívül hagyása"
         },
         "data_description": {
-          "poll_interval": "30 és 3600 másodperc között (alapértelmezetten 60)."
+          "poll_interval": "30 és 3600 másodperc között (alapértelmezetten 60).",
+          "suppress_duplicate_presses": "A JUNG eszközök jelenlegi firmware-e minden gombnyomást kétszer jelent. Ha be van kapcsolva, ugyanannak a gombnak a kattintás utáni 1,2 másodpercen belüli megnyomását figyelmen kívül hagyja, így minden gombnyomás csak egyszer vált ki műveletet. Csak akkor kapcsold ki, ha a gombjaid minden nyomást egyszer jelentenek (régebbi eszközfirmware), és 1,2 másodpercnél sűrűbb gombnyomásokra van szükséged, például dupla kattintásra."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "megnyomva",
-      "depressed": "elengedve"
+      "depressed": "elengedve",
+      "click": "röviden megnyomva",
+      "hold_start": "nyomva tartva (kezdet)",
+      "hold_end": "nyomva tartva (vége)"
     }
   },
   "entity": {

@@ -87,10 +87,12 @@
         "description": "Apklausos intervalas nustato, kaip dažnai sietuvas iš naujo nuskaitomas per REST — tiesioginiai atnaujinimai ir toliau ateina per WebSocket, todėl ilgesnis intervalas visų pirma sumažina sietuvo apkrovą. Pasirinkite žaliuzes, kurių padėtis pranešama atvirkščiai, pavyzdžiui, markizes. Jų padėtis apverčiama, kad visiškai uždaryta būtų rodoma kaip 0 procentų (uždaryta), o visiškai atidaryta – kaip 100 procentų (atidaryta). Roletų ir žaliuzių nežymėkite.",
         "data": {
           "poll_interval": "Apklausos intervalas (sekundėmis)",
-          "inverted_covers": "Apverstos žaliuzės (markizės)"
+          "inverted_covers": "Apverstos žaliuzės (markizės)",
+          "suppress_duplicate_presses": "Nepaisyti pasikartojančių mygtukų paspaudimų"
         },
         "data_description": {
-          "poll_interval": "Nuo 30 iki 3600 sekundžių (numatytoji reikšmė – 60)."
+          "poll_interval": "Nuo 30 iki 3600 sekundžių (numatytoji reikšmė – 60).",
+          "suppress_duplicate_presses": "Dabartinė JUNG įrenginių programinė aparatinė įranga apie kiekvieną paspaudimą praneša du kartus. Kai įjungta, to paties mygtuko paspaudimas per 1,2 sekundės po spustelėjimo ignoruojamas, todėl kiekvienas paspaudimas suveikia vieną kartą. Išjunkite tik tada, jei jūsų mygtukai apie kiekvieną paspaudimą praneša vieną kartą (senesnė įrenginio programinė aparatinė įranga) ir jums reikia paspaudimų dažniau nei kas 1,2 sekundės, pavyzdžiui, dvigubų spustelėjimų."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "paspaustas",
-      "depressed": "atleistas"
+      "depressed": "atleistas",
+      "click": "spustelėtas",
+      "hold_start": "laikomas nuspaustas",
+      "hold_end": "atleistas po laikymo"
     }
   },
   "entity": {

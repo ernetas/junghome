@@ -1,19 +1,24 @@
 """Tests for the Jung Home config flow."""
 
 import asyncio
+from copy import deepcopy
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_TOKEN
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.junghome.config_flow import (
     CannotRegister,
@@ -26,12 +31,16 @@ from custom_components.junghome.const import (
     CONF_INVERTED_COVERS,
     CONF_POLL_INTERVAL,
     CONF_SERIAL,
+    CONF_SUPPRESS_DUPLICATE_PRESSES,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
+    EVENT_BUTTON_ACTION,
     entry_scope,
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from tests.conftest import PRISTINE_DEVICES
+from tests.conftest import _fake_run_websocket as _fake_live_websocket
 
 # A single cover so the options flow has something to list. stable_unique_id =
 # slug("Awning") + suffix("idawn-001") = "awning_001".
@@ -1050,8 +1059,9 @@ async def test_options_flow_lists_and_saves_inverted_covers(
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
     assert entry.options[CONF_INVERTED_COVERS] == ["awning_001"]
-    # The interval field was left untouched, so its default was stored.
+    # The other fields were left untouched, so their defaults were stored.
     assert entry.options[CONF_POLL_INTERVAL] == DEFAULT_POLL_INTERVAL_SECONDS
+    assert entry.options[CONF_SUPPRESS_DUPLICATE_PRESSES] is True
 
 
 async def test_options_flow_saves_poll_interval_and_coordinator_applies_it(
@@ -1107,8 +1117,11 @@ async def test_options_flow_without_covers_still_offers_the_interval(
         await hass.async_block_till_done()
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] == FlowResultType.FORM
-        # Only the interval is in the schema; there is no covers field to show.
-        assert list(result["data_schema"].schema) == [CONF_POLL_INTERVAL]
+        # No covers field to show; the always-present fields remain.
+        assert list(result["data_schema"].schema) == [
+            CONF_POLL_INTERVAL,
+            CONF_SUPPRESS_DUPLICATE_PRESSES,
+        ]
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], {CONF_POLL_INTERVAL: 120}
         )
@@ -1215,13 +1228,108 @@ async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) ->
         # than carrying it forward blindly.
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] == FlowResultType.FORM
-        assert list(result["data_schema"].schema) == [CONF_POLL_INTERVAL]
+        assert list(result["data_schema"].schema) == [
+            CONF_POLL_INTERVAL,
+            CONF_SUPPRESS_DUPLICATE_PRESSES,
+        ]
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], {CONF_POLL_INTERVAL: 60}
         )
         assert result["type"] == FlowResultType.CREATE_ENTRY
         await hass.async_block_till_done()
     assert entry.options[CONF_INVERTED_COVERS] == []
+
+
+async def test_options_flow_turns_duplicate_suppression_off_and_reloads(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Switching duplicate suppression off reloads the entry and takes effect.
+
+    The event platform reads the option once at setup (like the cover
+    platform reads its flags), so the update listener's reload is what
+    applies it: after the save, one tap reported twice fires two clicks —
+    the behaviour a user on older device firmware asks for.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id="gw", data={CONF_HOST: "gw", CONF_TOKEN: "t"}
+    )
+    entry.add_to_hass(hass)
+    clicks: list[str] = []
+
+    @callback
+    def _record(event) -> None:
+        if event.data["subtype"] == "click":
+            clicks.append(event.data["type"])
+
+    hass.bus.async_listen(EVENT_BUTTON_ACTION, _record)
+    # The conftest fake, not this file's: it reports the socket as connected,
+    # which the event entities need to be available at all.
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=deepcopy(PRISTINE_DEVICES)),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_live_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        before = entry.runtime_data
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == FlowResultType.FORM
+        field = next(
+            key
+            for key in result["data_schema"].schema
+            if key == CONF_SUPPRESS_DUPLICATE_PRESSES
+        )
+        assert field.default() is True  # on unless the user turned it off
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_SUPPRESS_DUPLICATE_PRESSES: False}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        assert entry.options[CONF_SUPPRESS_DUPLICATE_PRESSES] is False
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.runtime_data is not before  # the listener reloaded it
+        # Let the rebuilt coordinator's (fake) WebSocket task start, so the
+        # event entities are available (they need the socket).
+        await asyncio.sleep(0)
+        await hass.async_block_till_done()
+        assert hass.states.get("event.button_a_up").state != "unavailable"
+
+        # One tap as current firmware reports it: two press/release pairs.
+        for value, gap in (("1", 0), ("0", 0.4), ("1", 0.5), ("0", 0.4)):
+            freezer.tick(timedelta(seconds=gap))
+            async_fire_time_changed(hass)
+            entry.runtime_data._handle_websocket_message(
+                {
+                    "type": "datapoint",
+                    "data": {
+                        "id": "idrock1-00c",
+                        "values": [{"key": "up_request", "value": value}],
+                    },
+                }
+            )
+            await hass.async_block_till_done()
+        assert clicks == ["up", "up"]
+
+        # Re-opening the form defaults to the stored value; an untouched
+        # submit keeps it.
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        field = next(
+            key
+            for key in result["data_schema"].schema
+            if key == CONF_SUPPRESS_DUPLICATE_PRESSES
+        )
+        assert field.default() is False
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_SUPPRESS_DUPLICATE_PRESSES] is False
 
 
 async def test_reconfigure_reloads_an_entry_stuck_in_setup_retry(

@@ -26,10 +26,13 @@ EVENT_BUTTON_ACTION = f"{DOMAIN}_button_action"
 
 # Device-trigger vocabulary.
 #
-# ``type`` is which side of the rocker fired and ``subtype`` is the raw edge.
-# The gateway reports only press/release — it has no native single/double/hold —
-# so those two edges are all a device trigger can honestly offer; gestures are
-# still derived in an automation (see the shipped blueprint).
+# ``type`` is which side of the rocker fired and ``subtype`` is the event: the
+# raw edge the gateway pushed (``pressed``/``depressed``) or a gesture the
+# event platform derived from the edges' timing (``click``, ``hold_start``,
+# ``hold_end`` — see ``event.py``). The gateway itself has no native
+# single/double/hold, and single vs double click is unrecoverable over its API
+# on current device firmware (docs/gateway-websocket.md) — hence no
+# ``double_click`` here.
 CONF_SUBTYPE = "subtype"
 
 # Rocker datapoint type -> button side. Also drives the event entities'
@@ -40,7 +43,41 @@ BUTTON_DATAPOINT_TYPES = {
     "trigger_request": "press",
 }
 BUTTON_TRIGGER_TYPES = set(BUTTON_DATAPOINT_TYPES.values())
-BUTTON_TRIGGER_SUBTYPES = {"pressed", "depressed"}
+# Raw edges first, then the derived gestures. A tuple, not a set: this is the
+# order the automation UI lists a button's triggers in, and the event
+# entities' ``event_types``.
+BUTTON_EVENT_TYPES = ("pressed", "depressed", "click", "hold_start", "hold_end")
+BUTTON_TRIGGER_SUBTYPES = BUTTON_EVENT_TYPES
+
+# Button gesture timing (seconds). Both rest on the labelled WebSocket capture
+# of 2026-08-02 (one rocker, gateway 2.1.3, device firmware 2.2.0.x; 16 taps +
+# 5 holds — tables in docs/gateway-websocket.md) and the mechanism the
+# 2026-09-15 cross-repo audit established (docs/cross-repo-analysis.md §1.1).
+#
+# A press still down after this long is a *hold* (``hold_start`` fires at this
+# moment, ``hold_end`` at the release); a press released sooner is a *click*.
+# Tap pulses measured 0.40-0.53 s — that width is the gateway's own synthesised
+# release (two 200 ms delays in its emitter loop), not the finger — and hold
+# pulses 2.44-3.11 s (the finger): a five-fold empty band, so anywhere in
+# ~1-2 s is safe. 1.0 s keeps ``hold_start`` responsive.
+BUTTON_HOLD_THRESHOLD = 1.0
+# Device firmware 2.2.0.x publishes every button event twice, ~1 s apart, and
+# the gateway turns each copy of a click into its own press/release pair — one
+# tap arrives as TWO pairs, the second press 0.11-1.03 s after the first
+# release. A press on the same DEVICE (any side: on a single-key element the
+# copy lands on the *other* datapoint) within this window after a click is
+# that copy and is dropped. 1.2 s covers the 1.03 s worst case with margin;
+# anything shorter lets some copies through. A hold's copy is value-and-mode
+# unchanged and the gateway already suppresses it.
+BUTTON_DUPLICATE_WINDOW = 1.2
+
+# Options-flow key: whether the event platform drops the firmware's duplicate
+# copy of each tap (``BUTTON_DUPLICATE_WINDOW``). On by default — every install
+# on device firmware 2.2.0.x needs it. The trade-off is inherent: any two
+# presses on one device within 1.2 s count as one, so a user on *older* device
+# firmware (one pair per tap) who double-taps faster than that turns it off.
+CONF_SUPPRESS_DUPLICATE_PRESSES = "suppress_duplicate_presses"
+DEFAULT_SUPPRESS_DUPLICATE_PRESSES = True
 
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
