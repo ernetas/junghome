@@ -29,10 +29,10 @@ is required.
   recalls from *any* source (including physical buttons) fire a Home Assistant
   event — see [Scenes](#scenes).
 - **Rocker switches (buttons)** — each button side is an **event entity** and
-  offers **device triggers**, so a press can start any automation or script;
-  single/double/hold gestures come from the shipped
-  [blueprint](#button-automations-rocker-switches). The status LED is
-  switchable (colour is app/BT-Mesh only — see limitations).
+  offers **device triggers** for `click`, `hold_start` and `hold_end` (plus
+  the raw press/release edges), so a click or a hold can start any automation
+  or script — see [Button automations](#button-automations-rocker-switches).
+  The status LED is switchable (colour is app/BT-Mesh only — see limitations).
 - **Presence/motion detectors ("BWM")** — detection surfaces as an
   **occupancy binary sensor** next to the detector's ambient readings (e.g.
   illuminance).
@@ -122,8 +122,14 @@ verifies the address actually belongs to *this* gateway before saving.
   backstop: live state keeps arriving over the WebSocket regardless, so a
   longer interval mainly reduces gateway load. It does stretch everything the
   poll drives — a device added while the WebSocket is down appears up to one
-  interval later, and the ten-poll debounce before a removed device disappears
-  scales with it (ten hours at the maximum).
+  interval later, and the ten-miss debounce before a removed device disappears
+  scales with it (up to ten hours at the maximum).
+- **Ignore duplicate button presses** (on by default) — current JUNG device
+  firmware reports every tap twice; the integration drops the copy (a press
+  on the same button within 1.2 s of a click). Turn it off only on older
+  device firmware that reports each tap once, if you need presses closer
+  together than that (double-clicks) — details under
+  [Button automations](#button-automations-rocker-switches).
 - **Inverted covers (awnings)** — flag covers whose position is reported
   backwards, as described under [What works](#what-works).
 
@@ -132,25 +138,27 @@ Saving reloads the integration; entities, history and automations are kept.
 ## Button automations (rocker switches)
 
 Rocker buttons show up as Home Assistant **event entities** (one per up/down
-side), and each button also offers **device triggers** — open the button's
-device page, add an automation, and pick e.g. *"Up button pressed"*. That's
-the quickest route for a simple "press this, do that" automation.
+side). Every press is classified for you: a press released within a second
+fires a **`click`** event, a longer one fires **`hold_start`** after one
+second and **`hold_end`** at the release (the raw `pressed`/`depressed`
+edges still fire too). Each button also offers the same events as **device
+triggers** — open the button's device page, add an automation, and pick e.g.
+*"Up button clicked"* or *"Up button hold started"*. That's the quickest
+route for a "press this, do that" automation; no timing to tune.
 
-The gateway only reports raw press/release, so single/double/hold gestures are
-derived in an automation — a ready-made **blueprint** does this for you:
+- Full guide + copy-paste recipes (click, hold-to-dim): [`docs/example-button-automation.md`](docs/example-button-automation.md)
+- Blueprint (a form for click + hold actions): [`blueprints/automation/junghome/button_gestures.yaml`](blueprints/automation/junghome/button_gestures.yaml)
+  — import it by URL (Settings → Automations & scenes → Blueprints → Import).
 
-- Blueprint: [`blueprints/automation/junghome/button_gestures.yaml`](blueprints/automation/junghome/button_gestures.yaml)
-- Full guide + copy-paste recipes: [`docs/example-button-automation.md`](docs/example-button-automation.md)
-
-Import the blueprint by URL (Settings → Automations & scenes → Blueprints →
-Import), select the button's event entity/entities, and assign actions for
-single / double / hold. **One caveat before relying on double-click**: current
-JUNG device firmware (2.2.0.x, mid-2026) can report one quick tap as *two*
-press/release pairs — on the same channel for a rocker half, alternating
-between the up and down events on a single-key button — which makes a single
-click indistinguishable from a double — the
-[guide](docs/example-button-automation.md) shows how to measure your buttons,
-and what stays fully reliable (single and hold) if yours are affected.
+**Why no double-click?** Current JUNG device firmware (2.2.0.x, mid-2026)
+reports one tap as *two* press/release pairs, which makes a single click
+indistinguishable from a double over the gateway. The integration drops the
+duplicate (the *Ignore duplicate button presses* [option](#options), on by
+default) so a tap fires once — the trade-off is that two presses on one
+rocker less than 1.2 s apart count as one. On older device firmware that
+reports each tap once you can turn the option off and use the blueprint's
+legacy double-click path; the [guide](docs/example-button-automation.md)
+shows how to measure your buttons.
 
 ## Scenes
 
@@ -229,6 +237,15 @@ commands and button presses only travel over the WebSocket. It clears itself onc
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
+**Voltage, current and frequency sensors are missing.**
+They register disabled by default on new installs (they are noisy diagnostics);
+enable them from the device page. Existing installs keep them as they were.
+
+**Devices show a serial number.**
+On gateway firmware 2.1.x+ (API 1.5.0) each device carries its node's
+Bluetooth address as serial number, read from the gateway's project export;
+older firmware shows none.
+
 **Entities are unavailable but the gateway is up.**
 Controllable entities (lights, sockets, covers, thermostats, status LEDs)
 and button event entities require the live WebSocket: commands only go out
@@ -242,9 +259,10 @@ app or the gateway was factory-reset. Follow the reauth prompt: press submit
 to send a new access request, then approve it in the Jung Home app.
 
 **A device disappeared from Home Assistant.**
-The integration removes a device once the gateway has stopped reporting it for
-ten consecutive polls (about ten minutes at the default
-[poll interval](#options), longer if you raised it) — that is how a device you
+The integration removes a device once it has been missing from ten consecutive
+device lists — REST polls, plus the list the gateway pushes over the WebSocket
+on connect and on every change — so at most about ten minutes at the default
+[poll interval](#options), longer if you raised it. That is how a device you
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
 device is still installed, make sure it is powered and in range of the mesh;
@@ -274,8 +292,10 @@ are redacted; device labels are kept because they are the identity anchor.
   [Integration helper](https://www.home-assistant.io/integrations/integration/)
   on the socket's power sensor (Settings → Devices & Services → Helpers →
   Riemann sum), then add that kWh sensor to the Energy Dashboard.
-- **Button gestures** (single/double/hold) aren't native — derive them with
-  the [blueprint](#button-automations-rocker-switches).
+- **No double-click on current device firmware** — it reports every tap
+  twice, so a double is indistinguishable from a single; click and hold are
+  what the buttons offer (see
+  [Button automations](#button-automations-rocker-switches)).
 - The rocker **status-LED colour** can't be set from here (on/off only);
   colour is configured in the JUNG app or over BT-Mesh.
 - **Colour temperature tops out at 6000 K** — the gateway itself clamps every

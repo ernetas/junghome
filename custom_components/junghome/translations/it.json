@@ -87,10 +87,12 @@
         "description": "L'intervallo di polling definisce la frequenza di rilettura del gateway via REST — gli aggiornamenti in tempo reale continuano ad arrivare via WebSocket, quindi un intervallo più lungo riduce soprattutto il carico del gateway. Seleziona le tapparelle la cui posizione viene segnalata invertita, come le tende da sole. La loro posizione viene invertita in modo che completamente chiusa risulti 0 percento (chiusa) e completamente aperta 100 percento (aperta). Lascia deselezionate le tapparelle avvolgibili e le veneziane.",
         "data": {
           "poll_interval": "Intervallo di polling (secondi)",
-          "inverted_covers": "Tapparelle invertite (tende da sole)"
+          "inverted_covers": "Tapparelle invertite (tende da sole)",
+          "suppress_duplicate_presses": "Ignora pressioni duplicate"
         },
         "data_description": {
-          "poll_interval": "Tra 30 e 3600 secondi (predefinito: 60)."
+          "poll_interval": "Tra 30 e 3600 secondi (predefinito: 60).",
+          "suppress_duplicate_presses": "Il firmware attuale dei dispositivi JUNG segnala ogni pressione due volte. Se attivo, una pressione dello stesso pulsante entro 1,2 secondi da un clic viene ignorata, così ogni pressione scatta una sola volta. Disattivalo solo se i tuoi pulsanti segnalano ogni pressione una volta (firmware del dispositivo precedente) e ti servono pressioni a meno di 1,2 secondi di distanza, ad esempio i doppi clic."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "premuto",
-      "depressed": "rilasciato"
+      "depressed": "rilasciato",
+      "click": "premuto brevemente",
+      "hold_start": "tenuto premuto (inizio)",
+      "hold_end": "tenuto premuto (fine)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Giù" },
       "press": { "name": "Pressione" }
     },
+    "sensor": {
+      "power": { "name": "Potenza" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Tensione" },
+      "current": { "name": "Corrente" },
+      "frequency": { "name": "Frequenza" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Illuminamento" },
+      "humidity": { "name": "Umidità" }
+    },
     "switch": {
       "status_led": { "name": "LED di stato" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Non è stato possibile raggiungere il gateway Jung Home per inviare il comando; è in fase di riconnessione. Riprova tra un momento."
+    },
+    "command_rejected": {
+      "message": "Il gateway Jung Home ha rifiutato il comando: {error}"
     },
     "command_timeout": {
       "message": "Il gateway Jung Home non ha confermato il comando in tempo."

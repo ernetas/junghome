@@ -26,10 +26,13 @@ EVENT_BUTTON_ACTION = f"{DOMAIN}_button_action"
 
 # Device-trigger vocabulary.
 #
-# ``type`` is which side of the rocker fired and ``subtype`` is the raw edge.
-# The gateway reports only press/release — it has no native single/double/hold —
-# so those two edges are all a device trigger can honestly offer; gestures are
-# still derived in an automation (see the shipped blueprint).
+# ``type`` is which side of the rocker fired and ``subtype`` is the event: the
+# raw edge the gateway pushed (``pressed``/``depressed``) or a gesture the
+# event platform derived from the edges' timing (``click``, ``hold_start``,
+# ``hold_end`` — see ``event.py``). The gateway itself has no native
+# single/double/hold, and single vs double click is unrecoverable over its API
+# on current device firmware (docs/gateway-websocket.md) — hence no
+# ``double_click`` here.
 CONF_SUBTYPE = "subtype"
 
 # Rocker datapoint type -> button side. Also drives the event entities'
@@ -40,7 +43,41 @@ BUTTON_DATAPOINT_TYPES = {
     "trigger_request": "press",
 }
 BUTTON_TRIGGER_TYPES = set(BUTTON_DATAPOINT_TYPES.values())
-BUTTON_TRIGGER_SUBTYPES = {"pressed", "depressed"}
+# Raw edges first, then the derived gestures. A tuple, not a set: this is the
+# order the automation UI lists a button's triggers in, and the event
+# entities' ``event_types``.
+BUTTON_EVENT_TYPES = ("pressed", "depressed", "click", "hold_start", "hold_end")
+BUTTON_TRIGGER_SUBTYPES = BUTTON_EVENT_TYPES
+
+# Button gesture timing (seconds). Both rest on the labelled WebSocket capture
+# of 2026-08-02 (one rocker, gateway 2.1.3, device firmware 2.2.0.x; 16 taps +
+# 5 holds — tables in docs/gateway-websocket.md) and the mechanism the
+# 2026-09-15 cross-repo audit established (docs/cross-repo-analysis.md §1.1).
+#
+# A press still down after this long is a *hold* (``hold_start`` fires at this
+# moment, ``hold_end`` at the release); a press released sooner is a *click*.
+# Tap pulses measured 0.40-0.53 s — that width is the gateway's own synthesised
+# release (two 200 ms delays in its emitter loop), not the finger — and hold
+# pulses 2.44-3.11 s (the finger): a five-fold empty band, so anywhere in
+# ~1-2 s is safe. 1.0 s keeps ``hold_start`` responsive.
+BUTTON_HOLD_THRESHOLD = 1.0
+# Device firmware 2.2.0.x publishes every button event twice, ~1 s apart, and
+# the gateway turns each copy of a click into its own press/release pair — one
+# tap arrives as TWO pairs, the second press 0.11-1.03 s after the first
+# release. A press on the same DEVICE (any side: on a single-key element the
+# copy lands on the *other* datapoint) within this window after a click is
+# that copy and is dropped. 1.2 s covers the 1.03 s worst case with margin;
+# anything shorter lets some copies through. A hold's copy is value-and-mode
+# unchanged and the gateway already suppresses it.
+BUTTON_DUPLICATE_WINDOW = 1.2
+
+# Options-flow key: whether the event platform drops the firmware's duplicate
+# copy of each tap (``BUTTON_DUPLICATE_WINDOW``). On by default — every install
+# on device firmware 2.2.0.x needs it. The trade-off is inherent: any two
+# presses on one device within 1.2 s count as one, so a user on *older* device
+# firmware (one pair per tap) who double-taps faster than that turns it off.
+CONF_SUPPRESS_DUPLICATE_PRESSES = "suppress_duplicate_presses"
+DEFAULT_SUPPRESS_DUPLICATE_PRESSES = True
 
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
@@ -309,8 +346,10 @@ def datapoint_suffix(datapoint_id: str) -> str:
     """Return the stable element index of a datapoint id.
 
     Datapoint ids look like ``id5f09764942a70ce-001``. The ``id...`` prefix is
-    the device id, which the gateway regenerates on firmware updates, but the
-    suffix (``001``, ``010``, ``00e`` ...) is a stable element/property index.
+    the device id — derived from the node UUID and element location (see
+    ``device_slug``), so it changes whenever the app re-provisions or
+    re-enumerates a node — but the suffix (``001``, ``010``, ``00e`` ...) is a
+    stable state index the firmware assigns per device type.
     """
     return str(datapoint_id).rsplit("-", 1)[-1]
 
@@ -318,10 +357,21 @@ def datapoint_suffix(datapoint_id: str) -> str:
 def device_slug(device: Device) -> str:
     """Return a firmware-stable slug for a device, based on its label.
 
-    The gateway exposes no hardware identifier (serial/MAC/address); the user
-    facing label is the only attribute that survives firmware updates, so it is
-    used as the identity anchor. Falls back to the volatile id only if the label
-    is missing or unsluggable.
+    The device ``id`` is not random — it is ``"id"`` + the first 15 hex digits
+    of ``md5(node UUID + element location)`` (``models.function_id_for``,
+    verified against the firmware) — but it changes whenever the app
+    re-provisions a node or re-enumerates its elements, which is what the
+    observed app-driven firmware updates did. The user-facing label survives
+    all of that, so it is the identity anchor; it also reads well in entity
+    ids, which a hash never would. Falls back to the volatile id only if the
+    label is missing or unsluggable.
+
+    The hardware identity the ``functions`` payload lacks *is* available on
+    API 1.5.0+ (``GET /project/junghome``: node UUID / Bluetooth address /
+    unicast / element location — ``models.parse_project_export``); it is
+    attached to the registry device as ``serial_number`` and, on the node's
+    primary function, a Bluetooth ``connection`` (``entity.py``), never used
+    as an identifier — existing registrations must keep merging on the slug.
 
     The fallback inspects the slug *result*, not the raw candidate: HA's
     ``slugify`` maps symbol/whitespace-only strings (e.g. ``"❤"`` or ``"   "``)
@@ -331,14 +381,15 @@ def device_slug(device: Device) -> str:
     collide on ``"unknown"``. So each candidate is slugified in turn and the
     first non-empty, non-``"unknown"`` slug wins.
 
-    Known limitation (accepted gateway constraint, not disambiguated here):
-    two devices with identical — or identically-slugging — labels (e.g.
-    ``"Lamp 1"`` vs ``"Lamp-1"``, both ``"lamp_1"``) produce the same slug and
-    therefore the same ``stable_unique_id``. Because the gateway exposes no
-    hardware id, the second device silently loses (its entity can't register).
-    Per-poll disambiguation is deliberately *not* done — it would make
-    unique_ids depend on poll order/membership, breaking the stable-identity
-    invariant.
+    Known limitation (accepted, not disambiguated here): two devices with
+    identical — or identically-slugging — labels (e.g. ``"Lamp 1"`` vs
+    ``"Lamp-1"``, both ``"lamp_1"``) produce the same slug and therefore the
+    same ``stable_unique_id``, and the second device silently loses (its
+    entity can't register). Per-poll disambiguation is deliberately *not*
+    done — it would make unique_ids depend on poll order/membership, breaking
+    the stable-identity invariant — and the hardware identity is not folded
+    in either: it is only known once the export has been read, and an id
+    that depends on whether a fetch succeeded is not stable.
 
     ## migration note
     This change alters ``device_slug`` (and thus ``unique_id``s) only for
@@ -357,9 +408,10 @@ def duplicate_slugs(devices: list[Device]) -> dict[str, list[str]]:
     """Map each colliding device slug to the labels that produced it.
 
     ``device_slug`` deliberately does not disambiguate two devices whose labels
-    slug identically (see its docstring: the gateway exposes no hardware id, and
-    per-poll disambiguation would make unique_ids depend on poll order). The
-    second such device simply loses — its entities can't register.
+    slug identically (see its docstring: per-poll disambiguation would make
+    unique_ids depend on poll order, and the hardware identity is only known
+    after a successful export read). The second such device simply loses — its
+    entities can't register.
 
     That is survivable for identity, but **any caller keeping per-device state
     keyed by slug must skip a colliding slug**, because two devices would

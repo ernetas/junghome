@@ -87,10 +87,12 @@
         "description": "L'intervalle d'interrogation définit la fréquence de relecture de la passerelle via REST — les mises à jour en direct continuent d'arriver via le WebSocket, un intervalle plus long réduit donc surtout la charge de la passerelle. Sélectionnez les volets dont la position est signalée de manière inversée, comme les stores bannes. Leur position est inversée afin que la position entièrement fermée corresponde à 0 pour cent (fermé) et la position entièrement ouverte à 100 pour cent (ouvert). Laissez les volets roulants et les stores intérieurs non sélectionnés.",
         "data": {
           "poll_interval": "Intervalle d'interrogation (secondes)",
-          "inverted_covers": "Volets inversés (stores bannes)"
+          "inverted_covers": "Volets inversés (stores bannes)",
+          "suppress_duplicate_presses": "Ignorer les appuis en double"
         },
         "data_description": {
-          "poll_interval": "Entre 30 et 3600 secondes (60 par défaut)."
+          "poll_interval": "Entre 30 et 3600 secondes (60 par défaut).",
+          "suppress_duplicate_presses": "Le micrologiciel actuel des appareils JUNG signale chaque appui deux fois. Si cette option est activée, un appui sur le même bouton dans les 1,2 secondes suivant un clic est ignoré, de sorte que chaque appui ne déclenche qu'une fois. Désactivez-la uniquement si vos boutons signalent chaque appui une seule fois (ancien micrologiciel) et que vous avez besoin d'appuis espacés de moins de 1,2 seconde, par exemple des doubles clics."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "appuyé",
-      "depressed": "relâché"
+      "depressed": "relâché",
+      "click": "cliqué",
+      "hold_start": "maintenu (début)",
+      "hold_end": "maintenu (fin)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Bas" },
       "press": { "name": "Appui" }
     },
+    "sensor": {
+      "power": { "name": "Puissance" },
+      "energy": { "name": "Énergie" },
+      "voltage": { "name": "Tension" },
+      "current": { "name": "Courant" },
+      "frequency": { "name": "Fréquence" },
+      "temperature": { "name": "Température" },
+      "illuminance": { "name": "Éclairement" },
+      "humidity": { "name": "Humidité" }
+    },
     "switch": {
       "status_led": { "name": "LED d'état" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Impossible de joindre la passerelle Jung Home pour envoyer la commande ; elle est en cours de reconnexion. Réessayez dans un instant."
+    },
+    "command_rejected": {
+      "message": "La passerelle Jung Home a rejeté la commande : {error}"
     },
     "command_timeout": {
       "message": "La passerelle Jung Home n'a pas confirmé la commande à temps."

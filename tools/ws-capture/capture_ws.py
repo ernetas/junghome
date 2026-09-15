@@ -14,10 +14,20 @@ repo's backlog:
 
   * rockers — what edges does a real press/double/hold actually produce, on
     which channel, and with what timing? (drives the button blueprint's
-    hold-time and double-click-window defaults, and the "sibling channel echo"
-    guidance in docs/example-button-automation.md)
+    hold-time and double-click-window defaults). The mechanism is now
+    established (docs/cross-repo-analysis.md §1.1): the gateway synthesises the
+    release, so a tap is a ~0.4 to 0.5 s pulse; device firmware 2.2.0.2 publishes
+    every event twice ~1 s apart, so a tap arrives as TWO pairs and a hold as
+    ONE; the second copy lands on the SAME channel on a rocker half and on the
+    OTHER channel on a single-key element (the gateway toggles the side per
+    reception — not an "echo"). What a capture still adds: the numbers for
+    your firmware, and a single-key element has never been measured.
   * covers — does a moving blind stream intermediate `level` values, or only
-    report the endpoint? (blocks the cover travel-state backlog item)
+    report the endpoint? (blocks the cover travel-state backlog item). Drive
+    the blind from its WALL BUTTON, not from Home Assistant and not from the
+    app: a move commanded through the gateway's API has `level` report the
+    *target* for ~4 s before the device's own status catches up, which reads
+    exactly like streamed positions and would answer the question wrongly.
 
 Usage:
 
@@ -168,15 +178,17 @@ SCRIPTS: dict[str, list[tuple[str, str]]] = {
             "single-b",
             (
                 "Now the OTHER side of the same rocker: press and release once.\n"
-                "    Repeat 3 times. (This shows whether the gateway alternates\n"
-                "    channels or reports each side separately.)"
+                "    Repeat 3 times. (On a rocker each side has its own channel;\n"
+                "    on a single-key element the two copies of one tap alternate\n"
+                "    channels instead — this step tells the two apart.)"
             ),
         ),
         (
             "alternate",
             (
                 "Alternate sides: press A, then B, then A, then B — about 1 s\n"
-                "    apart. (This is what exposes a sibling-channel echo.)"
+                "    apart. (Deliberate alternation, to compare against the\n"
+                "    firmware's own doubled copies ~1 s apart.)"
             ),
         ),
     ],
@@ -185,8 +197,11 @@ SCRIPTS: dict[str, list[tuple[str, str]]] = {
         (
             "close-full",
             (
-                "Fully CLOSE the blind from the JUNG app (or its wall button) and\n"
-                "    let it run all the way to the end. Wait until it stops."
+                "Fully CLOSE the blind from its WALL BUTTON — not from Home\n"
+                "    Assistant and not from the app (a move commanded through the\n"
+                "    gateway's API reports the TARGET level for ~4 s, which would\n"
+                "    look like streamed positions). Let it run all the way to the\n"
+                "    end. Wait until it stops."
             ),
         ),
         (
@@ -456,7 +471,10 @@ def _print_edges(by_marker: dict[str | None, list[dict]]) -> None:
         types = {row["type"] for row in group}
         if len(types) > 1:
             print(f"   NOTE: {len(types)} channels fired here: {sorted(types)}")
-            print("         -> sibling-channel echo (or genuine alternation).")
+            print(
+                "         -> a single-key element (the firmware's two copies of "
+                "one tap alternate up/down), or you pressed both sides."
+            )
         if len(ids) > 1:
             print(f"   datapoint ids seen: {sorted(ids)}")
 
@@ -547,6 +565,13 @@ def _analyze_cover(records: list[dict]) -> None:
     if not rows:
         print("No level/angle frames captured.")
         return
+    print(
+        "   CAVEAT: only a move started from the blind's WALL BUTTON answers the\n"
+        "   streaming question. A move commanded through the gateway's API (Home\n"
+        "   Assistant, or the app when it goes via the gateway) reports the TARGET\n"
+        "   level for ~4 s before the device's own status catches up — that is a\n"
+        "   second frame, not a streamed position."
+    )
     by_marker: dict[str | None, list[dict]] = {}
     for row in rows:
         by_marker.setdefault(row["marker"], []).append(row)
@@ -558,7 +583,8 @@ def _analyze_cover(records: list[dict]) -> None:
         if len(levels) > 2:
             print(
                 f"   -> {len(levels)} level frames during this move: the gateway "
-                "DOES stream intermediate positions."
+                "DOES stream intermediate positions (if the move was wall-button "
+                "driven — see the caveat above)."
             )
         elif levels:
             print(

@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, gateway_device_id
@@ -127,6 +127,22 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         topology: by registry id (``via_device_id``) on cores that know the
         key, by identifier tuple (``via_device``) on older ones. The hub is
         registered up front in ``async_setup_entry``, so both forms resolve.
+
+        The identity stays the label slug (``identifiers``), so existing
+        registrations merge unchanged. When the coordinator resolved the
+        function's hardware identity from the gateway's project export
+        (``coordinator.node_identities``), the node's Bluetooth address is
+        added as ``serial_number`` — informational, shown on the device page,
+        shared by every function of a multi-function node — and, on the
+        function at the node's primary element only, as a
+        ``CONNECTION_BLUETOOTH`` connection. Only there, because the registry
+        resolves devices by connection: the same connection on a 2-gang
+        button's rockers and loads would merge them all into one device. A
+        connection on the primary function is what lets the registry recognise
+        the same radio across a relabel (a deleted device's area and custom
+        name come back with it) and lets tooling join on the address. Mirrored
+        by ``coordinator._apply_node_identities`` for devices registered before
+        the identity was known.
         """
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, device_slug(self._device))},
@@ -137,6 +153,11 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             or self.coordinator.gateway_version
             or "Unknown Version",
         }
+        identity = self.coordinator.node_identity_for(self._device)
+        if identity is not None and identity.mac is not None:
+            info["serial_number"] = identity.mac
+            if identity.primary:
+                info["connections"] = {(CONNECTION_BLUETOOTH, identity.mac)}
         hub_registry_id = self.coordinator.gateway_device_registry_id
         if VIA_DEVICE_ID_SUPPORTED and hub_registry_id is not None:
             # The key is absent from this core's DeviceInfo when the check is

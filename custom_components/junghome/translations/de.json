@@ -87,10 +87,12 @@
         "description": "Das Abfrageintervall legt fest, wie oft das Gateway per REST neu ausgelesen wird — Live-Updates kommen unabhängig davon weiter über den WebSocket, ein längeres Intervall verringert also vor allem die Gateway-Last. Wähle alle Rollos aus, deren Position invertiert gemeldet wird, zum Beispiel Markisen. Ihre Position wird umgekehrt, sodass vollständig geschlossen als 0 Prozent (geschlossen) und vollständig geöffnet als 100 Prozent (geöffnet) angezeigt wird. Lasse Rollläden und Jalousien nicht ausgewählt.",
         "data": {
           "poll_interval": "Abfrageintervall (Sekunden)",
-          "inverted_covers": "Invertierte Rollos (Markisen)"
+          "inverted_covers": "Invertierte Rollos (Markisen)",
+          "suppress_duplicate_presses": "Doppelte Tastendrücke ignorieren"
         },
         "data_description": {
-          "poll_interval": "Zwischen 30 und 3600 Sekunden (Standard: 60)."
+          "poll_interval": "Zwischen 30 und 3600 Sekunden (Standard: 60).",
+          "suppress_duplicate_presses": "Die aktuelle Firmware der JUNG Geräte meldet jeden Tastendruck doppelt. Wenn aktiviert, wird ein Druck auf dieselbe Taste innerhalb von 1,2 Sekunden nach einem Klick ignoriert, sodass jeder Tastendruck nur einmal auslöst. Schalte dies nur aus, wenn deine Tasten jeden Druck einmal melden (ältere Gerätefirmware) und du Drücke in weniger als 1,2 Sekunden Abstand brauchst, zum Beispiel Doppelklicks."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "gedrückt",
-      "depressed": "losgelassen"
+      "depressed": "losgelassen",
+      "click": "kurz gedrückt",
+      "hold_start": "lange gedrückt (Beginn)",
+      "hold_end": "lange gedrückt (Ende)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Ab" },
       "press": { "name": "Tastendruck" }
     },
+    "sensor": {
+      "power": { "name": "Leistung" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Spannung" },
+      "current": { "name": "Stromstärke" },
+      "frequency": { "name": "Frequenz" },
+      "temperature": { "name": "Temperatur" },
+      "illuminance": { "name": "Beleuchtungsstärke" },
+      "humidity": { "name": "Luftfeuchtigkeit" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Das Jung Home Gateway war nicht erreichbar, um den Befehl zu senden; es stellt die Verbindung gerade wieder her. Versuche es in einem Moment erneut."
+    },
+    "command_rejected": {
+      "message": "Das Jung Home Gateway hat den Befehl abgelehnt: {error}"
     },
     "command_timeout": {
       "message": "Das Jung Home Gateway hat den Befehl nicht rechtzeitig bestätigt."

@@ -87,10 +87,12 @@
         "description": "Polling-intervallet bestemmer, hvor ofte gatewayen genindlæses via REST — liveopdateringer ankommer fortsat via WebSocket, så et længere interval reducerer primært belastningen af gatewayen. Vælg de gardiner, hvis position rapporteres omvendt, for eksempel markiser. Deres position vendes om, så helt lukket vises som 0 procent (lukket) og helt åben som 100 procent (åben). Lad rullegardiner og persienner være uvalgte.",
         "data": {
           "poll_interval": "Polling-interval (sekunder)",
-          "inverted_covers": "Omvendte gardiner (markiser)"
+          "inverted_covers": "Omvendte gardiner (markiser)",
+          "suppress_duplicate_presses": "Ignorer dobbelte tastetryk"
         },
         "data_description": {
-          "poll_interval": "Mellem 30 og 3600 sekunder (standard 60)."
+          "poll_interval": "Mellem 30 og 3600 sekunder (standard 60).",
+          "suppress_duplicate_presses": "Den aktuelle firmware i JUNG-enheder rapporterer hvert tryk to gange. Når dette er slået til, ignoreres et tryk på den samme knap inden for 1,2 sekunder efter et klik, så hvert tryk kun udløses én gang. Slå det kun fra, hvis dine knapper rapporterer hvert tryk én gang (ældre enhedsfirmware), og du har brug for tryk med mindre end 1,2 sekunders mellemrum, f.eks. dobbeltklik."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "trykket",
-      "depressed": "sluppet"
+      "depressed": "sluppet",
+      "click": "klikket",
+      "hold_start": "holdt nede (start)",
+      "hold_end": "holdt nede (slut)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Ned" },
       "press": { "name": "Tryk" }
     },
+    "sensor": {
+      "power": { "name": "Effekt" },
+      "energy": { "name": "Energi" },
+      "voltage": { "name": "Spænding" },
+      "current": { "name": "Strøm" },
+      "frequency": { "name": "Frekvens" },
+      "temperature": { "name": "Temperatur" },
+      "illuminance": { "name": "Belysningsstyrke" },
+      "humidity": { "name": "Luftfugtighed" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Jung Home-gatewayen kunne ikke nås til at sende kommandoen; den er ved at oprette forbindelse igen. Prøv igen om et øjeblik."
+    },
+    "command_rejected": {
+      "message": "Jung Home-gatewayen afviste kommandoen: {error}"
     },
     "command_timeout": {
       "message": "Jung Home-gatewayen bekræftede ikke kommandoen i tide."

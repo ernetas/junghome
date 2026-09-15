@@ -1,6 +1,9 @@
 """Device-trigger tests for Jung Home rocker buttons."""
 
+from datetime import timedelta
+
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import automation
 from homeassistant.components.device_automation import DeviceAutomationType
 from homeassistant.components.device_automation.exceptions import (
@@ -19,10 +22,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_time_changed,
     async_get_device_automations,
 )
 
-from custom_components.junghome.const import CONF_SUBTYPE, DOMAIN
+from custom_components.junghome.const import (
+    BUTTON_TRIGGER_SUBTYPES,
+    CONF_SUBTYPE,
+    DOMAIN,
+)
 from custom_components.junghome.device_trigger import async_validate_trigger_config
 
 
@@ -46,23 +54,92 @@ def _press(coordinator, value: str = "1") -> None:
     )
 
 
-async def test_get_triggers_lists_each_button_side_and_edge(
+async def _automation_on(hass: HomeAssistant, device_id: str, side: str, subtype: str):
+    """Set up one automation on a device trigger; return its fire log."""
+    fired: list[str] = []
+    assert await async_setup_component(
+        hass,
+        automation.DOMAIN,
+        {
+            automation.DOMAIN: [
+                {
+                    "trigger": {
+                        CONF_PLATFORM: "device",
+                        CONF_DOMAIN: DOMAIN,
+                        CONF_DEVICE_ID: device_id,
+                        CONF_TYPE: side,
+                        CONF_SUBTYPE: subtype,
+                    },
+                    "action": {"event": "junghome_test_fired"},
+                }
+            ]
+        },
+    )
+    await hass.async_block_till_done()
+    hass.bus.async_listen("junghome_test_fired", lambda e: fired.append("x"))
+    return fired
+
+
+async def test_get_triggers_lists_each_button_side_edge_and_gesture(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A rocker offers both its sides, each with a pressed/released edge."""
+    """A rocker offers both sides, each with the two edges and three gestures."""
     device_id = _device_id(hass, "button_a")
     triggers = await async_get_device_automations(
         hass, DeviceAutomationType.TRIGGER, device_id
     )
-    ours = [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN]
+    ours = [
+        (t[CONF_TYPE], t[CONF_SUBTYPE])
+        for t in triggers
+        if t.get(CONF_DOMAIN) == DOMAIN
+    ]
     # The fixture's Button A exposes up_request + down_request (and a status LED,
-    # which is not a button), so: 2 sides x 2 edges.
-    assert {(t[CONF_TYPE], t[CONF_SUBTYPE]) for t in ours} == {
-        ("up", "pressed"),
-        ("up", "depressed"),
-        ("down", "pressed"),
-        ("down", "depressed"),
-    }
+    # which is not a button), so: 2 sides x 5 subtypes — listed in the fixed
+    # order of the constant (edges first), which is what the UI shows.
+    assert ours == [
+        (side, subtype)
+        for side in ("up", "down")
+        for subtype in ("pressed", "depressed", "click", "hold_start", "hold_end")
+    ]
+    assert BUTTON_TRIGGER_SUBTYPES == (
+        "pressed",
+        "depressed",
+        "click",
+        "hold_start",
+        "hold_end",
+    )
+
+
+async def test_click_trigger_fires_once_per_doubled_tap(
+    hass: HomeAssistant, init_integration, freezer: FrozenDateTimeFactory
+) -> None:
+    """A ``click`` device trigger sees one tap once, copy included.
+
+    The event platform's duplicate suppression is what makes device triggers
+    usable on current device firmware: the tap's second pair fires nothing.
+    """
+    fired = await _automation_on(hass, _device_id(hass, "button_a"), "up", "click")
+    coordinator = init_integration.runtime_data
+    for value, gap in (("1", 0), ("0", 0.4), ("1", 0.5), ("0", 0.4)):
+        freezer.tick(timedelta(seconds=gap))
+        async_fire_time_changed(hass)
+        _press(coordinator, value)
+        await hass.async_block_till_done()
+    assert len(fired) == 1
+
+
+async def test_hold_start_trigger_fires_from_the_timer(
+    hass: HomeAssistant, init_integration, freezer: FrozenDateTimeFactory
+) -> None:
+    """A ``hold_start`` device trigger runs at the hold threshold, before release."""
+    fired = await _automation_on(hass, _device_id(hass, "button_a"), "up", "hold_start")
+    _press(init_integration.runtime_data, "1")
+    await hass.async_block_till_done()
+    assert fired == []
+    freezer.tick(timedelta(seconds=1.0))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert len(fired) == 1
 
 
 async def test_non_button_device_offers_no_triggers(
@@ -80,33 +157,7 @@ async def test_trigger_fires_on_matching_press(
     hass: HomeAssistant, init_integration
 ) -> None:
     """An automation using the device trigger runs when that edge is pushed."""
-    device_id = _device_id(hass, "button_a")
-    fired: list[str] = []
-
-    assert await async_setup_component(
-        hass,
-        automation.DOMAIN,
-        {
-            automation.DOMAIN: [
-                {
-                    "trigger": {
-                        CONF_PLATFORM: "device",
-                        CONF_DOMAIN: DOMAIN,
-                        CONF_DEVICE_ID: device_id,
-                        CONF_TYPE: "up",
-                        CONF_SUBTYPE: "pressed",
-                    },
-                    "action": {
-                        "event": "junghome_test_fired",
-                    },
-                }
-            ]
-        },
-    )
-    await hass.async_block_till_done()
-
-    hass.bus.async_listen("junghome_test_fired", lambda e: fired.append("x"))
-
+    fired = await _automation_on(hass, _device_id(hass, "button_a"), "up", "pressed")
     coordinator = init_integration.runtime_data
     _press(coordinator, "1")
     await hass.async_block_till_done()

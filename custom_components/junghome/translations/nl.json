@@ -87,10 +87,12 @@
         "description": "Het polling-interval bepaalt hoe vaak de gateway via REST opnieuw wordt uitgelezen — live-updates blijven via de WebSocket binnenkomen, dus een langer interval vermindert vooral de belasting van de gateway. Selecteer de zonweringen waarvan de positie omgekeerd wordt gemeld, zoals zonneschermen. Hun positie wordt omgedraaid, zodat volledig gesloten als 0 procent (gesloten) en volledig geopend als 100 procent (geopend) wordt weergegeven. Laat rolluiken en jaloezieën niet geselecteerd.",
         "data": {
           "poll_interval": "Polling-interval (seconden)",
-          "inverted_covers": "Omgekeerde zonwering (zonneschermen)"
+          "inverted_covers": "Omgekeerde zonwering (zonneschermen)",
+          "suppress_duplicate_presses": "Dubbele knopdrukken negeren"
         },
         "data_description": {
-          "poll_interval": "Tussen 30 en 3600 seconden (standaard 60)."
+          "poll_interval": "Tussen 30 en 3600 seconden (standaard 60).",
+          "suppress_duplicate_presses": "De huidige firmware van JUNG-apparaten meldt elke druk op een knop twee keer. Indien ingeschakeld wordt een druk op dezelfde knop binnen 1,2 seconden na een klik genegeerd, zodat elke druk één keer afgaat. Schakel dit alleen uit als je knoppen elke druk één keer melden (oudere apparaatfirmware) en je drukken met minder dan 1,2 seconden ertussen nodig hebt, bijvoorbeeld dubbelklikken."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "ingedrukt",
-      "depressed": "losgelaten"
+      "depressed": "losgelaten",
+      "click": "kort ingedrukt",
+      "hold_start": "vastgehouden (begin)",
+      "hold_end": "vastgehouden (einde)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Omlaag" },
       "press": { "name": "Druk" }
     },
+    "sensor": {
+      "power": { "name": "Vermogen" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Spanning" },
+      "current": { "name": "Stroom" },
+      "frequency": { "name": "Frequentie" },
+      "temperature": { "name": "Temperatuur" },
+      "illuminance": { "name": "Verlichtingssterkte" },
+      "humidity": { "name": "Luchtvochtigheid" }
+    },
     "switch": {
       "status_led": { "name": "Status-LED" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "De Jung Home-gateway was niet bereikbaar om de opdracht te versturen; de verbinding wordt hersteld. Probeer het zo meteen opnieuw."
+    },
+    "command_rejected": {
+      "message": "De Jung Home-gateway heeft de opdracht geweigerd: {error}"
     },
     "command_timeout": {
       "message": "De Jung Home-gateway heeft de opdracht niet op tijd bevestigd."

@@ -87,10 +87,12 @@
         "description": "Intervalul de interogare stabilește cât de des este recitit gateway-ul prin REST — actualizările live continuă să sosească prin WebSocket, așa că un interval mai lung reduce în principal sarcina gateway-ului. Selectează jaluzelele a căror poziție este raportată inversat, cum ar fi copertinele. Poziția lor este inversată, astfel încât complet închis să apară ca 0 la sută (închis), iar complet deschis ca 100 la sută (deschis). Lasă rulourile și jaluzelele interioare neselectate.",
         "data": {
           "poll_interval": "Interval de interogare (secunde)",
-          "inverted_covers": "Jaluzele inversate (copertine)"
+          "inverted_covers": "Jaluzele inversate (copertine)",
+          "suppress_duplicate_presses": "Ignoră apăsările duplicate"
         },
         "data_description": {
-          "poll_interval": "Între 30 și 3600 de secunde (implicit 60)."
+          "poll_interval": "Între 30 și 3600 de secunde (implicit 60).",
+          "suppress_duplicate_presses": "Firmware-ul actual al dispozitivelor JUNG raportează fiecare apăsare de două ori. Când este activată, o apăsare a aceluiași buton în 1,2 secunde după un clic este ignorată, astfel încât fiecare apăsare declanșează o singură dată. Dezactivează doar dacă butoanele tale raportează fiecare apăsare o singură dată (firmware de dispozitiv mai vechi) și ai nevoie de apăsări la mai puțin de 1,2 secunde distanță, de exemplu dublu clic."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "apăsat",
-      "depressed": "eliberat"
+      "depressed": "eliberat",
+      "click": "apăsat scurt",
+      "hold_start": "ținut apăsat (început)",
+      "hold_end": "ținut apăsat (sfârșit)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Jos" },
       "press": { "name": "Apăsare" }
     },
+    "sensor": {
+      "power": { "name": "Putere" },
+      "energy": { "name": "Energie" },
+      "voltage": { "name": "Tensiune" },
+      "current": { "name": "Curent" },
+      "frequency": { "name": "Frecvență" },
+      "temperature": { "name": "Temperatură" },
+      "illuminance": { "name": "Iluminare" },
+      "humidity": { "name": "Umiditate" }
+    },
     "switch": {
       "status_led": { "name": "LED de stare" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Gateway-ul Jung Home nu a putut fi contactat pentru a trimite comanda; se reconectează. Încearcă din nou peste o clipă."
+    },
+    "command_rejected": {
+      "message": "Gateway-ul Jung Home a respins comanda: {error}"
     },
     "command_timeout": {
       "message": "Gateway-ul Jung Home nu a confirmat comanda la timp."

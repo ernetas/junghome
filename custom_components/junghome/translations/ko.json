@@ -87,10 +87,12 @@
         "description": "폴링 간격은 REST를 통해 게이트웨이를 다시 읽는 빈도를 설정합니다. 실시간 업데이트는 WebSocket을 통해 계속 수신되므로, 간격을 늘리면 주로 게이트웨이 부하가 줄어듭니다. 차양처럼 위치가 반대로 보고되는 커버를 선택하세요. 해당 커버의 위치가 뒤집혀 완전히 닫힘이 0퍼센트(닫힘), 완전히 열림이 100퍼센트(열림)로 표시됩니다. 롤러 셔터와 블라인드는 선택하지 마세요.",
         "data": {
           "poll_interval": "폴링 간격(초)",
-          "inverted_covers": "반전된 커버(차양)"
+          "inverted_covers": "반전된 커버(차양)",
+          "suppress_duplicate_presses": "중복된 버튼 누름 무시"
         },
         "data_description": {
-          "poll_interval": "30~3600초 사이(기본값 60)."
+          "poll_interval": "30~3600초 사이(기본값 60).",
+          "suppress_duplicate_presses": "현재 JUNG 기기 펌웨어는 한 번의 누름을 두 번 보고합니다. 사용하도록 설정하면 클릭 후 1.2초 이내에 같은 버튼을 누른 것은 무시되어 각 누름이 한 번만 트리거됩니다. 버튼이 각 누름을 한 번만 보고하고(이전 기기 펌웨어) 더블 클릭처럼 1.2초보다 짧은 간격의 누름이 필요한 경우에만 끄세요."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "눌림",
-      "depressed": "놓임"
+      "depressed": "놓임",
+      "click": "클릭됨",
+      "hold_start": "길게 누름 시작",
+      "hold_end": "길게 누름 종료"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "아래" },
       "press": { "name": "누름" }
     },
+    "sensor": {
+      "power": { "name": "전력" },
+      "energy": { "name": "에너지" },
+      "voltage": { "name": "전압" },
+      "current": { "name": "전류" },
+      "frequency": { "name": "주파수" },
+      "temperature": { "name": "온도" },
+      "illuminance": { "name": "조도" },
+      "humidity": { "name": "습도" }
+    },
     "switch": {
       "status_led": { "name": "상태 LED" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "명령을 보내기 위해 Jung Home 게이트웨이에 연결할 수 없습니다. 다시 연결하는 중입니다. 잠시 후 다시 시도하세요."
+    },
+    "command_rejected": {
+      "message": "Jung Home 게이트웨이가 명령을 거부했습니다: {error}"
     },
     "command_timeout": {
       "message": "Jung Home 게이트웨이가 제한 시간 내에 명령을 확인하지 않았습니다."

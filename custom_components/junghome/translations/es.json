@@ -87,10 +87,12 @@
         "description": "El intervalo de sondeo define con qué frecuencia se vuelve a leer la pasarela por REST; las actualizaciones en vivo siguen llegando por el WebSocket, por lo que un intervalo más largo reduce sobre todo la carga de la pasarela. Selecciona las persianas cuya posición se comunique invertida, como los toldos. Su posición se invierte para que totalmente cerrada se indique como 0 por ciento (cerrada) y totalmente abierta como 100 por ciento (abierta). Deja sin seleccionar las persianas enrollables y las venecianas.",
         "data": {
           "poll_interval": "Intervalo de sondeo (segundos)",
-          "inverted_covers": "Persianas invertidas (toldos)"
+          "inverted_covers": "Persianas invertidas (toldos)",
+          "suppress_duplicate_presses": "Ignorar pulsaciones duplicadas"
         },
         "data_description": {
-          "poll_interval": "Entre 30 y 3600 segundos (60 de forma predeterminada)."
+          "poll_interval": "Entre 30 y 3600 segundos (60 de forma predeterminada).",
+          "suppress_duplicate_presses": "El firmware actual de los dispositivos JUNG informa cada pulsación dos veces. Si está activado, se ignora una pulsación del mismo botón en los 1,2 segundos posteriores a un clic, de modo que cada pulsación se dispara una sola vez. Desactívalo solo si tus botones informan cada pulsación una vez (firmware de dispositivo antiguo) y necesitas pulsaciones con menos de 1,2 segundos de separación, por ejemplo dobles clics."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "pulsado",
-      "depressed": "soltado"
+      "depressed": "soltado",
+      "click": "pulsado brevemente",
+      "hold_start": "mantenido (inicio)",
+      "hold_end": "mantenido (fin)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Abajo" },
       "press": { "name": "Pulsación" }
     },
+    "sensor": {
+      "power": { "name": "Potencia" },
+      "energy": { "name": "Energía" },
+      "voltage": { "name": "Voltaje" },
+      "current": { "name": "Corriente" },
+      "frequency": { "name": "Frecuencia" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Iluminancia" },
+      "humidity": { "name": "Humedad" }
+    },
     "switch": {
       "status_led": { "name": "LED de estado" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "No se pudo contactar con la pasarela Jung Home para enviar el comando; se está reconectando. Vuelve a intentarlo dentro de un momento."
+    },
+    "command_rejected": {
+      "message": "La pasarela Jung Home rechazó el comando: {error}"
     },
     "command_timeout": {
       "message": "La pasarela Jung Home no confirmó el comando a tiempo."

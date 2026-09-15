@@ -87,10 +87,12 @@
         "description": "L'interval de sondeig defineix amb quina freqüència es torna a llegir la passarel·la per REST — les actualitzacions en directe continuen arribant pel WebSocket, així que un interval més llarg redueix sobretot la càrrega de la passarel·la. Selecciona les persianes la posició de les quals s'informa invertida, com ara els tendals. La seva posició s'inverteix perquè totalment tancada es mostri com a 0 per cent (tancada) i totalment oberta com a 100 per cent (oberta). Deixa les persianes enrotllables i les venecianes sense seleccionar.",
         "data": {
           "poll_interval": "Interval de sondeig (segons)",
-          "inverted_covers": "Persianes invertides (tendals)"
+          "inverted_covers": "Persianes invertides (tendals)",
+          "suppress_duplicate_presses": "Ignora les pulsacions duplicades"
         },
         "data_description": {
-          "poll_interval": "Entre 30 i 3600 segons (60 per defecte)."
+          "poll_interval": "Entre 30 i 3600 segons (60 per defecte).",
+          "suppress_duplicate_presses": "El microprogramari actual dels dispositius JUNG informa de cada pulsació dues vegades. Si està activat, s'ignora una pulsació del mateix botó dins dels 1,2 segons posteriors a un clic, de manera que cada pulsació s'activa una sola vegada. Desactiva-ho només si els teus botons informen de cada pulsació una vegada (microprogramari de dispositiu antic) i necessites pulsacions separades menys d'1,2 segons, per exemple dobles clics."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "premut",
-      "depressed": "alliberat"
+      "depressed": "alliberat",
+      "click": "premut breument",
+      "hold_start": "mantingut premut (inici)",
+      "hold_end": "mantingut premut (final)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Avall" },
       "press": { "name": "Pulsació" }
     },
+    "sensor": {
+      "power": { "name": "Potència" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Tensió" },
+      "current": { "name": "Corrent" },
+      "frequency": { "name": "Freqüència" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Il·luminància" },
+      "humidity": { "name": "Humitat" }
+    },
     "switch": {
       "status_led": { "name": "LED d'estat" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "No s'ha pogut contactar amb la passarel·la Jung Home per enviar l'ordre; s'està tornant a connectar. Torna-ho a provar d'aquí a un moment."
+    },
+    "command_rejected": {
+      "message": "La passarel·la Jung Home ha rebutjat l'ordre: {error}"
     },
     "command_timeout": {
       "message": "La passarel·la Jung Home no ha confirmat l'ordre a temps."

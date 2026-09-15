@@ -87,10 +87,12 @@
         "description": "Interval poizvedovanja določa, kako pogosto se prehod znova prebere prek REST — posodobitve v živo še naprej prihajajo prek WebSocketa, zato daljši interval predvsem zmanjša obremenitev prehoda. Izberite senčila, katerih položaj se sporoča obrnjeno, na primer tende. Njihov položaj se obrne, tako da se popolnoma zaprto prikaže kot 0 odstotkov (zaprto), popolnoma odprto pa kot 100 odstotkov (odprto). Rolete in žaluzije pustite neizbrane.",
         "data": {
           "poll_interval": "Interval poizvedovanja (sekunde)",
-          "inverted_covers": "Obrnjena senčila (tende)"
+          "inverted_covers": "Obrnjena senčila (tende)",
+          "suppress_duplicate_presses": "Prezri podvojene pritiske gumbov"
         },
         "data_description": {
-          "poll_interval": "Med 30 in 3600 sekundami (privzeto 60)."
+          "poll_interval": "Med 30 in 3600 sekundami (privzeto 60).",
+          "suppress_duplicate_presses": "Trenutna vdelana programska oprema naprav JUNG vsak pritisk sporoči dvakrat. Če je vklopljeno, se pritisk istega gumba v 1,2 sekunde po kliku prezre, tako da vsak pritisk sproži dejanje le enkrat. Izklopite le, če vaši gumbi vsak pritisk sporočijo enkrat (starejša vdelana programska oprema naprave) in potrebujete pritiske z manj kot 1,2 sekunde razmika, na primer dvojne klike."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "pritisnjen",
-      "depressed": "sproščen"
+      "depressed": "sproščen",
+      "click": "kliknjen",
+      "hold_start": "zadržan (začetek)",
+      "hold_end": "zadržan (konec)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Dol" },
       "press": { "name": "Pritisk" }
     },
+    "sensor": {
+      "power": { "name": "Moč" },
+      "energy": { "name": "Energija" },
+      "voltage": { "name": "Napetost" },
+      "current": { "name": "Tok" },
+      "frequency": { "name": "Frekvenca" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Osvetljenost" },
+      "humidity": { "name": "Vlažnost" }
+    },
     "switch": {
       "status_led": { "name": "LED stanja" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Prehoda Jung Home ni bilo mogoče doseči za pošiljanje ukaza; ponovno se povezuje. Poskusite znova čez trenutek."
+    },
+    "command_rejected": {
+      "message": "Prehod Jung Home je zavrnil ukaz: {error}"
     },
     "command_timeout": {
       "message": "Prehod Jung Home ni pravočasno potrdil ukaza."

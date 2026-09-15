@@ -87,10 +87,12 @@
         "description": "Interwał odpytywania określa, jak często bramka jest ponownie odczytywana przez REST — aktualizacje na żywo nadal przychodzą przez WebSocket, więc dłuższy interwał zmniejsza przede wszystkim obciążenie bramki. Zaznacz rolety, których pozycja jest raportowana odwrotnie, na przykład markizy. Ich pozycja zostanie odwrócona, tak aby całkowicie zamknięta była pokazywana jako 0 procent (zamknięta), a całkowicie otwarta jako 100 procent (otwarta). Rolet zewnętrznych i żaluzji nie zaznaczaj.",
         "data": {
           "poll_interval": "Interwał odpytywania (sekundy)",
-          "inverted_covers": "Rolety odwrócone (markizy)"
+          "inverted_covers": "Rolety odwrócone (markizy)",
+          "suppress_duplicate_presses": "Ignoruj zdublowane naciśnięcia przycisków"
         },
         "data_description": {
-          "poll_interval": "Od 30 do 3600 sekund (domyślnie 60)."
+          "poll_interval": "Od 30 do 3600 sekund (domyślnie 60).",
+          "suppress_duplicate_presses": "Aktualne oprogramowanie urządzeń JUNG zgłasza każde naciśnięcie dwukrotnie. Gdy opcja jest włączona, naciśnięcie tego samego przycisku w ciągu 1,2 sekundy po kliknięciu jest ignorowane, więc każde naciśnięcie wyzwala akcję tylko raz. Wyłącz ją tylko wtedy, gdy Twoje przyciski zgłaszają każde naciśnięcie raz (starsze oprogramowanie urządzenia) i potrzebujesz naciśnięć w odstępie krótszym niż 1,2 sekundy, na przykład dwukrotnych kliknięć."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "naciśnięty",
-      "depressed": "zwolniony"
+      "depressed": "zwolniony",
+      "click": "kliknięty",
+      "hold_start": "przytrzymany (początek)",
+      "hold_end": "przytrzymany (koniec)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Dół" },
       "press": { "name": "Naciśnięcie" }
     },
+    "sensor": {
+      "power": { "name": "Moc" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Napięcie" },
+      "current": { "name": "Natężenie prądu" },
+      "frequency": { "name": "Częstotliwość" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Natężenie oświetlenia" },
+      "humidity": { "name": "Wilgotność" }
+    },
     "switch": {
       "status_led": { "name": "Dioda LED stanu" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Nie udało się połączyć z bramką Jung Home, aby wysłać polecenie; trwa ponowne łączenie. Spróbuj ponownie za chwilę."
+    },
+    "command_rejected": {
+      "message": "Bramka Jung Home odrzuciła polecenie: {error}"
     },
     "command_timeout": {
       "message": "Bramka Jung Home nie potwierdziła polecenia na czas."

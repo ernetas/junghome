@@ -238,6 +238,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "real_version_fetch: let the test run the real _fetch_config_parameter "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_project_fetch: let the test run the real "
+        "_fetch_project_export_from_api (pair with aioclient_mock); by default "
+        "it is stubbed to avoid a socket.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -332,5 +338,30 @@ def mock_scenes_fetch(request):
         JungHomeDataUpdateCoordinator,
         "_fetch_scenes_from_api",
         AsyncMock(return_value=[]),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_project_export_fetch(request):
+    """Keep the setup-time REST project-export read off the network.
+
+    The mirror of ``mock_groups_fetch``: the coordinator's first refresh is
+    followed by ``GET /project/junghome`` (``async_fetch_node_identities``),
+    which resolves each function's hardware identity. Defaults to "no export"
+    — what firmware before API 1.5.0 answers — so entity/lifecycle tests see
+    devices without a serial number or Bluetooth connection, exactly as
+    before. Tests that assert on identities patch
+    ``_fetch_project_export_from_api`` themselves (an inner patch wins), and
+    the tests that cover the REST body opt out with
+    ``@pytest.mark.real_project_fetch``.
+    """
+    if request.node.get_closest_marker("real_project_fetch") is not None:
+        yield
+        return
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_project_export_from_api",
+        AsyncMock(return_value=None),
     ):
         yield

@@ -1,0 +1,9 @@
+# mypy only. Ruff lives in .ruff.toml, pytest in pytest.ini, coverage in
+# .coveragerc; the version pin stays in requirements_test.txt. Everything the
+# integration imports (homeassistant, aiohttp, voluptuous) ships type hints, so
+# no per-module overrides are needed — add a [[tool.mypy.overrides]] block with
+# ignore_missing_imports only for an untyped requirement.
+[tool.mypy]
+strict = true
+python_version = "3.14"
+files = ["custom_components/junghome"]

@@ -36,16 +36,20 @@ PLATFORMS: list[Platform] = [
     Platform.SCENE,
 ]
 
-# Consecutive polls a device must be absent from before it is pruned. The
-# gateway occasionally returns a partial device list on a single poll (notably
-# right after a reload); pruning on the first miss would delete a live device's
-# entities — and because identity is label-derived, the platform would then
-# re-create them under whatever label the next poll reports, losing the user's
-# entity_id/customisations. Requiring persistence rides out a transient blip.
+# Consecutive device-list adoptions (REST polls or `functions` broadcasts —
+# every `coordinator.data_generation` bump) a device must be absent from before
+# it is pruned. The gateway occasionally returns a partial device list on a
+# single poll (notably right after a reload); pruning on the first miss would
+# delete a live device's entities — and because identity is label-derived, the
+# platform would then re-create them under whatever label the next poll
+# reports, losing the user's entity_id/customisations. Requiring persistence
+# rides out a transient blip.
 #
-# The threshold is deliberately generous (10 polls — about 10 minutes at the
-# default 60 s interval; the window scales with the configured one, up to 10
-# hours at the 1 h ceiling). Removal is destructive and irreversible from the
+# The threshold is deliberately generous (10 adoptions — at most about 10
+# minutes at the default 60 s interval, since the poll supplies one per
+# interval and each broadcast (WS connect, an app edit) adds another; the
+# window scales with the configured interval, up to 10 hours at the 1 h
+# ceiling). Removal is destructive and irreversible from the
 # user's side — it takes the entity registry entries with it, so custom names,
 # areas and entity_ids are lost and automations referencing them break — while
 # the cost of removing late is only that a device the user deleted in the app
@@ -232,9 +236,10 @@ def _make_stale_device_pruner(
 ) -> Callable[[], None]:
     """Build the callback that prunes devices the gateway no longer reports.
 
-    Returned as a closure over a per-device count of consecutive polls each
-    device has been missing, so pruning is debounced: a device must be absent
-    for ``STALE_DEVICE_PRUNE_MISSES`` polls before it is removed. A single
+    Returned as a closure over a per-device count of consecutive device-list
+    adoptions (REST polls and ``functions`` broadcasts) each device has been
+    missing, so pruning is debounced: a device must be absent from
+    ``STALE_DEVICE_PRUNE_MISSES`` adoptions before it is removed. A single
     partial poll (which the gateway occasionally returns, notably right after a
     reload) therefore no longer destroys a live device's entities.
     """
@@ -283,7 +288,7 @@ def _make_stale_device_pruner(
             # user otherwise discovers by noticing something has silently gone.
             _LOGGER.warning(
                 "Jung Home: removing device %s (%s) — the gateway has not "
-                "reported it for %s consecutive polls. If it is still installed, "
+                "listed it in %s consecutive device lists. If it is still installed, "
                 "check that it is reachable; it will be re-added when the gateway "
                 "reports it again",
                 device_entry.name or device_entry.id,

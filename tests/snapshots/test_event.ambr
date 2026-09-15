@@ -9,6 +9,9 @@
       <EventEntityCapabilityAttribute.EVENT_TYPES: 'event_types'>: list([
         'pressed',
         'depressed',
+        'click',
+        'hold_start',
+        'hold_end',
       ]),
     }),
     'config_entry_id': <ANY>,
@@ -49,6 +52,9 @@
       <EventEntityCapabilityAttribute.EVENT_TYPES: 'event_types'>: list([
         'pressed',
         'depressed',
+        'click',
+        'hold_start',
+        'hold_end',
       ]),
       <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Button A Down',
     }),
@@ -70,6 +76,9 @@
       <EventEntityCapabilityAttribute.EVENT_TYPES: 'event_types'>: list([
         'pressed',
         'depressed',
+        'click',
+        'hold_start',
+        'hold_end',
       ]),
     }),
     'config_entry_id': <ANY>,
@@ -110,6 +119,9 @@
       <EventEntityCapabilityAttribute.EVENT_TYPES: 'event_types'>: list([
         'pressed',
         'depressed',
+        'click',
+        'hold_start',
+        'hold_end',
       ]),
       <EntityStateAttribute.FRIENDLY_NAME: 'friendly_name'>: 'Button A Up',
     }),

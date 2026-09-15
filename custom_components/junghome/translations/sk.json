@@ -87,10 +87,12 @@
         "description": "Interval dopytovania určuje, ako často sa brána znova načítava cez REST — živé aktualizácie naďalej prichádzajú cez WebSocket, dlhší interval teda predovšetkým znižuje zaťaženie brány. Vyberte všetky žalúzie, ktorých poloha sa hlási obrátene, napríklad markízy. Ich poloha sa prevráti, takže úplne zatvorené sa zobrazí ako 0 percent (zatvorené) a úplne otvorené ako 100 percent (otvorené). Rolety a žalúzie nechajte nevybrané.",
         "data": {
           "poll_interval": "Interval dopytovania (sekundy)",
-          "inverted_covers": "Obrátené žalúzie (markízy)"
+          "inverted_covers": "Obrátené žalúzie (markízy)",
+          "suppress_duplicate_presses": "Ignorovať zdvojené stlačenia tlačidiel"
         },
         "data_description": {
-          "poll_interval": "Od 30 do 3600 sekúnd (predvolene 60)."
+          "poll_interval": "Od 30 do 3600 sekúnd (predvolene 60).",
+          "suppress_duplicate_presses": "Aktuálny firmvér zariadení JUNG hlási každé stlačenie dvakrát. Ak je zapnuté, stlačenie rovnakého tlačidla do 1,2 sekundy po kliknutí sa ignoruje, takže každé stlačenie spustí akciu len raz. Vypnite iba vtedy, keď vaše tlačidlá hlásia každé stlačenie raz (starší firmvér zariadenia) a potrebujete stlačenia s odstupom kratším ako 1,2 sekundy, napríklad dvojklik."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "stlačené",
-      "depressed": "uvoľnené"
+      "depressed": "uvoľnené",
+      "click": "krátko stlačené",
+      "hold_start": "podržané (začiatok)",
+      "hold_end": "podržané (koniec)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Nadol" },
       "press": { "name": "Stlačenie" }
     },
+    "sensor": {
+      "power": { "name": "Výkon" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Napätie" },
+      "current": { "name": "Prúd" },
+      "frequency": { "name": "Frekvencia" },
+      "temperature": { "name": "Teplota" },
+      "illuminance": { "name": "Osvetlenie" },
+      "humidity": { "name": "Vlhkosť" }
+    },
     "switch": {
       "status_led": { "name": "Stavová LED" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Bránu Jung Home sa nepodarilo kontaktovať na odoslanie príkazu; prebieha opätovné pripájanie. Skúste to o chvíľu znova."
+    },
+    "command_rejected": {
+      "message": "Brána Jung Home odmietla príkaz: {error}"
     },
     "command_timeout": {
       "message": "Brána Jung Home nepotvrdila príkaz včas."

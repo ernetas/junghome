@@ -87,10 +87,12 @@
         "description": "Yoklama aralığı, ağ geçidinin REST üzerinden ne sıklıkta yeniden okunacağını belirler — canlı güncellemeler WebSocket üzerinden gelmeye devam eder, bu nedenle daha uzun bir aralık esas olarak ağ geçidi yükünü azaltır. Konumu ters bildirilen panjurları seçin, örneğin tenteler. Konumları ters çevrilir; böylece tamamen kapalı yüzde 0 (kapalı), tamamen açık ise yüzde 100 (açık) olarak görünür. Stor perdeleri ve jaluzileri seçili bırakmayın.",
         "data": {
           "poll_interval": "Yoklama aralığı (saniye)",
-          "inverted_covers": "Ters panjurlar (tenteler)"
+          "inverted_covers": "Ters panjurlar (tenteler)",
+          "suppress_duplicate_presses": "Yinelenen düğme basışlarını yok say"
         },
         "data_description": {
-          "poll_interval": "30 ile 3600 saniye arasında (varsayılan 60)."
+          "poll_interval": "30 ile 3600 saniye arasında (varsayılan 60).",
+          "suppress_duplicate_presses": "JUNG cihazlarının güncel donanım yazılımı her basışı iki kez bildirir. Etkinleştirildiğinde, bir tıklamadan sonraki 1,2 saniye içinde aynı düğmeye yapılan basış yok sayılır; böylece her basış yalnızca bir kez tetiklenir. Bunu yalnızca düğmeleriniz her basışı bir kez bildiriyorsa (eski cihaz donanım yazılımı) ve 1,2 saniyeden kısa aralıklarla basışlara, örneğin çift tıklamaya ihtiyacınız varsa kapatın."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "basıldı",
-      "depressed": "bırakıldı"
+      "depressed": "bırakıldı",
+      "click": "tıklandı",
+      "hold_start": "basılı tutuldu (başlangıç)",
+      "hold_end": "basılı tutuldu (bitiş)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Aşağı" },
       "press": { "name": "Basma" }
     },
+    "sensor": {
+      "power": { "name": "Güç" },
+      "energy": { "name": "Enerji" },
+      "voltage": { "name": "Gerilim" },
+      "current": { "name": "Akım" },
+      "frequency": { "name": "Frekans" },
+      "temperature": { "name": "Sıcaklık" },
+      "illuminance": { "name": "Aydınlık" },
+      "humidity": { "name": "Nem" }
+    },
     "switch": {
       "status_led": { "name": "Durum LED'i" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Komutu göndermek için Jung Home ağ geçidine ulaşılamadı; yeniden bağlanıyor. Birazdan tekrar deneyin."
+    },
+    "command_rejected": {
+      "message": "Jung Home ağ geçidi komutu reddetti: {error}"
     },
     "command_timeout": {
       "message": "Jung Home ağ geçidi komutu zamanında onaylamadı."

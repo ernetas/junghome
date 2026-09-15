@@ -87,10 +87,12 @@
         "description": "O intervalo de consulta define com que frequência o gateway é relido via REST — as atualizações ao vivo continuam chegando pelo WebSocket, então um intervalo maior reduz principalmente a carga do gateway. Selecione as persianas cuja posição é informada de forma invertida, como os toldos. A posição delas é invertida para que totalmente fechada apareça como 0 por cento (fechada) e totalmente aberta como 100 por cento (aberta). Deixe as persianas de enrolar e as venezianas sem seleção.",
         "data": {
           "poll_interval": "Intervalo de consulta (segundos)",
-          "inverted_covers": "Persianas invertidas (toldos)"
+          "inverted_covers": "Persianas invertidas (toldos)",
+          "suppress_duplicate_presses": "Ignorar pressionamentos duplicados"
         },
         "data_description": {
-          "poll_interval": "Entre 30 e 3600 segundos (60 por padrão)."
+          "poll_interval": "Entre 30 e 3600 segundos (60 por padrão).",
+          "suppress_duplicate_presses": "O firmware atual dos dispositivos JUNG relata cada toque duas vezes. Quando ativado, um pressionamento do mesmo botão em até 1,2 segundos após um clique é ignorado, de modo que cada toque dispara uma só vez. Desative apenas se seus botões relatam cada toque uma vez (firmware de dispositivo mais antigo) e você precisa de pressionamentos com menos de 1,2 segundos de intervalo, por exemplo cliques duplos."
         }
       }
     }
@@ -103,7 +105,10 @@
     },
     "trigger_subtype": {
       "pressed": "pressionado",
-      "depressed": "solto"
+      "depressed": "solto",
+      "click": "clicado",
+      "hold_start": "mantido pressionado (início)",
+      "hold_end": "mantido pressionado (fim)"
     }
   },
   "entity": {
@@ -126,6 +131,16 @@
       "down": { "name": "Para baixo" },
       "press": { "name": "Pressionar" }
     },
+    "sensor": {
+      "power": { "name": "Potência" },
+      "energy": { "name": "Energia" },
+      "voltage": { "name": "Tensão" },
+      "current": { "name": "Corrente" },
+      "frequency": { "name": "Frequência" },
+      "temperature": { "name": "Temperatura" },
+      "illuminance": { "name": "Iluminância" },
+      "humidity": { "name": "Umidade" }
+    },
     "switch": {
       "status_led": { "name": "LED de status" }
     }
@@ -139,6 +154,9 @@
     },
     "cannot_send": {
       "message": "Não foi possível alcançar o gateway Jung Home para enviar o comando; ele está se reconectando. Tente novamente em instantes."
+    },
+    "command_rejected": {
+      "message": "O gateway Jung Home rejeitou o comando: {error}"
     },
     "command_timeout": {
       "message": "O gateway Jung Home não confirmou o comando a tempo."

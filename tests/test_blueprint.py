@@ -10,8 +10,14 @@ from pathlib import Path
 
 import pytest
 import yaml
+from homeassistant.components.automation.config import (
+    AUTOMATION_BLUEPRINT_SCHEMA,
+    async_validate_config_item,
+)
+from homeassistant.components.blueprint.models import Blueprint, BlueprintInputs
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.template import Template
+from homeassistant.util.yaml import load_yaml_dict
 
 _BLUEPRINT = (
     Path(__file__).parent.parent
@@ -42,20 +48,71 @@ def blueprint_fixture() -> dict:
 
 
 def test_blueprint_declares_the_expected_inputs(blueprint: dict) -> None:
-    """The inputs the README and docs tell users to fill in are all present."""
+    """The inputs the README and docs tell users to fill in are all present.
+
+    Every input has a default (the entity list aside), so automations created
+    from the previous revision — which had a `hold_time` and no
+    `legacy_double_click` — keep loading: Home Assistant only rejects a
+    *missing* input, never a stale one.
+    """
     assert blueprint["blueprint"]["domain"] == "automation"
-    assert set(blueprint["blueprint"]["input"]) == {
+    inputs = blueprint["blueprint"]["input"]
+    assert set(inputs) == {
         "button",
-        "hold_time",
-        "double_click_window",
         "single_action",
-        "double_action",
         "hold_action",
+        "legacy_double_click",
+        "double_click_window",
+        "double_action",
     }
-    # `mode: single` + silent max_exceeded is what stops a second press
-    # re-entering the gesture state machine mid-run.
+    assert all("default" in spec for name, spec in inputs.items() if name != "button")
+    # Double-click detection is the old-firmware path and must stay opt-in.
+    assert inputs["legacy_double_click"]["default"] is False
+    # `mode: single` + silent max_exceeded is what lets the legacy path's
+    # wait_for_trigger catch the second click instead of a second run.
     assert blueprint["mode"] == "single"
     assert blueprint["max_exceeded"] == "silent"
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {"single_action": [{"action": "light.toggle"}]},
+        {"hold_action": [{"action": "light.toggle"}]},
+        {"legacy_double_click": True, "double_action": [{"action": "light.toggle"}]},
+    ],
+    ids=["click", "hold", "legacy_double"],
+)
+async def test_blueprint_substitutes_into_a_valid_automation(
+    hass: HomeAssistant, inputs: dict
+) -> None:
+    """The blueprint, with inputs filled in, is an automation HA accepts.
+
+    Loaded through Home Assistant's own blueprint machinery and validated
+    with the automation config validator (which raises on an invalid
+    trigger, condition or action) — the same path the UI's "use blueprint"
+    flow takes, so a typo in a `!input` reference or a malformed `choose`
+    cannot ship.
+    """
+    blueprint = Blueprint(
+        load_yaml_dict(str(_BLUEPRINT)),
+        expected_domain="automation",
+        path="junghome/button_gestures.yaml",
+        schema=AUTOMATION_BLUEPRINT_SCHEMA,
+    )
+    filled = BlueprintInputs(
+        blueprint,
+        {
+            "alias": "probe",
+            "use_blueprint": {
+                "path": "junghome/button_gestures.yaml",
+                "input": {"button": ["event.button_a_up"], **inputs},
+            },
+        },
+    )
+    filled.validate()
+    config = await async_validate_config_item(hass, "probe", filled.async_substitute())
+    assert config is not None
 
 
 def _render(hass: HomeAssistant, template: str, **variables: object) -> bool:
@@ -67,128 +124,142 @@ def _event(event_type: str, stamp: str = "2026-08-01T12:00:00+00:00") -> State:
     return State("event.button_a_up", stamp, {"event_type": event_type})
 
 
-async def test_press_condition_fires_on_a_real_press(
-    hass: HomeAssistant, blueprint: dict
+@pytest.mark.parametrize("gesture", ["click", "hold_start"])
+async def test_gesture_condition_fires_on_a_real_gesture(
+    hass: HomeAssistant, blueprint: dict, gesture: str
 ) -> None:
-    """A genuine press (timestamp -> timestamp) starts the gesture."""
+    """A genuine click or hold_start (timestamp -> timestamp) starts a run."""
     condition = blueprint["conditions"][0]["value_template"]
     trigger = {
-        "from_state": _event("depressed", "2026-08-01T11:59:59+00:00"),
-        "to_state": _event("pressed"),
+        "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
+        "to_state": _event(gesture),
     }
     assert _render(hass, condition, trigger=trigger) is True
 
 
-async def test_press_condition_ignores_recovery_from_unavailable(
-    hass: HomeAssistant, blueprint: dict
+@pytest.mark.parametrize("gesture", ["click", "hold_start"])
+async def test_gesture_condition_ignores_recovery_from_unavailable(
+    hass: HomeAssistant, blueprint: dict, gesture: str
 ) -> None:
     """The `unavailable -> restored` transition must not fire a gesture.
 
     Event entities restore their last state, so a restart, an entry reload or a
-    recovered poll re-presents the stored `event_type`. When that stored value is
-    `pressed` — which is exactly what a socket drop between press and release
-    leaves behind — every single recovery ran the user's action.
+    recovered poll re-presents the stored `event_type`. When that stored value
+    is a gesture, every recovery would otherwise run the user's action.
     """
     condition = blueprint["conditions"][0]["value_template"]
     for stale in ("unavailable", "unknown"):
         trigger = {
             "from_state": State("event.button_a_up", stale),
-            "to_state": _event("pressed"),
+            "to_state": _event(gesture),
         }
         assert _render(hass, condition, trigger=trigger) is False, stale
 
 
-async def test_press_condition_ignores_a_release(
-    hass: HomeAssistant, blueprint: dict
+@pytest.mark.parametrize("edge", ["pressed", "depressed", "hold_end"])
+async def test_gesture_condition_ignores_raw_edges_and_hold_end(
+    hass: HomeAssistant, blueprint: dict, edge: str
 ) -> None:
-    """Only `pressed` opens a gesture; the release is handled inside it."""
+    """Only the two gestures the blueprint maps to actions start a run.
+
+    The raw edges still fire on the entity for other automations; `hold_end`
+    has no action here. Reacting to them would double up every gesture.
+    """
     condition = blueprint["conditions"][0]["value_template"]
     trigger = {
-        "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
-        "to_state": _event("depressed"),
+        "from_state": _event("click", "2026-08-01T11:59:59+00:00"),
+        "to_state": _event(edge),
     }
     assert _render(hass, condition, trigger=trigger) is False
 
 
-async def test_mid_gesture_wait_ignores_recovery(
+async def test_hold_start_runs_the_hold_action_and_click_runs_the_click_action(
     hass: HomeAssistant, blueprint: dict
 ) -> None:
-    """A recovery inside the hold window is not the second press of a double."""
-    evt = blueprint["actions"][1]["variables"]["evt"]
-    recovery = {
-        "trigger": {
-            "from_state": State("event.button_a_up", "unavailable"),
-            "to_state": _event("pressed"),
-        }
-    }
-    assert _render(hass, evt, wait=recovery) is None
+    """The gesture branches map straight onto the integration's events."""
+    gesture_var = blueprint["actions"][0]["variables"]["gesture"]
+    assert (
+        _render(hass, gesture_var, trigger={"to_state": _event("hold_start")})
+        == "hold_start"
+    )
+    choose = blueprint["actions"][1]
+    hold_branch, legacy_branch = choose["choose"]
+    assert _render(hass, hold_branch["conditions"][0], gesture="hold_start") is True
+    assert _render(hass, hold_branch["conditions"][0], gesture="click") is False
+    assert hold_branch["sequence"][0]["default"] == "!input hold_action"
+    # A click with the legacy path off falls through to the click action
+    # immediately — no window, no wait.
+    assert (
+        _render(
+            hass,
+            legacy_branch["conditions"][0],
+            gesture="click",
+            legacy_double_click=False,
+        )
+        is False
+    )
+    assert choose["default"][0]["default"] == "!input single_action"
 
-    real_second_press = {
-        "trigger": {
-            "from_state": _event("depressed", "2026-08-01T11:59:59+00:00"),
-            "to_state": _event("pressed"),
-        }
-    }
-    assert _render(hass, evt, wait=real_second_press) == "pressed"
 
-
-async def test_mid_gesture_drop_aborts_instead_of_firing_single(
+async def test_legacy_double_click_path_is_opt_in_and_guarded(
     hass: HomeAssistant, blueprint: dict
 ) -> None:
-    """The entity dropping to unavailable mid-gesture aborts the automation.
+    """Old-firmware double-click detection waits for a second real click.
 
-    A WebSocket drop inside the hold window used to read as a release (the
-    unavailable state carries no event_type), firing a phantom SINGLE after
-    the double-click window — even while the user was still holding.
+    Entered only for a click with the option on; the second-click check
+    applies the same real-previous-state guard as the trigger condition, so a
+    recovery inside the window cannot fake a double.
     """
-    aborted = blueprint["actions"][1]["variables"]["aborted"]
-    # The abort branch must be the first choose branch, with a stop action.
-    first_branch = blueprint["actions"][2]["choose"][0]
-    assert first_branch["conditions"] == ["{{ aborted }}"]
-    assert "stop" in first_branch["sequence"][0]
+    legacy_branch = blueprint["actions"][1]["choose"][1]
+    assert (
+        _render(
+            hass,
+            legacy_branch["conditions"][0],
+            gesture="click",
+            legacy_double_click=True,
+        )
+        is True
+    )
+    assert (
+        _render(
+            hass,
+            legacy_branch["conditions"][0],
+            gesture="hold_start",
+            legacy_double_click=True,
+        )
+        is False
+    )
+    wait, decide = legacy_branch["sequence"]
+    assert wait["wait_for_trigger"][0]["entity_id"] == "!input button"
+    assert wait["timeout"] == {"milliseconds": "!input double_click_window"}
+    assert wait["continue_on_timeout"] is True
 
-    drop = {
-        "trigger": {
-            "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
-            "to_state": State("event.button_a_up", "unavailable"),
-        }
-    }
-    assert _render(hass, aborted, wait=drop) is True
-
-    # A real release, a real second press, and a hold-window timeout all
-    # continue the gesture machine.
-    release = {
-        "trigger": {
-            "from_state": _event("pressed", "2026-08-01T11:59:59+00:00"),
-            "to_state": _event("depressed"),
-        }
-    }
-    assert _render(hass, aborted, wait=release) is False
-    assert _render(hass, aborted, wait={"trigger": None}) is False
-
-
-async def test_slow_double_wait_ignores_recovery(
-    hass: HomeAssistant, blueprint: dict
-) -> None:
-    """The same guard applies to the second (slow double-click) wait."""
-    default_branch = blueprint["actions"][2]["default"]
-    condition = default_branch[1]["choose"][0]["conditions"][0]
+    condition = decide["choose"][0]["conditions"][0]
+    assert decide["choose"][0]["sequence"][0]["default"] == "!input double_action"
+    assert decide["default"][0]["default"] == "!input single_action"
 
     recovery = {
         "trigger": {
             "from_state": State("event.button_a_up", "unavailable"),
-            "to_state": _event("pressed"),
+            "to_state": _event("click"),
         }
     }
     assert _render(hass, condition, wait=recovery) is False
-
     real = {
         "trigger": {
-            "from_state": _event("depressed", "2026-08-01T11:59:59+00:00"),
-            "to_state": _event("pressed"),
+            "from_state": _event("click", "2026-08-01T11:59:59+00:00"),
+            "to_state": _event("click"),
         }
     }
     assert _render(hass, condition, wait=real) is True
-
-    # Nothing arrived within the window -> SINGLE, not DOUBLE.
+    # A release edge or a hold inside the window is not a second click.
+    for other in ("depressed", "hold_start"):
+        not_a_click = {
+            "trigger": {
+                "from_state": _event("click", "2026-08-01T11:59:59+00:00"),
+                "to_state": _event(other),
+            }
+        }
+        assert _render(hass, condition, wait=not_a_click) is False, other
+    # Nothing arrived within the window -> CLICK, not DOUBLE.
     assert _render(hass, condition, wait={"trigger": None}) is False

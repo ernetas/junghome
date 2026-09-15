@@ -1,45 +1,156 @@
-"""RockerSwitch event platform tests for Jung Home."""
+"""RockerSwitch event platform tests for Jung Home.
 
-from unittest.mock import patch
+The gesture tests drive the fixture's rocker (Button A: ``idrock1-00c`` is
+``up_request``, ``idrock1-00d`` is ``down_request``) with the edge sequences the
+gateway actually emits (docs/gateway-websocket.md, rocker section) on a frozen
+clock, and read the events back off the bus the device triggers listen to —
+so every assertion covers the entity event, the bus event and the timing.
+"""
 
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+import logging
+from copy import deepcopy
+from datetime import timedelta
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from freezegun.api import FrozenDateTimeFactory
+from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
     snapshot_platform,
 )
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.junghome.event import JungHomeEventEntity
-from tests.conftest import bare_coordinator
+from custom_components.junghome.const import (
+    CONF_SUPPRESS_DUPLICATE_PRESSES,
+    DOMAIN,
+    EVENT_BUTTON_ACTION,
+)
+from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.event import ButtonGestureTracker, JungHomeEventEntity
+from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket, bare_coordinator
+
+UP = "idrock1-00c"
+DOWN = "idrock1-00d"
+_KEYS = {UP: "up_request", DOWN: "down_request"}
+
+# The labelled capture's shape of one tap on current device firmware: the
+# gateway's synthesised release ~0.4 s after the press, and the firmware's
+# second copy of the whole pair 0.11-1.03 s after that release.
+TAP_PULSE = 0.4
+COPY_GAP = 0.5
+
+
+def _push(coordinator: JungHomeDataUpdateCoordinator, dp_id: str, value: str) -> None:
+    """Push one raw edge (``"1"`` press / ``"0"`` release) for a rocker side."""
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {"id": dp_id, "values": [{"key": _KEYS[dp_id], "value": value}]},
+        }
+    )
+
+
+class _Rocker:
+    """Drive the fixture rocker on a frozen clock."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        freezer: FrozenDateTimeFactory,
+        coordinator: JungHomeDataUpdateCoordinator,
+    ) -> None:
+        self.hass, self.freezer, self.coordinator = hass, freezer, coordinator
+
+    async def advance(self, seconds: float) -> None:
+        """Move the frozen clock on and run the timers that came due."""
+        self.freezer.tick(timedelta(seconds=seconds))
+        async_fire_time_changed(self.hass)
+        await self.hass.async_block_till_done()
+
+    async def edge(self, dp_id: str, value: str, *, after: float = 0) -> None:
+        """Advance the clock by ``after`` seconds, then push one edge."""
+        if after:
+            await self.advance(after)
+        _push(self.coordinator, dp_id, value)
+        await self.hass.async_block_till_done()
+
+    async def tap(self, first: str = UP, copy: str = UP) -> None:
+        """One physical tap as current firmware reports it: two pairs.
+
+        ``copy`` is the side the second pair lands on — the same side on a
+        rocker half, the other side on a single-key element.
+        """
+        await self.edge(first, "1")
+        await self.edge(first, "0", after=TAP_PULSE)
+        await self.edge(copy, "1", after=COPY_GAP)
+        await self.edge(copy, "0", after=TAP_PULSE)
+
+
+@pytest.fixture
+def rocker(
+    hass: HomeAssistant, init_integration, freezer: FrozenDateTimeFactory
+) -> _Rocker:
+    """The fixture rocker of a freshly set-up integration, on a frozen clock."""
+    return _Rocker(hass, freezer, init_integration.runtime_data)
+
+
+@pytest.fixture
+def bus_events(hass: HomeAssistant) -> list[tuple[str, str]]:
+    """Collect every button bus event as ``(side, event_type)``."""
+    events: list[tuple[str, str]] = []
+
+    # A plain function would be run in the executor, losing the order the
+    # events were fired in; a callback listener runs inline, in order.
+    @callback
+    def _record(event: Event) -> None:
+        events.append((event.data["type"], event.data["subtype"]))
+
+    hass.bus.async_listen(EVENT_BUTTON_ACTION, _record)
+    return events
+
+
+async def _setup_with_options(hass: HomeAssistant, options: dict) -> MockConfigEntry:
+    """Set the integration up like ``init_integration``, with entry options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        options=options,
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=deepcopy(PRISTINE_DEVICES)),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
 
 
 async def test_event_pressed_and_depressed(
-    hass: HomeAssistant, init_integration
+    hass: HomeAssistant, init_integration, bus_events
 ) -> None:
+    """The raw edges still fire, and a short press completes as a click."""
     coordinator = init_integration.runtime_data
-    coordinator._handle_websocket_message(
-        {
-            "type": "datapoint",
-            "data": {
-                "id": "idrock1-00c",
-                "values": [{"key": "up_request", "value": "1"}],
-            },
-        }
-    )
+    _push(coordinator, UP, "1")
     await hass.async_block_till_done()
     assert hass.states.get("event.button_a_up").attributes["event_type"] == "pressed"
-    coordinator._handle_websocket_message(
-        {
-            "type": "datapoint",
-            "data": {
-                "id": "idrock1-00c",
-                "values": [{"key": "up_request", "value": "0"}],
-            },
-        }
-    )
+    _push(coordinator, UP, "0")
     await hass.async_block_till_done()
-    assert hass.states.get("event.button_a_up").attributes["event_type"] == "depressed"
+    # The release fires the edge first, then the gesture it completed — so
+    # the entity's last event is the click, and the bus saw both in order.
+    assert hass.states.get("event.button_a_up").attributes["event_type"] == "click"
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
 
 
 async def test_event_fires_on_each_push_not_on_rest_reread(
@@ -68,6 +179,240 @@ async def test_event_fires_on_each_push_not_on_rest_reread(
         coordinator.async_set_updated_data(coordinator.data)
         await hass.async_block_till_done()
         assert mock_trigger.call_count == 2
+
+
+async def test_tap_reported_twice_fires_one_click(
+    rocker: _Rocker, bus_events, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One tap = two press/release pairs on the wire = exactly one click.
+
+    The second pair is device firmware 2.2.0.x's copy of the first; it lands
+    within the 1.2 s window after the click's release and is dropped whole —
+    no second ``pressed``/``depressed`` either, so hand-written edge
+    automations and device triggers see the tap once too.
+    """
+    caplog.set_level(logging.DEBUG, logger="custom_components.junghome.event")
+    await rocker.tap()
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+    assert "Dropping duplicate press on event.button_a_up" in caplog.text
+
+
+async def test_two_taps_two_seconds_apart_fire_two_clicks(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A genuine second tap outside the window is a second click, copy dropped."""
+    await rocker.tap()
+    await rocker.advance(2.0)
+    await rocker.tap()
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * 2
+
+
+async def test_hold_fires_hold_start_by_timer_and_hold_end_at_release(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A press outlasting the threshold is a hold: no click, ever.
+
+    ``hold_start`` comes from the timer at exactly 1.0 s — not earlier — and
+    ``hold_end`` follows the raw release edge.
+    """
+    await rocker.edge(UP, "1")
+    await rocker.advance(0.4)
+    assert bus_events == [("up", "pressed")]
+    await rocker.advance(0.6)
+    assert bus_events == [("up", "pressed"), ("up", "hold_start")]
+    assert hass.states.get("event.button_a_up").attributes["event_type"] == (
+        "hold_start"
+    )
+    # A ~3 s hold, as captured; the release ends it.
+    await rocker.edge(UP, "0", after=1.8)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
+
+
+async def test_key_element_copy_on_the_other_side_is_suppressed(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """On a single-key element the copy alternates sides — still one click.
+
+    The gateway toggles the reported side on every reception for key
+    elements, so the tap's two pairs land on ``up`` then ``down``. The window
+    is per device, so the ``down`` pair is recognised as the copy; a
+    per-entity window would have let it through as a second click.
+    """
+    await rocker.tap(first=UP, copy=DOWN)
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+
+
+async def test_suppression_disabled_lets_both_pairs_through(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, bus_events
+) -> None:
+    """With the option off every pair is its own click — the old behaviour.
+
+    For older device firmware that reports each tap once, where a user
+    double-taps faster than the 1.2 s window would allow.
+    """
+    entry = await _setup_with_options(hass, {CONF_SUPPRESS_DUPLICATE_PRESSES: False})
+    await _Rocker(hass, freezer, entry.runtime_data).tap()
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * 2
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_hold_shortly_after_a_click_is_not_dropped(
+    rocker: _Rocker, bus_events, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A press inside the window that is still down at the threshold is a hold.
+
+    Only a ~0.4 s copy is a duplicate. Click-then-hold within 1.2 s (turn on,
+    then dim) must not lose the hold: its ``pressed`` edge is reinstated at
+    the threshold, right before ``hold_start``, and the release ends it.
+    """
+    caplog.set_level(logging.DEBUG, logger="custom_components.junghome.event")
+    await rocker.edge(UP, "1")
+    await rocker.edge(UP, "0", after=TAP_PULSE)
+    await rocker.edge(UP, "1", after=0.6)
+    tap = [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+    assert bus_events == tap  # the press is on probation: nothing yet
+    await rocker.advance(1.0)
+    assert bus_events == [*tap, ("up", "pressed"), ("up", "hold_start")]
+    assert "outlasted the duplicate window" in caplog.text
+    await rocker.edge(UP, "0", after=1.5)
+    assert bus_events == [
+        *tap,
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
+
+
+async def test_press_while_down_restarts_and_closes_an_open_hold(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A press on a side that never released restarts the gesture.
+
+    By the gateway code a single-key element's hold leaves one side down for
+    good. The next press on it must not be measured from that stale press
+    (which would turn a tap into a ``hold_end``), and the hold it interrupts
+    gets the ``hold_end`` it is owed, so the pair stays balanced.
+    """
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    assert bus_events == [("up", "pressed"), ("up", "hold_start")]
+    # No release ever arrives; a fresh tap on the same side much later.
+    await rocker.edge(UP, "1", after=60)
+    await rocker.edge(UP, "0", after=TAP_PULSE)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "hold_end"),
+        ("up", "pressed"),
+        ("up", "depressed"),
+        ("up", "click"),
+    ]
+
+
+async def test_release_without_a_press_is_an_edge_only(
+    hass: HomeAssistant, init_integration, bus_events
+) -> None:
+    """A stray release (the gateway repeats a value on a mode change) is no click."""
+    _push(init_integration.runtime_data, UP, "0")
+    await hass.async_block_till_done()
+    assert bus_events == [("up", "depressed")]
+
+
+async def test_hold_timer_is_cancelled_on_unload(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    bus_events,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unloading mid-press must cancel the hold timer, not fire on a dead entity."""
+    entry = await _setup_with_options(hass, {})
+    rocker = _Rocker(hass, freezer, entry.runtime_data)
+    await rocker.edge(UP, "1")
+    assert bus_events == [("up", "pressed")]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    await rocker.advance(1.5)
+    assert bus_events == [("up", "pressed")]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+async def test_unavailable_mid_press_abandons_the_gesture(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A press in flight when the socket drops completes no gesture.
+
+    Deaf, the entity cannot see the release: the hold timer must not turn a
+    tap whose release was lost into a ``hold_start``. Once the socket is back
+    the next tap is a normal click.
+    """
+    coordinator = rocker.coordinator
+    await rocker.edge(UP, "1")
+    coordinator.ws_connected = False
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    assert hass.states.get("event.button_a_up").state == "unavailable"
+    await rocker.advance(1.5)
+    assert bus_events == [("up", "pressed")]
+
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    await rocker.edge(UP, "1")
+    await rocker.edge(UP, "0", after=TAP_PULSE)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "pressed"),
+        ("up", "depressed"),
+        ("up", "click"),
+    ]
+
+
+async def test_hold_timer_landing_while_unavailable_fires_nothing(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """The timer itself checks availability, for the drop-then-timer ordering."""
+    coordinator = rocker.coordinator
+    await rocker.edge(UP, "1")
+    # The socket flag flips before its listener dispatch has run.
+    coordinator.ws_connected = False
+    await rocker.advance(1.0)
+    assert bus_events == [("up", "pressed")]
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await rocker.edge(UP, "0", after=1.0)
+    # Abandoned: the release is an edge, not the end of anything.
+    assert bus_events == [("up", "pressed"), ("up", "depressed")]
+
+
+async def test_hold_end_is_owed_across_an_outage(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A hold interrupted by a drop still gets its ``hold_end`` at the release."""
+    coordinator = rocker.coordinator
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    coordinator.ws_connected = False
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    # Still holding when the socket came back; the release now arrives.
+    await rocker.edge(UP, "0", after=1.0)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
 
 
 async def test_event_unavailable_while_websocket_down(
@@ -125,22 +470,24 @@ async def test_event_unavailable_while_websocket_down(
     assert hass.states.get("event.button_a_up").attributes["event_type"] == "depressed"
 
 
-async def test_event_unknown_datapoint_type_uses_name(hass: HomeAssistant) -> None:
-    """A datapoint type with no translation key falls back to a plain name."""
+def _bare_entity(hass: HomeAssistant, dp_type: str) -> JungHomeEventEntity:
     coordinator = bare_coordinator(hass)
     device = {"id": "d", "type": "RockerSwitch", "label": "Btn", "datapoints": []}
-    datapoint = {"id": "d-x", "type": "weird_request", "values": []}
-    entity = JungHomeEventEntity(coordinator, device, datapoint)
+    datapoint = {"id": "d-x", "type": dp_type, "values": []}
+    tracker = ButtonGestureTracker(suppress_duplicates=True)
+    return JungHomeEventEntity(coordinator, device, datapoint, tracker)
+
+
+async def test_event_unknown_datapoint_type_uses_name(hass: HomeAssistant) -> None:
+    """A datapoint type with no translation key falls back to a plain name."""
+    entity = _bare_entity(hass, "weird_request")
     # No matching translation key -> _attr_name is set to the raw dp type.
     assert entity._attr_name == "weird_request"
 
 
 async def test_event_handle_update_missing_device_noops(hass: HomeAssistant) -> None:
     """_handle_coordinator_update returns early when the device is gone."""
-    coordinator = bare_coordinator(hass)
-    device = {"id": "gone", "type": "RockerSwitch", "label": "G", "datapoints": []}
-    datapoint = {"id": "gone-c", "type": "up_request", "values": []}
-    entity = JungHomeEventEntity(coordinator, device, datapoint)
+    entity = _bare_entity(hass, "up_request")
     # coordinator.data is [] so the device lookup yields None -> early return.
     with patch.object(entity, "async_write_ha_state") as write_state:
         entity._handle_coordinator_update()  # must not raise
@@ -155,10 +502,7 @@ async def test_fire_bus_event_skipped_without_device_entry(
     A device trigger is keyed on the registry device id, so an event without
     one would match nothing; the early return must not raise either.
     """
-    coordinator = bare_coordinator(hass)
-    device = {"id": "d", "type": "RockerSwitch", "label": "Btn", "datapoints": []}
-    datapoint = {"id": "d-c", "type": "up_request", "values": []}
-    entity = JungHomeEventEntity(coordinator, device, datapoint)
+    entity = _bare_entity(hass, "up_request")
     entity.hass = hass
     fired: list[object] = []
     hass.bus.async_listen("junghome_button_action", fired.append)

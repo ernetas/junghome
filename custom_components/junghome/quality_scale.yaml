@@ -97,8 +97,11 @@ rules:
       entity is still actuable, it is only sorted out of the primary controls.
   entity-device-class: done
   entity-disabled-by-default:
-    status: exempt
-    comment: All exposed entities are useful by default; none are noisy.
+    status: done
+    comment: >-
+      Voltage, current and frequency quantities register disabled by default
+      (QUANTITY_DESCRIPTIONS in sensor.py); existing registrations are not
+      re-disabled.
   entity-translations: done
   exception-translations: done
   icon-translations: done
