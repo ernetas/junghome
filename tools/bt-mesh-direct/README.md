@@ -1,9 +1,31 @@
-# BT-Mesh direct — reference prototypes
+# BT-Mesh direct — reference prototypes (stale)
+
+> **Superseded — kept as a BGAPI reference only.** A working gateway-free
+> client exists in the Bluetooth-direct sibling project `junghome-bt-mesh`
+> (`jhmesh` + `custom_components/junghome_ble`): a Mesh Proxy client over a
+> plain BLE adapter or an ESPHome Bluetooth proxy, **no mesh chip needed**.
+> These sketches predate it and were never updated:
+>
+> - `junghome_mesh.py:43-46,90-107` still implements the gateway's **v2.0.0**
+>   send path — every command blasted 3 × at 15 ms spacing with staggered
+>   `delay_ms` (`RETRANSMISSIONS = 3`, `INTERVAL_MS = 15`). Current gateway
+>   firmware (v2.1.3) sends one acked Set; those config keys no longer exist.
+> - Colour temperature is hard-coded as Generic Level on element+1 with a
+>   fixed 2000–6000 K (`:47-49`). The real path is conditional (CTL
+>   Temperature when the device has one) and 2000–6000 is a middleware clamp.
+> - There is **no vendor-model path** (buttons, status LED, parameters) — the
+>   opcodes are now known (see the doc) but not implemented here.
+> - The ESP32 sketch (`esp32/junghome_mesh_esp32.c:14-16`) assumes running as
+>   a provisioner that imports the CDB and reconfigures nodes with their
+>   device keys; neither is needed — a proxy client with its own unicast
+>   address (outside the provisioners' ranges) and its own sequence counter
+>   operates the devices as they are.
+>
+> Read [../../docs/bt-mesh-direct.md](../../docs/bt-mesh-direct.md) for the
+> current protocol facts; it points to the sibling project for the client.
 
 Proof-of-concept code for controlling JUNG HOME devices **without the gateway**,
-by joining their Bluetooth Mesh network from your own radio. Read
-[../../docs/bt-mesh-direct.md](../../docs/bt-mesh-direct.md) first — it's the
-protocol spec these prototypes implement.
+by joining their Bluetooth Mesh network from your own radio.
 
 Both are **reference sketches**: they need real hardware and an already-provisioned
 node (NetKey/AppKey from the JUNG HOME app, AppKey bound to the client models).
@@ -46,9 +68,12 @@ spec apply. Most fiddly of the three (provisioner/CDB handling).
 ## Scope
 
 Standard SIG models (on/off, dimming, tunable white, blinds, sensors, scenes) are
-implemented/shown. The JUNG **vendor model** (`0x0527`) for rocker buttons, status
-LED and parameters is documented in the spec but left as a stub — it's the one
-part that needs further reverse engineering of the over-the-air opcodes.
+implemented/shown, with the caveats in the banner above. The JUNG **vendor
+property models** (`0x0527`) for rocker buttons, status LED and parameters are
+left as a stub here; their over-the-air opcodes are no longer unknown — the
+table is in the doc (Admin `C0–C5`, Manufacturer `C6–CB`, User `CC–D1`, each
+followed by `27 05`), confirmed on air by the sibling project, which also has
+the working implementation.
 
 ## Legal / interoperability note
 

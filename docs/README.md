@@ -5,17 +5,23 @@ integration. Sourced from a gateway microSD image (firmware/API 1.5.0) and the
 live local API. None of this is required to *use* the integration.
 
 - **[gateway-architecture.md](gateway-architecture.md)** — hardware, microSD
-  partition layout (sdc1–sdc4), the on-board services, the Bluetooth-Mesh stack,
-  and an analysis of self-hosting without the gateway.
+  partition layout (sdc1–sdc4), the on-board services, the Bluetooth-Mesh
+  stack, the gateway's own role on the mesh (an ordinary node `0x00DC`, not a
+  provisioner), and self-hosting without the gateway.
 - **[gateway-rest-api.md](gateway-rest-api.md)** — REST API: auth, the
   unauthenticated `/apidoc` spec endpoint, **client registration** (token), and
   the full endpoint list.
 - **[gateway-websocket.md](gateway-websocket.md)** — the WebSocket protocol: all
   message types (server→client and client→server) and command formats.
-- **[bt-mesh-direct.md](bt-mesh-direct.md)** — controlling devices over Bluetooth
-  Mesh **without the gateway**: the function→model map, send/receive protocol,
-  the JUNG vendor model, hardware options, and what keys you need. Prototypes in
-  [`../tools/bt-mesh-direct/`](../tools/bt-mesh-direct/).
+- **[bt-mesh-direct.md](bt-mesh-direct.md)** — **how the gateway talks to the
+  devices on the mesh**: the function→model map, send/receive protocol, the
+  JUNG vendor property models with their on-air opcodes, the gateway's own node
+  role, and what a gateway-free client needs (keys, own address, own sequence
+  counter). The **working gateway-free client** is the Bluetooth-direct sibling
+  project `junghome-bt-mesh` (a Mesh Proxy client over a plain BLE adapter or
+  an ESPHome Bluetooth proxy — no mesh chip); the sketches in
+  [`../tools/bt-mesh-direct/`](../tools/bt-mesh-direct/) are stale and kept for
+  reference only.
 - **[cross-repo-analysis.md](cross-repo-analysis.md)** — 2026-09-15 audit
   against the Bluetooth-direct sibling project and the firmware dump: the
   established mechanism of the double-reporting rockers, other settled
