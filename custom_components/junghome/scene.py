@@ -14,6 +14,7 @@ from homeassistant.components.scene import Scene as SceneEntity
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,8 +49,23 @@ async def async_setup_entry(
     warned_collisions: set[str] = set()
 
     async def _remove_scene(uid: str) -> None:
+        entity = entities[uid]
         try:
-            await entities[uid].async_remove()
+            # The registry entry has to go, not just the live entity: for an
+            # entity that is still registered, ``Entity.async_remove`` keeps its
+            # state as a "restored" *unavailable* placeholder (HA's contract for
+            # a registry entry that outlives its entity), which is how a scene
+            # deleted in the app used to linger forever. Same approach as HA's
+            # own dynamically-discovered platforms (mqtt, deconz): removing the
+            # registry entry makes HA remove the entity itself, and the
+            # registry's deleted-entity memory keeps the entity_id and user
+            # customisations, so a scene re-created under the same label comes
+            # back as the same entity. ``async_remove`` then joins that
+            # in-flight removal — or performs it when the entity was never
+            # registered — and awaiting it is what keeps the bookkeeping
+            # below accurate.
+            er.async_get(hass).async_remove(entity.entity_id)
+            await entity.async_remove(force_remove=True)
         finally:
             entities.pop(uid, None)
             removing.discard(uid)
@@ -100,8 +116,9 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-        # Drop entities whose scene no longer exists, so a deleted scene doesn't
-        # linger as an always-failing entity. The removal is an entry-scoped
+        # Drop entities whose scene no longer exists — state AND registry
+        # entry (see _remove_scene), so a deleted scene doesn't linger as a
+        # permanently unavailable entity. The removal is an entry-scoped
         # background task (cancelled on unload, exceptions tracked).
         for uid in list(entities):
             if uid not in current and uid not in removing:
