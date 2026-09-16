@@ -8,7 +8,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - `custom_components/junghome/` — the integration.
   - `__init__.py` — setup/unload, one-time stable-ID registry migrations,
     stale-device pruner, area auto-assignment, capability-change reload,
-    manual device delete, repair-issue withdrawal on entry removal.
+    manual device delete, repair-issue withdrawal and store deletion on
+    entry removal; loads the rename-following store before the first refresh.
   - `coordinator.py` — REST poll (default 60 s, options-configurable) +
     WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
@@ -17,7 +18,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
     enrichments read after the first refresh: node identities from the
     project export (`node_identities`) and device properties from the
     deprecated verbose device endpoint (`device_properties`: energy counters
-    re-read every 5 min, firmware revisions, reachability).
+    re-read every 5 min, firmware revisions, reachability). And rename
+    following (`follow_renames`, on every device-list adoption before the
+    listeners run): `function_anchors` (slug → `models.FunctionAnchor`:
+    function id, node MAC, element location), persisted in the entry's
+    `Store` (`function_anchors_store`), pairs a vanished label with a new one
+    on the same element and rewrites the registry in place.
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
@@ -297,7 +303,8 @@ instead of re-deriving:
   moved to another node in the app (7) or to swapped hardware (4 nodes out,
   4 in). Six devices were renamed in that window — the one event the
   label-keyed design turns into a new HA device (old one pruned, history and
-  customisations not carried over). The gateway *does* expose
+  customisations not carried over — **no longer**: renames are followed, next
+  bullet). The gateway *does* expose
   hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
   unicast / locations — tracker §3), but the label-keyed design stays.
   Don't reintroduce id-based identifiers. That export IS read at setup
@@ -314,7 +321,30 @@ instead of re-deriving:
   a relabelled function's new slug resolve to its OLD device by connection
   and merge (old entity live forever, pruner never fired — the b8
   regression). Never as an identifier. The identities (UUID/MAC/unicast) are
-  deliberately not redacted in diagnostics.
+  deliberately not redacted in diagnostics. The device's Bluetooth
+  connection is **replaced**, never added to, when the node behind a label
+  changes (a swap under the same name used to keep both addresses).
+- **Renames are followed, not replaced (2026-09-16).** A function renamed in
+  the app keeps its HA device: `coordinator.follow_renames` runs on every
+  device-list adoption *before* the listeners (so before discovery), and on
+  setup's second pass after the identities are read. It keeps
+  `function_anchors` (slug → function id + node MAC + element location,
+  `models.FunctionAnchor`, persisted per entry in
+  `.storage/junghome.<entry_id>.functions`) and treats a slug with no
+  registry device whose element carries a vanished slug's anchor as a
+  rename: the device identifier, every entity `unique_id` (prefix rewrite,
+  all-or-nothing after checking each target is free), the discovery `known`
+  sets and the `inverted_covers` option (which reloads the entry) are
+  rewritten in place; entity ids stay. The function id does not change on a
+  rename (it is `md5(UUID + location)`), which is the id-based half; MAC +
+  location pairs a rename combined with re-provisioning, but only at setup
+  (live, the new id has no identity yet — it becomes a new device).
+  Deliberately not followed: a label moved to another element (name reuse,
+  swaps — entities follow the name), colliding slugs, and a target
+  `unique_id` already taken (warned, left as a new device). The old contract
+  ("a relabel is a new device") survives only for those; the manual delete
+  and the pruner cover them. Tests: the "Rename following" section of
+  `tests/test_init.py`.
 - **Entry identity vs. entity identity are decoupled.** Entries are keyed
   (`unique_id`) on the gateway hardware serial when known (mDNS TXT
   `serial=`, or REST `config/parameter/system_serial`), and legacy entries
@@ -495,6 +525,19 @@ them without new evidence wastes a session.
   narrowing that mattered was already done in PR #133 (best-effort
   fetch/parse handlers); narrowing these three trades crash-risk for no
   diagnostic gain.
+- **Per-device availability is NOT derived from the verbose endpoint's
+  `statistics.reachable`** (closed 2026-09-16). That flag is per *state* and
+  means "the last request for this state was answered"
+  (`models/device-states.js:596-619`: true on any success, false after
+  `state_acceptable_request_fails` failed requests, which also resets the
+  value to `NaN`). Push buttons never answer requests for their key states,
+  so 13 of the network's 20 mains-powered buttons read "unreachable" while
+  working perfectly (probe of 2026-09-16; `hasBattery` was false on all 49
+  devices, so it is not a sleepy-node effect). For actuators the same
+  mechanism already reaches the integration for free: the reset writes
+  `"NaN"` into `/functions/` and every push, which the platforms show as
+  unknown (`const.py` `datapoint_value` note). Nothing the deprecated
+  endpoint adds is worth an availability rule that flags buttons.
 
 ## Maximum-effort review protocol
 
@@ -603,13 +646,6 @@ or "clean — nothing above P3 survived verification."
   and the captures (§5) that would close the remaining questions. Every bug
   and doc correction it raised has landed. Prefer it over re-deriving those
   facts.
-- **Verbose devices — per-device availability.** The energy sensor and the
-  firmware-aware suppression exemption landed 2026-09-16; what the endpoint
-  still offers is per-state `statistics.reachable` (kept in
-  `device_properties` and diagnostics, not used). Using it for availability
-  means revisiting the settled decision above by sharing the pruner's
-  debounce — and the endpoint is deprecated, so availability must not depend
-  on it existing.
 - **Cover travel states** — less unblocked than it looked: a composed
   `level` datapoint carries a `level_move` value (−1/1/0) derived from
   current-vs-target (`PositionState.fromMeshMessage` computes mode
@@ -627,8 +663,10 @@ or "clean — nothing above P3 survived verification."
   verification table in docs/gateway-websocket.md): rocker taps/holds/double
   taps behave exactly as modelled, key-element taps alternate sides, and the
   copied key-element hold was captured once in four and is now handled.
-  What remains is the upstream report — the fix at source is a one-line
-  counter dedupe in the gateway's `btmesh_property_service.js` (it ignores
-  the `0x5012` counter byte), or the device firmware's double publication —
-  and, optionally, more key-element hold samples to learn why three of four
+  The upstream report is drafted —
+  `docs/upstream-report-button-double-reporting.md`, ready to send to JUNG
+  (the fix at source is a one-line counter dedupe in the gateway's
+  `btmesh_property_service.js`, which ignores the `0x5012` counter byte, or
+  the device firmware's double publication) — sending it is the user's
+  call. Optionally, more key-element hold samples to learn why three of four
   carried no copy (the §5 mesh capture would settle it).

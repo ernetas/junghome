@@ -15,7 +15,12 @@ from copy import deepcopy
 
 import pytest
 
-from custom_components.junghome.models import sanitize_devices
+from custom_components.junghome.models import (
+    FunctionAnchor,
+    NodeIdentity,
+    parse_function_anchors,
+    sanitize_devices,
+)
 
 
 def _device(**over: object) -> dict:
@@ -186,3 +191,33 @@ def test_one_warning_per_call_names_the_count_and_never_the_payload(
     assert "3 malformed item(s)" in warnings[0].getMessage()
     assert secret_label not in caplog.text
     assert "junk" not in caplog.text
+
+
+def test_parse_function_anchors_tolerates_every_shape() -> None:
+    """The store's document is user-data on disk: anything odd is dropped, not raised."""
+    assert parse_function_anchors(None) == {}
+    assert parse_function_anchors({"functions": "x"}) == {}
+    document = {
+        "functions": {
+            "lamp": {"id": "idabc", "mac": "AA:BB", "location": 1},
+            "empty": {"id": ""},
+            "loose": {"id": "idx", "mac": 5, "location": True},
+            "text": "x",
+        }
+    }
+    assert parse_function_anchors(document) == {
+        "lamp": FunctionAnchor("idabc", "AA:BB", 1),
+        "loose": FunctionAnchor("idx", None, None),
+    }
+
+
+def test_function_anchor_matches_by_id_or_by_address_and_location() -> None:
+    """The id pins the element until re-provisioning; address + location beyond it."""
+    anchor = FunctionAnchor(id="idabc", mac="AA:BB", location=1)
+    assert anchor.matches("idabc", None)
+    assert not anchor.matches("idzzz", None)
+    assert anchor.matches("idzzz", NodeIdentity(uuid="U", location=1, mac="AA:BB"))
+    assert not anchor.matches("idzzz", NodeIdentity(uuid="U", location=2, mac="AA:BB"))
+    assert not anchor.matches("idzzz", NodeIdentity(uuid="U", location=1, mac=None))
+    bare = FunctionAnchor(id="idabc")
+    assert not bare.matches("idzzz", NodeIdentity(uuid="U", location=1, mac="AA:BB"))

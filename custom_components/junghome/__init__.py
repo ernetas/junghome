@@ -27,6 +27,7 @@ from .coordinator import (
     JungHomeConfigEntry,
     JungHomeDataUpdateCoordinator,
     device_by_identifier,
+    function_anchors_store,
 )
 from .models import Device
 
@@ -460,6 +461,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
         hass, {"host": host, "token": token}, entry
     )
 
+    # The slug -> element map behind rename following, loaded before the first
+    # refresh so a function renamed in the app while Home Assistant was down is
+    # followed on that refresh — before the platforms register anything under
+    # the new label (`coordinator.follow_renames`).
+    anchors_store = function_anchors_store(hass, entry.entry_id)
+    coordinator.attach_function_anchors(anchors_store, await anchors_store.async_load())
+
     # Fetch initial data; raises ConfigEntryNotReady (retry) if the gateway is
     # unreachable, or ConfigEntryAuthFailed (reauth) if the token is rejected.
     await coordinator.async_config_entry_first_refresh()
@@ -753,8 +761,9 @@ async def async_remove_config_entry_device(
 
     Without this the automatic pruner is the *only* way a device can leave the
     registry, so a device the gateway has genuinely stopped reporting — hardware
-    removed, or relabelled in the app, which changes its label-derived identity —
-    sits there with no way to clear it from the UI.
+    removed, or renamed in the app in a way rename following could not pair
+    (``coordinator.follow_renames``) — sits there with no way to clear it from
+    the UI.
 
     A device the gateway *is* currently reporting is refused: the next poll would
     re-create it immediately, so allowing the delete would just look broken.
@@ -792,16 +801,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
-    """Withdraw the entry's repair issues.
+    """Withdraw the entry's repair issues and delete its store.
 
-    ``stop()`` deletes them on unload, but an entry removed while it sits in
-    SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
+    ``stop()`` deletes the issues on unload, but an entry removed while it sits
+    in SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
     """
     for issue_id in (
         f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
         f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
+    await function_anchors_store(hass, entry.entry_id).async_remove()
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import copy
 import json
 import logging
@@ -25,7 +26,10 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_component import DATA_INSTANCES
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    flush_store,
+)
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMocker,
 )
@@ -2726,15 +2730,43 @@ def _device(hass: HomeAssistant, label: str) -> dr.DeviceEntry:
     return device
 
 
+def _gateway_stubs(
+    devices: list[dict] | None, export: object
+) -> list[contextlib.AbstractContextManager]:
+    """Class-level stubs, so an entry reload inside the block stays off the network."""
+    return [
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(
+                return_value=_identified_devices() if devices is None else devices
+            ),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=export),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ]
+
+
 async def _setup_with_export(
-    hass: HomeAssistant, export: object, devices: list[dict] | None = None
+    hass: HomeAssistant,
+    export: object,
+    devices: list[dict] | None = None,
+    entry: MockConfigEntry | None = None,
 ) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="1.2.3.4",
-        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
-    )
-    entry.add_to_hass(hass)
+    """Set an entry up against ``export``; ``entry`` may be prepared (seeded) first."""
+    if entry is None:
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            unique_id="1.2.3.4",
+            data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        )
+        entry.add_to_hass(hass)
     with (
         patch.object(
             JungHomeDataUpdateCoordinator,
@@ -3173,109 +3205,480 @@ def _relabelled(devices: list[dict], function_id: str, label: str) -> list[dict]
     return devices
 
 
-async def test_relabelling_a_primary_function_replaces_its_device(
+async def test_renaming_a_primary_function_keeps_its_device(
     hass: HomeAssistant,
 ) -> None:
-    """A relabel yields a new device; the old one is pruned, entities and all.
+    """A rename in the app renames the Home Assistant device; nothing is replaced.
 
-    The documented contract (``async_remove_config_entry_device``, the
-    options flow's orphan note): identity is label-derived, so a relabel is a
-    new device, and the old one goes after ``STALE_DEVICE_PRUNE_MISSES``
-    adoptions. The b8 regression: the primary function's ``device_info``
-    carried the node's Bluetooth connection, so ``async_get_or_create`` for
-    the new slug resolved to the OLD device by connection and merged — one
-    device with both identifiers, the old entity registered and live
-    forever, and a pruner that never fires because one of the device's slugs
-    is always current. Now the connection moves to the successor on the pass
-    that prunes the old device.
+    Identity is label-derived, so a rename used to be a new device: the old
+    one pruned after ``STALE_DEVICE_PRUNE_MISSES`` adoptions, entities,
+    history and customisations with it (the b8 regression was the merge that
+    masked that). The function id does not change on a rename, so
+    ``follow_renames`` pairs the vanished label with the new one on the same
+    element and rewrites the device identifier and every unique_id in place,
+    before the platforms see the list: same registry device, same entity ids
+    (Home Assistant never renames those), the Bluetooth connection never
+    moves, the pruner has nothing to prune, and the entity keeps updating.
     """
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
     old = _device(hass, "Hall Light")
-    assert old.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get("light.hall_light").unique_id == "hall_light_001"
+    # Another integration's entity on the same device is not ours to rename.
+    foreign = ent_reg.async_get_or_create(
+        Platform.SENSOR, "other", "hall_light_foreign", device_id=old.id
+    )
     relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
 
     await _poll(hass, coordinator, relabelled)
-    new = _device(hass, "Hall Lamp")
-    # A fresh device — not the old one under a second identifier — and the
-    # address stays with its live holder until that holder is gone.
-    assert new.id != old.id
-    assert new.identifiers == {(DOMAIN, "hall_lamp")}
-    assert new.serial_number == MAC_A
-    assert new.connections == set()
-    assert dr.async_get(hass).async_get(old.id) is not None
-
-    await _poll(hass, coordinator, relabelled, times=STALE_DEVICE_PRUNE_MISSES + 1)
-
-    dev_reg = dr.async_get(hass)
-    assert dev_reg.async_get(old.id) is None, "the old device was not pruned"
+    renamed = _device(hass, "Hall Lamp")
+    assert renamed.id == old.id
+    assert renamed.identifiers == {(DOMAIN, "hall_lamp")}
+    assert ent_reg.async_get(foreign.entity_id).unique_id == "hall_light_foreign"
+    assert renamed.name == "Hall Lamp"
+    assert renamed.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
     assert find_device(hass, "hall_light") is None
-    survivor = _device(hass, "Hall Lamp")
-    assert survivor.id == new.id
-    assert survivor.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
-    assert survivor.serial_number == MAC_A
-    ent_reg = er.async_get(hass)
+    assert ent_reg.async_get("light.hall_light").unique_id == "hall_lamp_001"
+    assert hass.states.get("light.hall_lamp") is None
+    assert hass.states.get("light.hall_light").state == "on"
+    assert coordinator.function_anchors["hall_lamp"].id == HALL_LIGHT_ID
+    assert "hall_light" not in coordinator.function_anchors
+
+    off = copy.deepcopy(relabelled)
+    light = next(d for d in off if d["id"] == HALL_LIGHT_ID)
+    light["datapoints"][0]["values"][0]["value"] = "0"
+    await _poll(hass, coordinator, off, times=STALE_DEVICE_PRUNE_MISSES + 1)
+    assert hass.states.get("light.hall_light").state == "off"
+    assert dr.async_get(hass).async_get(old.id) is not None
     hall_lights = [
-        e.entity_id
+        e.unique_id
         for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)
         if e.domain == Platform.LIGHT and e.unique_id.startswith("hall_l")
     ]
-    assert hall_lights == ["light.hall_lamp"]
-    assert hass.states.get("light.hall_light") is None
-    assert hass.states.get("light.hall_lamp").state == "on"
-    # The node's other function is untouched by its sibling's relabel.
-    button = _device(hass, "Hall Button")
-    assert button.serial_number == MAC_A
-    assert button.connections == set()
+    assert hall_lights == ["hall_lamp_001"]
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
 
-async def test_relabelling_a_non_primary_function_is_unchanged(
+async def test_renaming_a_non_primary_function_keeps_its_device(
     hass: HomeAssistant,
 ) -> None:
-    """A non-primary function's relabel never involved a connection: same outcome."""
+    """A rocker on the light's node is followed the same way; every entity moves."""
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
     old = _device(hass, "Hall Button")
+    ent_reg = er.async_get(hass)
+    led = ent_reg.async_get_entity_id(Platform.SWITCH, DOMAIN, "hall_button_00e_switch")
+    up = ent_reg.async_get_entity_id(Platform.EVENT, DOMAIN, "hall_button_00c_event")
+    assert led is not None
+    assert up is not None
     relabelled = _relabelled(_identified_devices(), HALL_BUTTON_ID, "Hallway Button")
     await _poll(hass, coordinator, relabelled, times=STALE_DEVICE_PRUNE_MISSES + 2)
-    assert dr.async_get(hass).async_get(old.id) is None
-    new = _device(hass, "Hallway Button")
-    assert new.serial_number == MAC_A
-    assert new.connections == set()
-    ent_reg = er.async_get(hass)
+    renamed = _device(hass, "Hallway Button")
+    assert renamed.id == old.id
+    assert renamed.serial_number == MAC_A
+    assert renamed.connections == set()
     assert (
         ent_reg.async_get_entity_id(Platform.SWITCH, DOMAIN, "hall_button_00e_switch")
         is None
     )
-    assert ent_reg.async_get_entity_id(
-        Platform.SWITCH, DOMAIN, "hallway_button_00e_switch"
+    assert (
+        ent_reg.async_get_entity_id(
+            Platform.SWITCH, DOMAIN, "hallway_button_00e_switch"
+        )
+        == led
     )
+    assert (
+        ent_reg.async_get_entity_id(Platform.EVENT, DOMAIN, "hallway_button_00c_event")
+        == up
+    )
+    assert hass.states.get(up) is not None
     # The primary function keeps the node's connection throughout.
     assert _device(hass, "Hall Light").connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
 
-async def test_manual_delete_of_the_old_device_hands_over_the_connection(
+async def test_manual_delete_of_a_stale_device_hands_over_the_connection(
     hass: HomeAssistant,
 ) -> None:
-    """Deleting the stale device from the UI relinks the successor at once.
+    """Deleting a stale device from the UI relinks the successor at once.
 
-    The user need not wait out the pruner: ``async_remove_config_entry_device``
-    removes the device itself and runs the same back-fill the pruner does.
+    A rename that could not be followed still leaves a stale device behind —
+    here the new label already had a registry device, so the platforms
+    registered under that one and the old device went stale. The user need
+    not wait out the pruner: ``async_remove_config_entry_device`` removes the
+    device itself and runs the same back-fill the pruner does.
     """
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
     old = _device(hass, "Hall Light")
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "hall_lamp")},
+        name="Hall Lamp",
+    )
     relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
     await _poll(hass, coordinator, relabelled)
-    assert _device(hass, "Hall Lamp").connections == set()
+    new = _device(hass, "Hall Lamp")
+    assert new.id != old.id
+    assert new.connections == set()
+    assert dr.async_get(hass).async_get(old.id) is not None
 
     assert await async_remove_config_entry_device(hass, entry, old) is True
     assert dr.async_get(hass).async_get(old.id) is None
     assert _device(hass, "Hall Lamp").connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+# --- Rename following (2026-09-16) -------------------------------------------
+#
+# Measured across a real app-driven device-firmware update (the June and
+# August dumps): the update re-provisioned nothing and changed no datapoint
+# suffix; the only churn was the user's own renaming in the app — six devices,
+# each a replaced HA device under the old contract. `follow_renames` pairs a
+# vanished label with the new one on the same element and rewrites the
+# registry in place. Anchors persist in the entry's store so the pairing also
+# works for a rename made while Home Assistant was down.
+
+NODE_C = "CCBBAAFF-FE03-0201-0000-000000000000"
+MAC_C = "CC:BB:AA:03:02:01"
+
+
+def _anchors_key(entry: MockConfigEntry) -> str:
+    return f"{DOMAIN}.{entry.entry_id}.functions"
+
+
+def _seed_anchors(
+    hass_storage: dict, entry: MockConfigEntry, functions: dict[str, dict]
+) -> None:
+    """Pre-write the store as a previous run of the integration left it."""
+    key = _anchors_key(entry)
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": key,
+        "data": {"functions": functions},
+    }
+
+
+def _seed_device(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    slug: str,
+    name: str,
+    entities: dict[str, str],
+) -> dr.DeviceEntry:
+    """A registry device with entities, as a previous run left them."""
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, slug)}, name=name
+    )
+    for unique_id, domain in entities.items():
+        er.async_get(hass).async_get_or_create(
+            domain,
+            DOMAIN,
+            unique_id,
+            config_entry=entry,
+            device_id=device.id,
+            suggested_object_id=slug,
+        )
+    return device
+
+
+def _prepared_entry(hass: HomeAssistant, **kwargs: object) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+        **kwargs,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_rename_while_ha_was_down_is_followed_at_setup(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """The store remembers each label's element, so setup pairs the rename."""
+    entry = _prepared_entry(hass)
+    seeded = _seed_device(
+        hass, entry, "hall_light", "Hall Light", {"hall_light_001": Platform.LIGHT}
+    )
+    _seed_anchors(
+        hass_storage,
+        entry,
+        {"hall_light": {"id": HALL_LIGHT_ID, "mac": MAC_A, "location": 1}},
+    )
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _setup_with_export(hass, _project_export(), devices=relabelled, entry=entry)
+
+    device = _device(hass, "Hall Lamp")
+    assert device.id == seeded.id
+    assert device.name == "Hall Lamp"
+    assert find_device(hass, "hall_light") is None
+    ent = er.async_get(hass).async_get("light.hall_light")
+    assert ent is not None
+    assert ent.unique_id == "hall_lamp_001"
+    assert ent.device_id == device.id
+    assert hass.states.get("light.hall_light").state == "on"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_rename_with_reprovisioning_is_paired_by_hardware_identity(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """Renamed AND re-provisioned while HA was down: the address pairs it.
+
+    Re-provisioning gives the node a new UUID, so every function id changes
+    and the id-based pairing has nothing to hold on to. The node's Bluetooth
+    address and the element location survive, so setup's second pass — after
+    the project export is read, still before the platforms — pairs the old
+    label with the new one through them.
+    """
+    entry = _prepared_entry(hass)
+    seeded = _seed_device(
+        hass, entry, "hall_light", "Hall Light", {"hall_light_001": Platform.LIGHT}
+    )
+    _seed_device(
+        hass,
+        entry,
+        "hall_button",
+        "Hall Button",
+        {"hall_button_00e_switch": Platform.SWITCH},
+    )
+    _seed_anchors(
+        hass_storage,
+        entry,
+        {
+            "hall_light": {"id": HALL_LIGHT_ID, "mac": MAC_A, "location": 1},
+            "hall_button": {"id": HALL_BUTTON_ID, "mac": MAC_A, "location": 0x40},
+        },
+    )
+    devices = _identified_devices()
+    light = next(d for d in devices if d["id"] == HALL_LIGHT_ID)
+    light["id"] = function_id_for(NODE_C, 1)
+    light["label"] = "Hall Lamp"
+    light["datapoints"][0]["id"] = f"{light['id']}-001"
+    button = next(d for d in devices if d["id"] == HALL_BUTTON_ID)
+    button["id"] = function_id_for(NODE_C, 0x40)
+    for datapoint in button["datapoints"]:
+        datapoint["id"] = f"{button['id']}-{datapoint['id'].rsplit('-', 1)[-1]}"
+    export = _project_export()
+    cdb = json.loads(base64.b64decode(export["network"]))
+    cdb["nodes"][0]["UUID"] = NODE_C
+    export["network"] = base64.b64encode(json.dumps(cdb).encode()).decode()
+    export["meta"]["devices"][0]["deviceId"]["nodeId"] = NODE_C
+    export["meta"]["devices"][0]["name"] = "Hall Lamp"
+
+    await _setup_with_export(hass, export, devices=devices, entry=entry)
+    device = _device(hass, "Hall Lamp")
+    assert device.id == seeded.id
+    assert device.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    assert find_device(hass, "hall_light") is None
+    ent = er.async_get(hass).async_get("light.hall_light")
+    assert ent is not None
+    assert ent.unique_id == "hall_lamp_001"
+    # The button kept its label: same slug, new id, no pairing needed.
+    assert _device(hass, "Hall Button").serial_number == MAC_A
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_rename_is_not_followed_onto_a_taken_unique_id(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A target unique_id already registered elsewhere: the rename is not followed.
+
+    All-or-nothing: nothing of the old device is touched, the platforms
+    register the new label as a new device, and the old one goes stale.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Light")
+    taken = er.async_get(hass).async_get_or_create(
+        Platform.LIGHT, DOMAIN, "hall_lamp_001", config_entry=entry
+    )
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _poll(hass, coordinator, relabelled)
+    assert "already exists" in caplog.text
+    assert dr.async_get(hass).async_get(old.id).identifiers == {(DOMAIN, "hall_light")}
+    assert (
+        er.async_get(hass).async_get("light.hall_light").unique_id == "hall_light_001"
+    )
+    assert er.async_get(hass).async_get(taken.entity_id).unique_id == "hall_lamp_001"
+    await _poll(hass, coordinator, relabelled, times=STALE_DEVICE_PRUNE_MISSES + 1)
+    assert dr.async_get(hass).async_get(old.id) is None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_new_function_is_not_mistaken_for_a_rename(
+    hass: HomeAssistant,
+) -> None:
+    """A label that vanishes while another appears on a different element: two events."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    orphan = _device(hass, "Orphan")
+    devices = [d for d in _identified_devices() if d["id"] != "idorphan"]
+    devices.append(
+        {
+            "id": "idgarden",
+            "type": "OnOff",
+            "label": "Garden",
+            "datapoints": [
+                {
+                    "id": "idgarden-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                }
+            ],
+        }
+    )
+    await _poll(hass, coordinator, devices)
+    garden = _device(hass, "Garden")
+    assert garden.id != orphan.id
+    assert dr.async_get(hass).async_get(orphan.id) is not None
+    assert coordinator.function_anchors["garden"].id == "idgarden"
+    assert coordinator.function_anchors["orphan"].id == "idorphan"  # still registered
+    await _poll(hass, coordinator, devices, times=STALE_DEVICE_PRUNE_MISSES + 1)
+    assert dr.async_get(hass).async_get(orphan.id) is None
+    assert "orphan" not in coordinator.function_anchors
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_rename_after_the_old_device_was_deleted_is_a_new_device(
+    hass: HomeAssistant,
+) -> None:
+    """The anchor outlives a manual delete by one adoption; there is nothing to rename."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Light")
+    without = [d for d in _identified_devices() if d["id"] != HALL_LIGHT_ID]
+    await _poll(hass, coordinator, without)
+    assert "hall_light" in coordinator.function_anchors  # device still registered
+    assert await async_remove_config_entry_device(hass, entry, old) is True
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _poll(hass, coordinator, relabelled)
+    lamp = _device(hass, "Hall Lamp")
+    assert lamp.id != old.id
+    assert hass.states.get("light.hall_lamp").state == "on"
+    assert "hall_light" not in coordinator.function_anchors
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_rename_of_a_colliding_label_is_left_alone(hass: HomeAssistant) -> None:
+    """Renaming onto a label another live device carries is the documented collision."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    old = _device(hass, "Hall Light")
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Desk Socket")
+    await _poll(hass, coordinator, relabelled)
+    assert dr.async_get(hass).async_get(old.id).identifiers == {(DOMAIN, "hall_light")}
+    assert "desk_socket" in coordinator.function_anchors
+    assert coordinator.function_anchors["desk_socket"].id == DESK_SOCKET_ID
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_function_anchors_are_persisted_and_removed_with_the_entry(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """The map reaches the store after it changes; entry removal deletes it."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _poll(hass, coordinator, relabelled)
+    # The save is delayed (`FUNCTION_ANCHORS_SAVE_DELAY`); flush it as core's
+    # own tests do rather than racing the loop clock.
+    await flush_store(coordinator._anchor_store)
+    functions = hass_storage[_anchors_key(entry)]["data"]["functions"]
+    assert functions["hall_lamp"] == {"id": HALL_LIGHT_ID, "mac": MAC_A, "location": 1}
+    assert "hall_light" not in functions
+    assert functions["desk_socket"] == {
+        "id": DESK_SOCKET_ID,
+        "mac": MAC_B,
+        "location": 1,
+    }
+    assert functions["orphan"] == {"id": "idorphan", "mac": None, "location": None}
+
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(relabelled, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+    assert _anchors_key(entry) not in hass_storage
+
+
+async def test_rename_carries_the_inverted_cover_flag(hass: HomeAssistant) -> None:
+    """The inverted-covers option is keyed by unique_id, so it follows and reloads."""
+    devices = [
+        *_identified_devices(),
+        {
+            "id": "idawning",
+            "type": "Position",
+            "label": "Patio Awning",
+            "datapoints": [
+                {
+                    "id": "idawning-001",
+                    "type": "level",
+                    "values": [{"key": "level", "value": "0"}],
+                }
+            ],
+        },
+    ]
+    entry = _prepared_entry(hass, options={CONF_INVERTED_COVERS: ["patio_awning_001"]})
+    renamed = _relabelled(devices, "idawning", "Terrace Awning")
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert (
+            hass.states.get("cover.patio_awning").attributes["device_class"] == "awning"
+        )
+        coordinator = entry.runtime_data
+        with patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=copy.deepcopy(renamed)),
+        ):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            assert entry.options[CONF_INVERTED_COVERS] == ["terrace_awning_001"]
+            assert entry.state is ConfigEntryState.LOADED
+            assert entry.runtime_data is not coordinator, "the options change reloads"
+            ent = er.async_get(hass).async_get("cover.patio_awning")
+            assert ent.unique_id == "terrace_awning_001"
+            state = hass.states.get("cover.patio_awning")
+            assert state.attributes["device_class"] == "awning"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_a_swapped_node_replaces_the_bluetooth_connection(
+    hass: HomeAssistant,
+) -> None:
+    """The same label on a new radio shows the new address only, not both."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    light = _device(hass, "Hall Light")
+    assert light.connections == {(dr.CONNECTION_BLUETOOTH, MAC_A)}
+    coordinator.node_identities = MappingProxyType(
+        {
+            HALL_LIGHT_ID: NodeIdentity(
+                uuid=NODE_C, location=1, mac=MAC_C, unicast=0x0300, primary=True
+            )
+        }
+    )
+    coordinator.apply_node_identities()
+    light = dr.async_get(hass).async_get(light.id)
+    assert light.serial_number == MAC_C
+    assert light.connections == {(dr.CONNECTION_BLUETOOTH, MAC_C)}
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
