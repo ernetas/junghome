@@ -243,6 +243,22 @@ interval is adjustable, see [Options](#options) — and on every WebSocket
 reconnect. If the WebSocket drops it reconnects automatically with backoff. No
 cloud and no account are involved.
 
+**Renaming a device in the Jung Home app renames it here.** Devices are
+identified by their label, so a rename used to look like a removal plus a new
+device. The integration now remembers which mesh element each label was on
+(the gateway's function id, and the node's Bluetooth address plus element
+location once the project export has been read) and, when a label disappears
+while a new one appears on the same element, renames the Home Assistant device
+and moves its entities over in place — history, area, customisations and
+automations included. Entity ids stay as they were (Home Assistant never
+renames those on its own; rename them yourself if you want them to follow).
+This also works for a rename made while Home Assistant was off. What is still
+a new device: a label moved to a *different* element (the old name given to
+another device, two names swapped) — the entities follow the name, as before —
+and a rename combined with re-provisioning the node while Home Assistant is
+running (the hardware identity of the new function is not known yet when its
+list arrives; at startup that case is paired too).
+
 ## Removing the integration
 
 1. **Settings → Devices & Services → Jung Home → ⋮ → Delete.** This removes
@@ -369,12 +385,13 @@ handshake presents it).
   something the integration can refine.
 - **Two devices with the same label collide.** The gateway's device ids are
   derived from each node's mesh identity and location, so they change when a
-  device is re-provisioned or re-enumerated (as app-driven firmware updates
-  have done), and the device list carries no hardware identifier — so the
-  device *label* is the identity anchor the integration uses. Devices whose
-  labels are identical — or that slug identically, e.g. `Lamp 1` and `Lamp-1`
-  — map to the same id and only the first one gets entities. Give each device
-  a distinct label in the Jung Home app.
+  device is re-provisioned or re-enumerated, and the device list carries no
+  hardware identifier — so the device *label* is the identity anchor the
+  integration uses (renames are followed, see [How updates
+  work](#how-updates-work)). Devices whose labels are identical — or that slug
+  identically, e.g. `Lamp 1` and `Lamp-1` — map to the same id and only the
+  first one gets entities. Give each device a distinct label in the Jung Home
+  app.
 
 ## Gateway internals (for contributors)
 

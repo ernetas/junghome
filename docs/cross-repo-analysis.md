@@ -102,8 +102,13 @@ translation hook). Still open:
   `event.py` now completes such a hold with the copy's release. *Still open:* the upstream report (a one-line counter
   dedupe in the gateway's `btmesh_property_service.js`, which ignores the `0x5012` counter byte) — tracked in
   `CLAUDE.md` → Backlog.
-- [ ] Scene `value` (the mesh scene number) as a join key for tooling — stabler than the label the entities are keyed
-  on; not needed for identity (the label-keyed `unique_id`s stay).
+- [x] Scene `value` (the mesh scene number) as a join key for tooling — it is in every `scenes` frame and the
+  diagnostics dump keeps `coordinator.scenes` raw, `value` included; nothing more to build (the label-keyed
+  `unique_id`s stay).
+- [x] Renames followed (2026-09-16): `coordinator.follow_renames` pairs a vanished label with a new one on the same
+  element (function id, or node MAC + element location from the export) and rewrites the registry in place — the
+  one churn the June→August measurement found. Per-device availability from the verbose endpoint was closed instead
+  (`CLAUDE.md` → Settled decisions: `reachable` is "last request answered", false on every push button).
 - [ ] Share code with the sibling project long-term: `jhmesh` `Metadata`/`CDB.parse`, and the cover/climate/trigger/
   logbook/diagnostics boilerplate. HA ≥ 2026.8 binds a device to one config entry, so one integration with two
   transports is the only way to get one device page.

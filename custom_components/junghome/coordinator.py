@@ -8,6 +8,7 @@ import random
 import time
 from collections import deque
 from collections.abc import Mapping
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, cast
@@ -22,10 +23,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_INVERTED_COVERS,
     CONF_POLL_INTERVAL,
     CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -42,10 +45,12 @@ from .models import (
     DOUBLED_BUTTON_FIRMWARE,
     Device,
     DeviceProperties,
+    FunctionAnchor,
     NodeIdentity,
     Scene,
     parse_device_properties,
     parse_devices_verbose,
+    parse_function_anchors,
     parse_project_export,
     sanitize_devices,
 )
@@ -142,6 +147,22 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # asked for again — it would be omitted again; only a missing endpoint or a
 # failed read is retried, and that is one small request).
 DEVICE_PROPERTIES_REFRESH_INTERVAL = 300
+
+# The entry's persisted device-slug -> element map behind rename following
+# (`JungHomeDataUpdateCoordinator.follow_renames`): one small document per
+# entry, saved a few seconds after it changes — which is on membership change
+# only. `function_anchors_store` builds the store; setup loads it before the
+# first refresh and entry removal deletes it.
+FUNCTION_ANCHORS_STORAGE_VERSION = 1
+FUNCTION_ANCHORS_SAVE_DELAY = 5
+
+
+def function_anchors_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the entry's store for `coordinator.function_anchors`."""
+    return Store(
+        hass, FUNCTION_ANCHORS_STORAGE_VERSION, f"{DOMAIN}.{entry_id}.functions"
+    )
+
 
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
@@ -479,6 +500,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._functions_broadcasts_seen = 0
         # Stable-slug -> volatile device id, to detect firmware-update id changes.
         self._device_ids: dict[str, str] = {}
+        # Device slug -> the element that function was last seen on
+        # (`models.FunctionAnchor`), so a function renamed in the app keeps
+        # its Home Assistant device (`follow_renames`). Loaded from the entry's
+        # store by `attach_function_anchors` before the first refresh; empty —
+        # and rename following off — on a bare coordinator.
+        self.function_anchors: dict[str, FunctionAnchor] = {}
+        self._anchor_store: Store[dict[str, Any]] | None = None
         # Gateway function id -> the hardware identity of the mesh element
         # behind it (node UUID, Bluetooth address, unicast, location), parsed
         # from `GET /project/junghome` at setup (`async_fetch_node_identities`)
@@ -691,6 +719,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if overlay:
             self._apply_push_overlay(response, overlay)
         self._reload_if_device_ids_changed(response)
+        self.follow_renames(response)
         self._schedule_node_identity_refetch(response)
         # A fresh device list is about to be adopted (the base class stores the
         # return value before notifying listeners, so the counter is consistent
@@ -769,6 +798,189 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 "reloading the integration to re-resolve entities"
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+
+    def attach_function_anchors(
+        self, store: Store[dict[str, Any]], document: dict[str, Any] | None
+    ) -> None:
+        """Adopt the entry's persisted slug -> element map (see ``follow_renames``).
+
+        Called by setup before the first refresh, so a rename that happened
+        while Home Assistant was down is followed on that refresh — before the
+        platforms register anything under the new label.
+        """
+        self._anchor_store = store
+        self.function_anchors = parse_function_anchors(document)
+
+    @callback
+    def follow_renames(self, devices: list[Device]) -> None:
+        """Keep a function's HA device and entities when it is renamed in the app.
+
+        Identity is label-derived (``device_slug``), so a rename used to be a
+        new device: the old one pruned after ``STALE_DEVICE_PRUNE_MISSES``
+        adoptions, its history, area and customisations left behind. The
+        gateway's function id, volatile across re-provisioning, does NOT
+        change on a rename (``md5(node UUID + element location)``), and the
+        node's Bluetooth address plus element location survives even that. So
+        a label with no registry device while a label this map knows has just
+        vanished — both on the same element — is a rename: the old device's
+        identifier and its entities' unique_ids are rewritten to the new slug
+        in place (``_migrate_renamed_function``) BEFORE the platforms see the
+        list, so nothing registers twice. Entity ids stay (Home Assistant
+        never renames those on its own); the device name follows the label.
+
+        Runs on every device-list adoption, on the list about to be adopted,
+        and on setup's second pass once the identities are known. Not
+        followed, by design: a label moved to a *different* element (the old
+        label reused on another node, two labels swapped) stays label-keyed —
+        the entities follow the name, as before; a rename combined with a
+        re-provisioning is paired at setup only (live, the new function's
+        identity is not known when its list arrives, so it is a new device).
+        Colliding slugs are skipped like everywhere else (``duplicate_slugs``).
+        """
+        entry = self.config_entry
+        if entry is None or self._anchor_store is None:
+            return  # a bare coordinator: nothing persisted, nothing to follow
+        colliding = duplicate_slugs(devices)
+        live = {
+            device_slug(d): d
+            for d in devices
+            if isinstance(d.get("id"), str) and device_slug(d) not in colliding
+        }
+        dev_reg = dr.async_get(self.hass)
+        for slug, device in live.items():
+            old_slug = self._renamed_from(slug, device, live, dev_reg, entry.entry_id)
+            if old_slug is not None:
+                self._migrate_renamed_function(old_slug, slug, device, entry.entry_id)
+        # Every live function, plus the vanished ones whose device still
+        # exists (the pruner's window, or one partial list) so a rename that
+        # lands an adoption later still pairs.
+        fresh = {slug: self._anchor_for(device) for slug, device in live.items()}
+        for slug, anchor in self.function_anchors.items():
+            if slug in fresh:
+                continue
+            if (
+                device_by_identifier(dev_reg, entry.entry_id, (DOMAIN, slug))
+                is not None
+            ):
+                fresh[slug] = anchor
+        if fresh != self.function_anchors:
+            self.function_anchors = fresh
+            self._anchor_store.async_delay_save(
+                self._anchor_document, FUNCTION_ANCHORS_SAVE_DELAY
+            )
+
+    def _renamed_from(
+        self,
+        slug: str,
+        device: Device,
+        live: Mapping[str, Device],
+        dev_reg: dr.DeviceRegistry,
+        entry_id: str,
+    ) -> str | None:
+        """Return the vanished slug whose element ``device`` now carries, if exactly one."""
+        if device_by_identifier(dev_reg, entry_id, (DOMAIN, slug)) is not None:
+            return None  # registered under this label already: nothing to follow
+        identity = self.node_identity_for(device)
+        candidates = [
+            old
+            for old, anchor in self.function_anchors.items()
+            if old not in live and anchor.matches(str(device["id"]), identity)
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _migrate_renamed_function(
+        self, old_slug: str, new_slug: str, device: Device, entry_id: str
+    ) -> bool:
+        """Rewrite ``old_slug``'s device and entities to ``new_slug``, in place.
+
+        All-or-nothing: every entity is checked for a free target unique_id
+        before any is touched, so the device can never end up half-renamed.
+        Option values keyed by unique_id (the inverted covers) follow too.
+        """
+        dev_reg = dr.async_get(self.hass)
+        ent_reg = er.async_get(self.hass)
+        old_device = device_by_identifier(dev_reg, entry_id, (DOMAIN, old_slug))
+        if old_device is None:
+            return False
+        label = str(device.get("label"))
+        prefix = f"{old_slug}_"
+        renames: list[tuple[er.RegistryEntry, str]] = []
+        for entity in er.async_entries_for_device(
+            ent_reg, old_device.id, include_disabled_entities=True
+        ):
+            if entity.platform != DOMAIN or not entity.unique_id.startswith(prefix):
+                continue  # not ours, or not keyed by the slug: left alone
+            new_uid = f"{new_slug}_{entity.unique_id[len(prefix) :]}"
+            if ent_reg.async_get_entity_id(entity.domain, DOMAIN, new_uid) is not None:
+                _LOGGER.warning(
+                    "Jung Home: %s was renamed to %s in the app, but an entity "
+                    "%s already exists; treating it as a new device",
+                    old_device.name,
+                    label,
+                    new_uid,
+                )
+                return False
+            renames.append((entity, new_uid))
+        renamed_uids: dict[str, str] = {}
+        for entity, new_uid in renames:
+            ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_uid)
+            renamed_uids[entity.unique_id] = new_uid
+            known = self._known_unique_ids.get(entity.domain)
+            if known is not None and entity.unique_id in known:
+                known.discard(entity.unique_id)
+                known.add(new_uid)
+        identifiers = {
+            (DOMAIN, new_slug) if identifier == (DOMAIN, old_slug) else identifier
+            for identifier in old_device.identifiers
+        }
+        dev_reg.async_update_device(
+            old_device.id, new_identifiers=identifiers, name=label
+        )
+        self._follow_rename_in_options(renamed_uids)
+        _LOGGER.info(
+            "Jung Home: %s was renamed to %s in the app; its Home Assistant device "
+            "and %d entities follow (entity ids unchanged)",
+            old_device.name,
+            label,
+            len(renames),
+        )
+        return True
+
+    def _follow_rename_in_options(self, renamed_uids: Mapping[str, str]) -> None:
+        """Re-point the options keyed by unique_id (the inverted covers).
+
+        Writing the options makes the update listener reload the entry — the
+        one case rename following reloads, and the cover platform reads the
+        flags at setup so the flag must not be lost on the way.
+        """
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - follow_renames returned already
+            return
+        flagged = entry.options.get(CONF_INVERTED_COVERS)
+        if not isinstance(flagged, list) or not any(
+            uid in renamed_uids for uid in flagged
+        ):
+            return
+        updated = [renamed_uids.get(uid, uid) for uid in flagged]
+        self.hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_INVERTED_COVERS: updated}
+        )
+
+    def _anchor_for(self, device: Device) -> FunctionAnchor:
+        identity = self.node_identity_for(device)
+        return FunctionAnchor(
+            id=str(device["id"]),
+            mac=identity.mac if identity is not None else None,
+            location=identity.location if identity is not None else None,
+        )
+
+    @callback
+    def _anchor_document(self) -> dict[str, Any]:
+        return {
+            "functions": {
+                slug: asdict(anchor) for slug, anchor in self.function_anchors.items()
+            }
+        }
 
     def _stored_fingerprint(self) -> str | None:
         """Return the fingerprint pinned in the entry, if it holds a valid one."""
@@ -1099,6 +1311,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         await super().async_config_entry_first_refresh()
         await self.async_fetch_node_identities()
+        # Second rename-following pass, now with the hardware identities: a
+        # function renamed AND re-provisioned while Home Assistant was down
+        # changed its id, so the first pass (inside the refresh above) could
+        # not pair it; the node's address + element location can. Still
+        # before the platforms register anything.
+        self.follow_renames(self.data or [])
         await self.async_fetch_device_properties()
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
@@ -1494,9 +1712,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 holder.name,
             )
             return
+        # Replace, never add to, the device's Bluetooth connection: a node
+        # swapped under the same label (new radio, same name — measured once
+        # across a real update) otherwise kept the old address next to the
+        # new one for good.
+        kept = {c for c in device_entry.connections if c[0] != dr.CONNECTION_BLUETOOTH}
         try:
             registry.async_update_device(
-                device_entry.id, new_connections=device_entry.connections | {connection}
+                device_entry.id, new_connections=kept | {connection}
             )
         except dr.DeviceConnectionCollisionError as err:
             _LOGGER.debug(
@@ -2214,6 +2437,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
         self._unmatched_push_ids.clear()
         self._reload_if_device_ids_changed(devices)
+        self.follow_renames(devices)
         # Counted immediately before the adoption, and never before it: a poll
         # whose fetch was in flight across this point discards its own older
         # snapshot in favour of this list (see `_async_update_data`), so the

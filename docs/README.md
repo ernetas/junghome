@@ -29,6 +29,10 @@ integration.
   gateway facts, and what is still open (a hardware verification of the
   gesture rebuild, a few improvements, and the captures that would close the
   remaining questions). Every bug and doc correction it raised has landed.
+- **[upstream-report-button-double-reporting.md](upstream-report-button-double-reporting.md)** —
+  draft report to JUNG on the doubled push-button events (device firmware
+  2.2.0.x publishes twice, the gateway ignores the `0x5012` counter), with
+  the suggested one-line gateway fix. Ready to send.
 - **[matter-bridge.md](matter-bridge.md)** — getting JUNG devices into Matter
   (the gateway's built-in Matter is inactive; bridge from Home Assistant
   instead).

@@ -278,6 +278,62 @@ class NodeIdentity:
     primary: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionAnchor:
+    """What ties a function's *label* to the element it was last seen on.
+
+    Kept per device slug (``coordinator.function_anchors``, persisted in the
+    entry's store) so a label that disappears and reappears under another
+    name on the SAME element is recognised as a rename in the app and the
+    Home Assistant device follows it (``coordinator.follow_renames``) instead
+    of being replaced. The function id is ``md5(node UUID + location)``, so it
+    identifies the element until the node is re-provisioned; the Bluetooth
+    address plus element location identifies it across that too, when the
+    project export was readable.
+    """
+
+    id: str
+    mac: str | None = None
+    location: int | None = None
+
+    def matches(self, function_id: str, identity: NodeIdentity | None) -> bool:
+        """Whether a live function with ``function_id``/``identity`` is this element."""
+        if self.id == function_id:
+            return True
+        return (
+            identity is not None
+            and identity.mac is not None
+            and self.mac == identity.mac
+            and self.location == identity.location
+        )
+
+
+def parse_function_anchors(raw: Any) -> dict[str, FunctionAnchor]:
+    """Rebuild the slug -> anchor map from the store's document (tolerant)."""
+    if not isinstance(raw, dict):
+        return {}
+    functions = raw.get("functions")
+    if not isinstance(functions, dict):
+        return {}
+    anchors: dict[str, FunctionAnchor] = {}
+    for slug, item in functions.items():
+        if not isinstance(slug, str) or not isinstance(item, dict):
+            continue
+        function_id = item.get("id")
+        if not isinstance(function_id, str) or not function_id:
+            continue
+        mac = item.get("mac")
+        location = item.get("location")
+        anchors[slug] = FunctionAnchor(
+            id=function_id,
+            mac=mac if isinstance(mac, str) and mac else None,
+            location=location
+            if isinstance(location, int) and not isinstance(location, bool)
+            else None,
+        )
+    return anchors
+
+
 # Longest numeric string the parsers accept. Every CDB/meta number here is a
 # 16-bit mesh quantity (unicast, location, pid) or a small element index, so
 # ten characters is generous — and it keeps ``int()`` off a multi-kilobyte
