@@ -9,6 +9,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     DATA_AREA_ASSIGNED,
@@ -21,6 +22,8 @@ from .const import (
     gateway_device_info,
 )
 from .coordinator import (
+    ISSUE_PUSH_FAILURE,
+    ISSUE_TLS_MISMATCH,
     JungHomeConfigEntry,
     JungHomeDataUpdateCoordinator,
     device_by_identifier,
@@ -783,6 +786,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     # doesn't leak the WebSocket reconnect loop.
     await entry.runtime_data.stop()
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
+    """Withdraw the entry's repair issues.
+
+    ``stop()`` deletes them on unload, but an entry removed while it sits in
+    SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
+    """
+    for issue_id in (
+        f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
+        f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+    ):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:

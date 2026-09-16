@@ -17,6 +17,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
     (REST poll interval, duplicate-press suppression, inverted covers).
+  - `tls.py` — TOFU certificate pinning: `async_learn_fingerprint` reads the
+    gateway certificate's SHA-256 through a deliberately mismatching pin (no
+    request, no token leaves), `fingerprint_ssl` builds the cached
+    `aiohttp.Fingerprint` every REST call and the WS upgrade carry. The pin
+    lives in `entry.data[CONF_TLS_FINGERPRINT]`; a mismatch raises the fixable
+    `tls_certificate_changed` issue handled by `repairs.py` (confirm → re-pin
+    against the serial). Discovery never rewrites a healthy entry's host, and
+    a failing entry adopts an announced address only if it presents the pin.
+  - `repairs.py` — the fix flow for `tls_certificate_changed`.
   - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
     `scene_unique_id`, `is_presence_quantity`), the option keys and the
@@ -399,8 +408,9 @@ them without new evidence wastes a session.
   would flap on every partial poll. Revisit only by sharing the debounce
   counter.
 - **A partial push cannot blank sibling `values` keys** — the merge is
-  per-key, not a list replacement. `ws_last_frame_by_type` is bounded by the
-  gateway's frame-type vocabulary.
+  per-key, not a list replacement. `ws_last_frame_by_type` keeps the known
+  frame types in full and caps unknown ones (`WS_FRAME_TYPES_MAX`, truncated
+  previews) — a peer minting types must not grow the diagnostics dump.
 - **`climate.set_temperature` ignoring `target_temp_low/high`** is correct
   for a single-setpoint regulator.
 - **ruff `target-version` stays `py313`** — bumping to py314 flips

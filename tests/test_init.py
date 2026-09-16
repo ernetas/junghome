@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_component import DATA_INSTANCES
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
@@ -45,6 +46,8 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import (
+    ISSUE_PUSH_FAILURE,
+    ISSUE_TLS_MISMATCH,
     NODE_IDENTITY_REFETCH_INTERVAL,
     JungHomeDataUpdateCoordinator,
     _parse_color_temp_range,
@@ -3517,3 +3520,34 @@ async def test_setup_survives_one_malformed_device_from_the_gateway(
 
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_removing_an_entry_that_never_loaded_withdraws_its_issues(
+    hass: HomeAssistant,
+) -> None:
+    """A certificate mismatch keeps an entry in SETUP_RETRY; deleting it must not leave the issue behind.
+
+    ``stop()`` deletes the coordinator's issues on unload, but an entry that never loaded never ran it.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"})
+    entry.add_to_hass(hass)
+    registry = ir.async_get(hass)
+    for key in (ISSUE_TLS_MISMATCH, ISSUE_PUSH_FAILURE):
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{key}_{entry.entry_id}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=key,
+        )
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (
+        registry.async_get_issue(DOMAIN, f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}")
+        is None
+    )
+    assert (
+        registry.async_get_issue(DOMAIN, f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}")
+        is None
+    )
