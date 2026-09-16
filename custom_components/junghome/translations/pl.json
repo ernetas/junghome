@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Certyfikat bramki różni się",
-        "description": "Bramka pod adresem {host} przedstawia certyfikat TLS inny niż przypięty do tego wpisu (przypięty {expected}, przedstawiony {observed}). Jest to oczekiwane tylko wtedy, gdy bramka została przywrócona do ustawień fabrycznych lub wymieniona albo jej oprogramowanie wygenerowało certyfikat na nowo. Jeśli nic takiego nie miało miejsca, pod tym adresem może odpowiadać inne urządzenie: wróć i sprawdź adres. Do tej pory wysłano do niego jedynie uzgadnianie TLS. Wyślij, aby zaufać nowemu certyfikatowi i kontynuować."
+        "description": "Bramka pod adresem {host} przedstawia certyfikat TLS inny niż przypięty do tego wpisu (przypięty {expected}, przedstawiony {observed}). Jest to oczekiwane tylko wtedy, gdy bramka została wymieniona albo jej pamięć została wyczyszczona lub ponownie wgrana; certyfikat przetrwa przywrócenie ustawień fabrycznych i aktualizacje oprogramowania. Jeśli nic takiego nie miało miejsca, pod tym adresem może odpowiadać inne urządzenie: wróć i sprawdź adres. Do tej pory wysłano do niego jedynie uzgadnianie TLS. Wyślij, aby zaufać nowemu certyfikatowi i kontynuować."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Moc" },
       "energy": { "name": "Energia" },
+      "total_energy": { "name": "Energia całkowita" },
       "voltage": { "name": "Napięcie" },
       "current": { "name": "Natężenie prądu" },
       "frequency": { "name": "Częstotliwość" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Natężenie oświetlenia" },
+      "present_illuminance": { "name": "Bieżące natężenie oświetlenia" },
       "humidity": { "name": "Wilgotność" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Zaufaj nowemu certyfikatowi bramki",
-            "description": "Urządzenie odpowiadające pod adresem {host} przedstawia certyfikat TLS ({observed}) inny niż ten, który Home Assistant przypiął podczas pierwszego połączenia z tą bramką Jung Home ({expected}). Home Assistant przestał się z nim komunikować, nie wysyła nawet tokena dostępu, a encje bramki pozostają niedostępne do czasu rozwiązania problemu. Zmiana certyfikatu jest oczekiwana tylko wtedy, gdy bramka została przywrócona do ustawień fabrycznych lub wymieniona albo jej oprogramowanie wygenerowało certyfikat na nowo. Jeśli nic takiego nie miało miejsca, pod tym adresem może odpowiadać inne urządzenie: nie potwierdzaj, tylko sprawdź swoją sieć. Potwierdź, że bramka Jung Home pod adresem {host} została zresetowana lub wymieniona i że certyfikat, który teraz przedstawia ({observed}), ma być zaufany zamiast przypiętego ({expected}). Home Assistant przypnie nowy certyfikat, wyśle do niego token dostępu i połączy się ponownie."
+            "description": "Urządzenie odpowiadające pod adresem {host} przedstawia certyfikat TLS ({observed}) inny niż ten, który Home Assistant przypiął podczas pierwszego połączenia z tą bramką Jung Home ({expected}). Home Assistant przestał się z nim komunikować, nie wysyła nawet tokena dostępu, a encje bramki pozostają niedostępne do czasu rozwiązania problemu. Zmiana certyfikatu jest oczekiwana tylko wtedy, gdy bramka została wymieniona albo jej pamięć została wyczyszczona lub ponownie wgrana; certyfikat przetrwa przywrócenie ustawień fabrycznych i aktualizacje oprogramowania. Jeśli nic takiego nie miało miejsca, pod tym adresem może odpowiadać inne urządzenie: nie potwierdzaj, tylko sprawdź swoją sieć. Potwierdź, że bramka Jung Home pod adresem {host} została wymieniona lub ponownie wgrana i że certyfikat, który teraz przedstawia ({observed}), ma być zaufany zamiast przypiętego ({expected}). Home Assistant przypnie nowy certyfikat, wyśle do niego token dostępu i połączy się ponownie."
           }
         },
         "error": {

@@ -12,17 +12,22 @@ state of anything in your installation.
 
 Two things in this repo need real timing evidence:
 
-1. **Rocker buttons.** The shipped blueprint derives single/double/hold from raw
-   `pressed`/`depressed` edges. The mechanism behind what those edges look
-   like is established (see §1.1 of
+1. **Rocker buttons.** The integration derives `click` / `hold_start` /
+   `hold_end` from the raw `pressed`/`depressed` edges (`event.py`; the
+   shipped blueprint only maps those events to actions). The mechanism behind
+   what those edges look like is established (see §1.1 of
    [docs/cross-repo-analysis.md](../../docs/cross-repo-analysis.md)): the
    gateway synthesises the release, so a tap is a ~0.4–0.5 s pulse, and device
    firmware 2.2.0.2 publishes every event twice ~1 s apart, so a tap arrives as
    **two** pairs and a hold as **one**. The second copy lands on the *same*
    channel on a rocker half and on the *other* channel on a single-key element
    (the gateway toggles the side on each reception — there is no echo). A
-   capture measures your own firmware's numbers; a single-key element has
-   never been captured at all.
+   capture measures your own firmware's numbers. Three rocker elements and
+   two single-key elements were verified live on 2026-09-16 (the table in
+   [docs/gateway-websocket.md](../../docs/gateway-websocket.md)); more
+   samples of a *held* single key are still welcome — one hold in four
+   carried its copy on the other side, and nobody knows yet why the others
+   did not.
 2. **Cover travel states.** Whether intermediate positions stream during a
    move has never been observed — that decides whether a cover can track
    position live or only jump to the target. (`level_move` is *not* the
@@ -76,8 +81,10 @@ python capture_ws.py analyze disk_dump/ws-capture-<stamp>/frames.jsonl
 
 This prints the edges per gesture, flags when more than one channel fired
 inside a single gesture (a single-key element's alternating copies, or both
-sides pressed), and derives the timing bounds the blueprint defaults depend
-on — press→release durations and press→press gaps, reported **per gesture**
+sides pressed), and derives the timing bounds `const.py`'s
+`BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` (and the blueprint's
+legacy double-click window) rest on — press→release durations and
+press→press gaps, reported **per gesture**
 rather than pooled, because a double-click gap and two deliberately separate
 presses are both "gaps" and mixing them would justify any window at all.
 

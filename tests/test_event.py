@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import (
 from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.const import (
+    BUTTON_DUPLICATE_WINDOW,
     CONF_SUPPRESS_DUPLICATE_PRESSES,
     DOMAIN,
     EVENT_BUTTON_ACTION,
@@ -75,6 +76,19 @@ class _Rocker:
         """Advance the clock by ``after`` seconds, then push one edge."""
         if after:
             await self.advance(after)
+        _push(self.coordinator, dp_id, value)
+        await self.hass.async_block_till_done()
+
+    async def edge_between_ticks(self, dp_id: str, value: str, *, after: float) -> None:
+        """Move the clock ``after`` seconds and push one edge WITHOUT running timers.
+
+        ``async_fire_time_changed`` fires a timer once the frozen clock has
+        moved (since the freeze) by at least the timer's remaining time, so an
+        intermediate tick past ~0.5 s runs the 1 s hold timer early. An edge
+        that must land strictly before the threshold ticks the clock only;
+        the next ``advance`` evaluates the timers.
+        """
+        self.freezer.tick(timedelta(seconds=after))
         _push(self.coordinator, dp_id, value)
         await self.hass.async_block_till_done()
 
@@ -579,3 +593,214 @@ async def test_genuine_press_after_the_copy_but_within_the_window_is_kept(
     assert bus_events == [*tap, ("up", "pressed")]
     await rocker.edge(UP, "0", after=TAP_PULSE)
     assert bus_events == tap * 2
+
+
+async def test_duplicate_window_boundary_is_inclusive() -> None:
+    """A copy landing exactly ``BUTTON_DUPLICATE_WINDOW`` after the click is dropped.
+
+    The window covers the measured 1.03 s worst case with margin; the bound
+    itself is inclusive (``<=``), so a press exactly on it is still the copy,
+    and the first instant past it is a genuine press.
+    """
+    tracker = ButtonGestureTracker(suppress_duplicates=True)
+    tracker.note_click(10.0)
+    assert tracker.is_duplicate_press(10.0 + BUTTON_DUPLICATE_WINDOW)
+    tracker.note_click(10.0)
+    assert not tracker.is_duplicate_press(10.0 + BUTTON_DUPLICATE_WINDOW + 0.001)
+
+
+# --- The firmware's copy of a HOLD on a single-key element (2026-09-16) ------
+#
+# Live capture on the 1-gang's keys: a hold arrived as ``up`` press, then a
+# ``down`` press 1.4 s later (the copy, on the other side — the gateway toggles
+# the side on every reception), then the finger's release on ``down`` at
+# 2.55 s; ``up`` was never released. Three further holds on those keys carried
+# no copy and were a single clean pulse, which the ordinary path handles.
+
+
+async def test_key_element_hold_copy_completes_the_hold_on_the_first_side(
+    rocker: _Rocker, bus_events
+) -> None:
+    """The captured shape: one ``hold_start``/``hold_end`` pair, on the held side."""
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    assert bus_events == [("up", "pressed"), ("up", "hold_start")]
+    await rocker.edge(DOWN, "1", after=0.4)  # +1.4 s: the copy, other side
+    assert bus_events == [("up", "pressed"), ("up", "hold_start")]
+    await rocker.edge(DOWN, "0", after=1.15)  # +2.55 s: the finger, copy's side
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
+    # Nothing is stuck: the next tap on ``up`` is an ordinary tap (no stale
+    # ``hold_end`` first), and ``down`` owes nothing either.
+    bus_events.clear()
+    await rocker.tap(first=UP, copy=UP)
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+
+
+async def test_hold_copy_marker_does_not_outlive_the_hold(
+    rocker: _Rocker, bus_events
+) -> None:
+    """The held side's own release ends the hold; the copy side owes nothing after.
+
+    The gateway's side toggle is one field shared by every button, so an
+    unrelated key pressed during the hold flips it back and the finger's
+    release lands on the held side after all. The copy side then never gets
+    a release, and its next tap must be a tap — not a press whose release is
+    routed to the other side (which lost the click and re-fired a stale
+    ``depressed`` there).
+    """
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    await rocker.edge(DOWN, "1", after=0.4)  # +1.4 s: the copy
+    await rocker.edge(UP, "0", after=0.6)  # +2.0 s: the finger, held side
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
+    bus_events.clear()
+    await rocker.tap(first=DOWN, copy=DOWN)
+    assert bus_events == [("down", "pressed"), ("down", "depressed"), ("down", "click")]
+
+
+async def test_hold_copy_release_after_the_hold_ended_is_nothing(
+    rocker: _Rocker, bus_events
+) -> None:
+    """A copy's release arriving once the held side has released is dropped whole."""
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    await rocker.edge(DOWN, "1", after=0.4)
+    await rocker.edge(UP, "0", after=0.6)
+    bus_events.clear()
+    await rocker.edge(DOWN, "0", after=0.3)
+    assert bus_events == []
+
+
+async def test_hold_copy_before_the_threshold_still_yields_one_hold(
+    rocker: _Rocker, bus_events
+) -> None:
+    """A copy inside the first second is dropped; the timer still classifies."""
+    await rocker.edge(UP, "1")
+    await rocker.edge_between_ticks(DOWN, "1", after=0.8)
+    assert bus_events == [("up", "pressed")]
+    await rocker.advance(0.2)  # the hold threshold on ``up``
+    assert bus_events == [("up", "pressed"), ("up", "hold_start")]
+    await rocker.edge(DOWN, "0", after=1.0)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("up", "depressed"),
+        ("up", "hold_end"),
+    ]
+
+
+async def test_hold_copy_released_before_the_threshold_is_a_click(
+    rocker: _Rocker, bus_events
+) -> None:
+    """The copy's release before the threshold completes the first side as a click."""
+    await rocker.edge(UP, "1")
+    await rocker.edge_between_ticks(DOWN, "1", after=0.7)
+    await rocker.edge_between_ticks(DOWN, "0", after=0.25)
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+    # The cancelled hold timer never fires.
+    await rocker.advance(1.0)
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")]
+
+
+async def test_other_side_pressed_during_a_tap_is_a_genuine_press(
+    rocker: _Rocker, bus_events
+) -> None:
+    """The captured "A then immediately B" on a rocker: two clicks.
+
+    The other side's press lands 0.445 s after the first press, i.e. inside a
+    tap pulse — not a hold copy — and the gateway interleaves the pairs. Only
+    the trailing copy of the second tap is dropped (by the click window).
+    """
+    await rocker.edge(UP, "1")
+    await rocker.edge(DOWN, "1", after=0.445)
+    await rocker.edge(UP, "0", after=0.045)
+    await rocker.edge(DOWN, "0", after=0.392)
+    await rocker.edge(DOWN, "1", after=0.527)
+    await rocker.edge(DOWN, "0", after=0.325)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("down", "pressed"),
+        ("up", "depressed"),
+        ("up", "click"),
+        ("down", "depressed"),
+        ("down", "click"),
+    ]
+
+
+async def test_hold_copy_is_not_looked_for_with_suppression_off(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, bus_events
+) -> None:
+    """Older firmware sends no copies: a second-side press during a hold is genuine."""
+    entry = await _setup_with_options(hass, {CONF_SUPPRESS_DUPLICATE_PRESSES: False})
+    rocker = _Rocker(hass, freezer, entry.runtime_data)
+    await rocker.edge(UP, "1")
+    await rocker.edge(DOWN, "1", after=1.4)
+    assert bus_events == [("up", "pressed"), ("up", "hold_start"), ("down", "pressed")]
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+def test_hold_copy_target_window() -> None:
+    """Other side, down for 0.6 to 2.5 s: a copy; the same side, or outside: not."""
+    tracker = ButtonGestureTracker(suppress_duplicates=True)
+    up, down = object(), object()
+    assert tracker.hold_copy_target(down, 0.0) is None  # nothing down
+    tracker.note_press(up, 0.0)
+    assert tracker.hold_copy_target(up, 1.0) is None  # same side
+    assert tracker.hold_copy_target(down, 0.5) is None  # inside a tap pulse
+    assert tracker.hold_copy_target(down, 0.6) is up
+    assert tracker.hold_copy_target(down, 2.5) is up
+    assert tracker.hold_copy_target(down, 2.6) is None  # too late to be the copy
+    tracker.note_up(down)  # not the recorded side: ignored
+    assert tracker.hold_copy_target(down, 1.0) is up
+    tracker.note_up(up)
+    assert tracker.hold_copy_target(down, 1.0) is None
+
+
+# --- Firmware-aware suppression default (verbose device endpoint) ------------
+
+
+async def test_button_on_pre_doubling_firmware_is_not_suppressed(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, bus_events
+) -> None:
+    """A button the gateway reports at firmware < 2.2.0 reports each tap once.
+
+    Suppression stays on for the entry, but that device is exempt: two pairs
+    from it are two clicks (the old-firmware double-tap). A revision at or
+    above 2.2.0, or none at all, keeps the copy dropped.
+    """
+    from custom_components.junghome.coordinator import (  # noqa: PLC0415
+        JungHomeDataUpdateCoordinator,
+    )
+
+    old_firmware = [
+        {
+            "device_id": "idrock1",
+            "device_type": "PushButton",
+            "states": {},
+            "property": {
+                "software_revision": {
+                    "state_type": "software_revision",
+                    "value": [2, 1, 4, 0],
+                }
+            },
+        }
+    ]
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_verbose_from_api",
+        AsyncMock(return_value=old_firmware),
+    ):
+        entry = await _setup_with_options(hass, {})
+    await _Rocker(hass, freezer, entry.runtime_data).tap()
+    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * 2
+    await hass.config_entries.async_unload(entry.entry_id)

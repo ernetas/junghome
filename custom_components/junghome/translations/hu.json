@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Az átjáró tanúsítványa eltér",
-        "description": "A(z) {host} címen található átjáró olyan TLS-tanúsítványt mutat be, amely eltér az ehhez a bejegyzéshez rögzítettől (rögzített {expected}, bemutatott {observed}). Ez csak akkor várható, ha az átjárót gyári beállításokra állították vissza vagy kicserélték, vagy a firmware újragenerálta a tanúsítványt. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: lépjen vissza, és ellenőrizze a címet. Eddig csak egy TLS-kézfogást küldtünk neki. A folytatáshoz és az új tanúsítvány megbízhatóként való elfogadásához küldje el az űrlapot."
+        "description": "A(z) {host} címen található átjáró olyan TLS-tanúsítványt mutat be, amely eltér az ehhez a bejegyzéshez rögzítettől (rögzített {expected}, bemutatott {observed}). Ez csak akkor várható, ha az átjárót kicserélték, vagy a tárhelyét törölték vagy újratelepítették; a tanúsítvány túléli a gyári visszaállítást és a firmware-frissítéseket. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: lépjen vissza, és ellenőrizze a címet. Eddig csak egy TLS-kézfogást küldtünk neki. A folytatáshoz és az új tanúsítvány megbízhatóként való elfogadásához küldje el az űrlapot."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Teljesítmény" },
       "energy": { "name": "Energia" },
+      "total_energy": { "name": "Összes energia" },
       "voltage": { "name": "Feszültség" },
       "current": { "name": "Áramerősség" },
       "frequency": { "name": "Frekvencia" },
       "temperature": { "name": "Hőmérséklet" },
       "illuminance": { "name": "Megvilágítás" },
+      "present_illuminance": { "name": "Aktuális megvilágítás" },
       "humidity": { "name": "Páratartalom" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Az átjáró új tanúsítványának megbízhatóként való elfogadása",
-            "description": "A(z) {host} címen válaszoló eszköz olyan TLS-tanúsítványt ({observed}) mutat be, amely eltér attól, amelyet a Home Assistant az ehhez a Jung Home átjáróhoz való első csatlakozáskor rögzített ({expected}). A Home Assistant nem kommunikál vele tovább, még a hozzáférési tokent sem küldi el, és az átjáró entitásai nem elérhetők maradnak, amíg ez meg nem oldódik. A tanúsítvány változása csak akkor várható, ha az átjárót gyári beállításokra állították vissza vagy kicserélték, vagy a firmware újragenerálta a tanúsítványt. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: ne erősítse meg, hanem ellenőrizze a hálózatát. Erősítse meg, hogy a(z) {host} címen található Jung Home átjárót visszaállították vagy kicserélték, és hogy a most bemutatott tanúsítványt ({observed}) a rögzített ({expected}) helyett megbízhatónak kell tekinteni. A Home Assistant rögzíti az új tanúsítványt, elküldi neki a hozzáférési tokent, és újracsatlakozik."
+            "description": "A(z) {host} címen válaszoló eszköz olyan TLS-tanúsítványt ({observed}) mutat be, amely eltér attól, amelyet a Home Assistant az ehhez a Jung Home átjáróhoz való első csatlakozáskor rögzített ({expected}). A Home Assistant nem kommunikál vele tovább, még a hozzáférési tokent sem küldi el, és az átjáró entitásai nem elérhetők maradnak, amíg ez meg nem oldódik. A tanúsítvány változása csak akkor várható, ha az átjárót kicserélték, vagy a tárhelyét törölték vagy újratelepítették; a tanúsítvány túléli a gyári visszaállítást és a firmware-frissítéseket. Ha egyik sem történt, ezen a címen esetleg egy másik eszköz válaszol: ne erősítse meg, hanem ellenőrizze a hálózatát. Erősítse meg, hogy a(z) {host} címen található Jung Home átjárót kicserélték vagy újratelepítették, és hogy a most bemutatott tanúsítványt ({observed}) a rögzített ({expected}) helyett megbízhatónak kell tekinteni. A Home Assistant rögzíti az új tanúsítványt, elküldi neki a hozzáférési tokent, és újracsatlakozik."
           }
         },
         "error": {

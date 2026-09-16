@@ -267,8 +267,13 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        "real_version_fetch: let the test run the real _fetch_config_parameter "
+        "real_version_fetch: let the test run the real _fetch_version_from_api "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_device_properties_fetch: let the test run the real verbose "
+        "device reads (pair with aioclient_mock); by default they are stubbed.",
     )
     config.addinivalue_line(
         "markers",
@@ -349,17 +354,17 @@ def mock_version_fetch(request):
     """Keep the setup-time REST gateway-version read off the network.
 
     The mirror of ``mock_groups_fetch``: ``async_setup_entry`` also reads
-    ``config/parameter/version_release`` (and ``version_build``) before the hub
-    device is registered, so every device page carries the gateway's software
-    version. Defaults to "parameter unavailable", which is exactly what an older
-    firmware returns, so entity/lifecycle tests behave as they always did.
+    ``GET /version/`` before the hub device is registered, so every device
+    page carries the gateway's software version. Defaults to "nothing
+    readable", which is what a transport failure yields, so entity/lifecycle
+    tests behave as they always did.
     """
     if request.node.get_closest_marker("real_version_fetch") is not None:
         yield
         return
     with patch.object(
         JungHomeDataUpdateCoordinator,
-        "_fetch_config_parameter",
+        "_fetch_version_from_api",
         AsyncMock(return_value=None),
     ):
         yield
@@ -405,6 +410,34 @@ def mock_project_export_fetch(request):
         JungHomeDataUpdateCoordinator,
         "_fetch_project_export_from_api",
         AsyncMock(return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_device_properties_fetch(request):
+    """Keep the verbose device reads off the network.
+
+    ``async_setup_entry`` reads ``GET /devices/?verbose=true`` once after the
+    first refresh (energy counters, firmware revisions) and the periodic
+    refresh re-reads single devices. Defaults to "no endpoint" — firmware
+    before 2.1.x — so entity/lifecycle tests see no energy sensor and no
+    per-device firmware knowledge, as before.
+    """
+    if request.node.get_closest_marker("real_device_properties_fetch") is not None:
+        yield
+        return
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_verbose_from_api",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_device_verbose_from_api",
+            AsyncMock(return_value=None),
+        ),
     ):
         yield
 

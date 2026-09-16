@@ -15,13 +15,13 @@ from urllib.parse import quote
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -39,9 +39,13 @@ from .const import (
     scene_unique_id,
 )
 from .models import (
+    DOUBLED_BUTTON_FIRMWARE,
     Device,
+    DeviceProperties,
     NodeIdentity,
     Scene,
+    parse_device_properties,
+    parse_devices_verbose,
     parse_project_export,
     sanitize_devices,
 )
@@ -126,6 +130,19 @@ ISSUE_TLS_MISMATCH = "tls_certificate_changed"
 # request every ten minutes, logged at DEBUG.
 NODE_IDENTITY_REFETCH_INTERVAL = 600
 
+# How often, in seconds, the device *properties* the function list lacks are
+# re-read from the deprecated verbose device endpoint (`GET /devices/{id}?
+# verbose=true`, ~8 KB per device — probed 2026-09-16): a metering socket's
+# cumulative energy counter, every device's firmware revision, reachability.
+# The middleware itself re-polls a device's properties every five minutes
+# (`profile.dirtyAfterSeconds` 300), so reading more often buys nothing. Only
+# the devices with an energy counter are re-read each interval; the full list
+# (~190 KB on 49 devices) is read once at setup and again only when a function
+# appears that the last answer did not list (one the endpoint omits is not
+# asked for again — it would be omitted again; only a missing endpoint or a
+# failed read is retried, and that is one small request).
+DEVICE_PROPERTIES_REFRESH_INTERVAL = 300
+
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
 # handshake — version/message/functions/groups/scenes — plus live datapoint
@@ -134,10 +151,15 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # only the most recent are kept.
 WS_FRAME_LOG_SIZE = 60
 WS_FRAME_MAX_CHARS = 2000
-# The frame types the gateway's WebSocket server defines
-# (websocket-server-service.js; the table in docs/gateway-websocket.md). The
-# latest frame of each is kept IN FULL in `ws_last_frame_by_type`, so a
-# report always carries the complete handshake. The `type` field is the
+# The sixteen frame types the gateway's WebSocket server enumerates
+# (`WebSocketMessageType`, api-server `websocket-server-service.js:36-53`;
+# the table in docs/gateway-websocket.md). Three of them — `devices`,
+# `config` and `state` — have their emitters commented out on current
+# firmware and never arrive, but the set is the server's own vocabulary,
+# kept whole so a firmware that re-enables one is still captured complete.
+# The latest frame of each is kept IN FULL in `ws_last_frame_by_type`, so a
+# report always carries the complete handshake (and the `groups-new` /
+# `groups-deleted` deltas an app edit produces). The `type` field is the
 # peer's to fill in, though, so a type outside this vocabulary is stored
 # truncated, and only while the store holds fewer than WS_FRAME_TYPES_MAX
 # distinct types — a peer minting a new type per frame could otherwise grow
@@ -148,6 +170,8 @@ WS_KNOWN_FRAME_TYPES = frozenset(
         "version",
         "functions",
         "groups",
+        "groups-new",
+        "groups-deleted",
         "scenes",
         "scenes-new",
         "scenes-deleted",
@@ -157,6 +181,7 @@ WS_KNOWN_FRAME_TYPES = frozenset(
         "config",
         "datapoint",
         "scene",
+        "state",
     }
 )
 WS_FRAME_TYPES_MAX = 32
@@ -181,6 +206,14 @@ MAX_PLAUSIBLE_KELVIN = 20000
 # `MSG_SW_VERSION_IND`, so they mean "not known yet", not "version 0".
 UNREAD_VERSION_RELEASE = "0.0.0"
 UNREAD_VERSION_BUILD = "0"
+
+
+def _clean_version_field(raw: Any) -> str | None:
+    """Return a stripped, non-empty string version field, else ``None``."""
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
 
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
@@ -463,6 +496,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # The in-flight debounced re-read, so adoptions arriving while one is
         # running do not stack more.
         self._node_identity_task: asyncio.Task[None] | None = None
+        # Function id -> what the verbose device endpoint adds to that function
+        # (`models.DeviceProperties`): the energy counter of a metering socket,
+        # the device's firmware revision, reachability. Read once at setup
+        # (`async_fetch_device_properties`), the energy counters re-read every
+        # DEVICE_PROPERTIES_REFRESH_INTERVAL (`_async_refresh_device_properties`,
+        # armed by `start`). Replaced wholesale, never mutated. Empty on
+        # firmware without the endpoint.
+        self.device_properties: Mapping[str, DeviceProperties] = MappingProxyType({})
+        # The live function ids at the last full-list read the endpoint
+        # answered (None until it has): a function outside this set is new
+        # since, and asks for the list again; one inside it that the map does
+        # not cover was omitted by the gateway and is not asked for again.
+        self._properties_listed_for: frozenset[str] | None = None
+        self._properties_unsub: CALLBACK_TYPE | None = None
+        self._properties_refresh_running = False
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
         # device pruner clears a removed device's ids from them (see
@@ -806,7 +854,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             f"{format_fingerprint(expected)}, got {format_fingerprint(observed)}"
         )
         self.last_error_at = dt_util.utcnow()
-        if not self._tls_mismatch_reported:
+        # Once per outage, not once per coordinator: a mismatch on the first
+        # refresh leaves the entry in SETUP_RETRY, and every retry (up to one
+        # every ten minutes, for as long as the mismatch lasts) builds a fresh
+        # coordinator with this flag cleared. The issue in the registry is
+        # the memory that spans those rebuilds — it is only ever withdrawn
+        # when the pinned gateway answers again or the entry goes away.
+        if not self._tls_mismatch_reported and (
+            ir.async_get(self.hass).async_get_issue(DOMAIN, self._tls_issue_id) is None
+        ):
             _LOGGER.error(
                 "The Jung Home gateway at %s presents a TLS certificate that "
                 "does not match the pinned one (expected %s, got %s); refusing "
@@ -898,41 +954,38 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return []
         return [g for g in data if isinstance(g, dict)]
 
-    async def _fetch_config_parameter(
-        self, host: str, token: str, parameter: str
-    ) -> str | None:
-        """Best-effort read of one gateway configuration parameter over REST.
+    async def _fetch_version_from_api(self, host: str) -> dict[str, Any] | None:
+        """Best-effort read of ``GET /version/`` — the gateway's version numbers.
 
-        ``GET /config/parameter/{name}`` returns the parameter's bare value as
-        JSON. The api-server derives the topic from the name's first underscore
-        segment (``version_release`` -> topic ``version``) and 404s on an
-        unknown topic or key, so an older firmware simply yields ``None``.
+        The one unauthenticated data endpoint: it returns ``api_version``
+        (``api-junghome``'s package version, the API contract) next to
+        ``version_release`` / ``version_build`` (the gateway's own software
+        version, from the middleware's ``version`` topic —
+        ``01_version-controller.js:32-42``). No token is sent; the request is
+        still pinned to the gateway's certificate like every other one.
+        Firmware before API 1.5.0 answers with ``api_version`` only.
 
-        Every value the state DB can hold before the middleware has read it is
-        its declared default, so a caller must decide what counts as "not known
-        yet" for its own parameter — this helper only strips and rejects empty.
+        Returns the decoded object, or ``None`` for any transport failure,
+        non-200 or non-object body — callers treat that as "unknown".
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{host}/api/junghome/config/parameter/{parameter}"
-        headers = {"token": f"{token}"}
+        url = f"https://{host}/api/junghome/version/"
         try:
             ssl = await self._async_ssl()
             async with (
                 asyncio.timeout(30),
-                session.get(url, headers=headers, ssl=ssl) as response,
+                session.get(url, ssl=ssl) as response,
             ):
                 if response.status != 200:
                     return None
                 data = await response.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-            _LOGGER.debug("Could not read gateway parameter %s: %s", parameter, err)
+            _LOGGER.debug("Could not read the gateway version: %s", err)
             return None
-        if isinstance(data, str) and data.strip():
-            return data.strip()
-        return None
+        return data if isinstance(data, dict) else None
 
     async def async_fetch_gateway_version(self) -> None:
-        """Populate ``gateway_version`` from the gateway's own software version.
+        """Populate ``gateway_version`` (and ``api_version``) from ``GET /version/``.
 
         The WebSocket handshake's ``version`` frame carries the *API* version
         (``api-junghome``'s package version, "1.5.0"), which was being stamped
@@ -942,24 +995,31 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The real value lives in the middleware's ``version`` topic, populated
         from the board controller's ``MSG_SW_VERSION_IND`` (which reports e.g.
         ``"2.1.3 Release (2840)"``; the middleware splits the parenthesised
-        build into ``version_build`` and keeps the rest as ``version_release``).
-        Both are read-only parameters, so this is a plain read.
+        build into ``version_build`` and keeps the rest as
+        ``version_release``). The unauthenticated ``/version/`` reply carries
+        both, so this is one token-less request rather than two authenticated
+        ``config/parameter`` reads.
 
         Best-effort, like the groups and scenes fetches: a version string is not
-        worth failing setup over, and an older firmware without the parameter
+        worth failing setup over, and an older firmware without the fields
         just leaves the previous value in place. ``"0.0.0"`` is the state DB's
         declared default and means the middleware has not read the board yet —
         treated as unknown rather than published as a version.
         """
-        release = await self._fetch_config_parameter(
-            self.config["host"], self.config["token"], "version_release"
-        )
+        data = await self._fetch_version_from_api(self.config["host"])
+        if data is None:
+            _LOGGER.debug("Gateway version not available")
+            return
+        api_version = data.get("api_version")
+        if isinstance(api_version, str) and api_version.strip():
+            # The same number the WebSocket handshake announces; REST makes
+            # it known before the socket connects (or when it never does).
+            self.api_version = api_version.strip()
+        release = _clean_version_field(data.get("version_release"))
         if not release or release == UNREAD_VERSION_RELEASE:
             _LOGGER.debug("Gateway software version not available yet")
             return
-        build = await self._fetch_config_parameter(
-            self.config["host"], self.config["token"], "version_build"
-        )
+        build = _clean_version_field(data.get("version_build"))
         version = (
             f"{release} ({build})"
             if build and build != UNREAD_VERSION_BUILD
@@ -1039,6 +1099,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         await super().async_config_entry_first_refresh()
         await self.async_fetch_node_identities()
+        await self.async_fetch_device_properties()
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
         """Read the gateway's project export (``GET /project/junghome``).
@@ -1122,6 +1183,151 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "Resolved hardware identity for %d gateway functions", len(identities)
         )
         self.apply_node_identities()
+
+    async def _fetch_devices_verbose_from_api(
+        self, host: str, token: str
+    ) -> list[Any] | None:
+        """Read ``GET /devices/?verbose=true``: the raw middleware device objects.
+
+        Deprecated/experimental in the gateway's OpenAPI but live on 2.1.3;
+        ``None`` for any non-200 (older firmware) or a non-list body. Large
+        (~190 KB on 49 devices), so read sparingly — see
+        DEVICE_PROPERTIES_REFRESH_INTERVAL. Labels are in it; never logged.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        url = f"https://{host}/api/junghome/devices/?verbose=true"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                _LOGGER.debug(
+                    "Gateway has no verbose device list (HTTP %s)", response.status
+                )
+                return None
+            data = await response.json()
+        return data if isinstance(data, list) else None
+
+    async def _fetch_device_verbose_from_api(
+        self, host: str, token: str, device_id: str
+    ) -> dict[str, Any] | None:
+        """Read one device's verbose object (``GET /devices/{id}?verbose=true``)."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        safe_id = quote(device_id, safe="")
+        url = f"https://{host}/api/junghome/devices/{safe_id}?verbose=true"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                return None
+            data = await response.json()
+        return data if isinstance(data, dict) else None
+
+    async def async_fetch_device_properties(self) -> None:
+        """Populate ``device_properties`` from the verbose device list, best-effort.
+
+        Best-effort like the identities: firmware without the endpoint, a
+        transport failure or an unusable body leaves the map as it was — an
+        empty map at setup, the previous map on a re-read.
+        """
+        try:
+            raw = await self._fetch_devices_verbose_from_api(
+                self.config["host"], self.config["token"]
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the verbose device list: %s", err)
+            return
+        if raw is None:
+            return
+        # The endpoint answered: whatever live function it left out, it will
+        # leave out next time too, so the periodic refresh stops asking for
+        # the full list until the membership changes (`_properties_listed_for`).
+        self._properties_listed_for = frozenset(
+            device_id
+            for d in self.data or []
+            if isinstance(device_id := d.get("id"), str)
+        )
+        parsed = parse_devices_verbose(raw)
+        if not parsed or parsed == dict(self.device_properties):
+            return
+        self.device_properties = MappingProxyType(parsed)
+        _LOGGER.debug("Read properties for %d gateway devices", len(parsed))
+
+    async def _async_refresh_device_properties(self, _now: datetime) -> None:
+        """Periodic re-read of the properties that change: the energy counters.
+
+        A function that appeared since the last full-list answer (added in the
+        app), or no answer yet (firmware without the endpoint, a failed read),
+        triggers a full-list read instead; otherwise each device holding an
+        energy counter is re-read on its own, small endpoint. Listeners are
+        notified only when a value changed. Runs are not stacked.
+        """
+        if self._properties_refresh_running:
+            return
+        self._properties_refresh_running = True
+        try:
+            await self._refresh_device_properties()
+        finally:
+            self._properties_refresh_running = False
+
+    async def _refresh_device_properties(self) -> None:
+        known = self.device_properties
+        listed = self._properties_listed_for
+        if listed is None or any(
+            isinstance(device_id := d.get("id"), str) and device_id not in listed
+            for d in self.data or []
+        ):
+            await self.async_fetch_device_properties()
+            if self.device_properties is not known:
+                self.async_update_listeners()
+            return
+        updated = dict(known)
+        changed = False
+        for device_id, props in known.items():
+            if not props.has_energy:
+                continue
+            try:
+                document = await self._fetch_device_verbose_from_api(
+                    self.config["host"], self.config["token"], device_id
+                )
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.debug("Could not re-read device %s: %s", device_id, err)
+                continue
+            fresh = parse_device_properties(document)
+            if fresh is not None and fresh != props:
+                updated[device_id] = fresh
+                changed = True
+        if changed:
+            self.device_properties = MappingProxyType(updated)
+            self.async_update_listeners()
+
+    def device_properties_for(self, device: Device) -> DeviceProperties | None:
+        """Return the verbose endpoint's properties for a function, if read."""
+        device_id = device.get("id")
+        if not isinstance(device_id, str):
+            return None
+        return self.device_properties.get(device_id)
+
+    def button_reports_each_tap_once(self, device: Device) -> bool:
+        """Whether ``device`` is KNOWN to run firmware older than the doubling one.
+
+        Device firmware 2.2.0.x publishes every button event twice; older
+        firmware reports each tap once, so suppressing duplicates there only
+        costs fast double-taps. Only a revision the verbose endpoint actually
+        reported, and that is older, exempts a device — unknown stays
+        suppressed, the safe default.
+        """
+        props = self.device_properties_for(device)
+        return (
+            props is not None
+            and props.software_revision is not None
+            and props.software_revision < DOUBLED_BUTTON_FIRMWARE
+        )
 
     def node_identity_for(self, device: Device) -> NodeIdentity | None:
         """Return the hardware identity behind a gateway function, if known.
@@ -2040,7 +2246,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             for scene in items:
                 by_id[scene.get("id")] = scene
             # De-duplicate by label, newest wins. Scene identity is the label
-            # (ids regenerate on firmware updates), so a delta that assigned a
+            # (a scene's id is `id` + hex(mesh scene number), a number the app
+            # may reassign — see `models.Scene`), so a delta that assigned a
             # scene a new id would otherwise leave the old and new entries side
             # by side — and activation resolves the FIRST label match, which
             # could be the dead id. Scenes without a label can't back an entity
@@ -2133,6 +2340,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task = entry.async_create_background_task(
             self.hass, self._websocket_loop(), name="junghome_ws"
         )
+        # The energy counters move; everything else in the map is static.
+        self._properties_unsub = async_track_time_interval(
+            self.hass,
+            self._async_refresh_device_properties,
+            timedelta(seconds=DEVICE_PROPERTIES_REFRESH_INTERVAL),
+        )
 
     async def stop(self) -> None:
         """Stop the coordinator and close the WebSocket connection."""
@@ -2154,6 +2367,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             except asyncio.CancelledError:
                 pass
             self._ws_task = None
+        if self._properties_unsub is not None:
+            self._properties_unsub()
+            self._properties_unsub = None
         if (task := self._node_identity_task) is not None and not task.done():
             # Entry unload cancels its background tasks itself; a full HA
             # shutdown reaches here without an unload, so cancel explicitly.

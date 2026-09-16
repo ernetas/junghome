@@ -55,7 +55,9 @@ _REAL_FETCHES = {
     "groups": JungHomeDataUpdateCoordinator._fetch_groups_from_api,
     "scenes": JungHomeDataUpdateCoordinator._fetch_scenes_from_api,
     "project": JungHomeDataUpdateCoordinator._fetch_project_export_from_api,
-    "parameter": JungHomeDataUpdateCoordinator._fetch_config_parameter,
+    "version": JungHomeDataUpdateCoordinator._fetch_version_from_api,
+    "verbose": JungHomeDataUpdateCoordinator._fetch_devices_verbose_from_api,
+    "verbose_one": JungHomeDataUpdateCoordinator._fetch_device_verbose_from_api,
 }
 
 
@@ -1691,70 +1693,84 @@ async def test_gateway_version_is_read_over_rest(
     Stamping it as `sw_version` reported "1.5.0" on every device page for a
     gateway actually running 2.1.3 build 2840. The real value lives in the
     middleware's `version` topic, populated from the board controller's
-    `MSG_SW_VERSION_IND`.
+    `MSG_SW_VERSION_IND`; the unauthenticated `/version/` reply carries it
+    next to the API version (the exact shape a live 2.1.3 gateway returned on
+    2026-09-16), so one token-less request answers both.
     """
     coordinator = _coordinator(hass)
-    base = "https://h/api/junghome/config/parameter"
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="2840")
+    aioclient_mock.get(
+        "https://h/api/junghome/version/",
+        json={
+            "version_release": "2.1.3 Release",
+            "version_build": "2840",
+            "api_version": "1.5.0",
+        },
+    )
 
     await coordinator.async_fetch_gateway_version()
 
-    assert coordinator.gateway_version == "2.1.3 (2840)"
-    # The API version is a separate number and must not be confused with it.
-    assert coordinator.api_version is None
+    assert coordinator.gateway_version == "2.1.3 Release (2840)"
+    # The API version is a separate number: known from REST now, never
+    # confused with the software version.
+    assert coordinator.api_version == "1.5.0"
+    request = aioclient_mock.mock_calls[0]
+    assert "token" not in {k.lower() for k in (request[3] or {})}  # no token
 
 
 @pytest.mark.real_version_fetch
-async def test_gateway_version_tolerates_missing_or_unread_parameters(
+async def test_gateway_version_tolerates_missing_or_unread_fields(
     hass: HomeAssistant, aioclient_mock
 ) -> None:
     """Anything short of a real reading must leave the version unset.
 
     `"0.0.0"` / `"0"` are the state DB's declared defaults: the middleware ships
     them until the board controller has answered, so they mean "not known yet",
-    not "version 0". Firmware without the parameter 404s. Neither is worth
-    failing setup over, and neither may be published as a version.
+    not "version 0". Firmware before API 1.5.0 answers `/version/` with
+    `api_version` alone. Neither is worth failing setup over, and neither may
+    be published as a version.
     """
     coordinator = _coordinator(hass)
-    base = "https://h/api/junghome/config/parameter"
+    url = "https://h/api/junghome/version/"
 
-    # Older firmware: parameter unknown -> 404.
-    aioclient_mock.get(f"{base}/version_release", status=404)
+    # Older firmware: only the API version in the reply.
+    aioclient_mock.get(url, json={"api_version": "1.4.1"})
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version is None
+    assert coordinator.api_version == "1.4.1"
 
-    # Middleware has not read the board yet -> the declared default.
+    # Middleware has not read the board yet -> the declared defaults.
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="0.0.0")
+    aioclient_mock.get(
+        url, json={"version_release": "0.0.0", "version_build": "0", "api_version": ""}
+    )
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version is None
+    assert coordinator.api_version == "1.4.1"  # an empty string is not a version
 
     # A release with no build yet -> the release alone, not "2.1.3 (0)".
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="0")
+    aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version == "2.1.3"
 
-    # A transport failure leaves the previously known value in place.
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", exc=aiohttp.ClientError())
-    await coordinator.async_fetch_gateway_version()
-    assert coordinator.gateway_version == "2.1.3"
-
-    # A non-string body is not a version either.
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json=213)
-    await coordinator.async_fetch_gateway_version()
-    assert coordinator.gateway_version == "2.1.3"
+    # A transport failure, a non-200 and a non-object body each leave the
+    # previously known value in place.
+    for fail in (
+        {"exc": aiohttp.ClientError()},
+        {"status": 404},
+        {"json": "2.1.3"},
+        {"json": {"version_release": 213}},
+    ):
+        aioclient_mock.clear_requests()
+        aioclient_mock.get(url, **fail)
+        await coordinator.async_fetch_gateway_version()
+        assert coordinator.gateway_version == "2.1.3"
 
     # Re-reading the same version writes nothing: `_apply_gateway_version`
     # walks every registry row, and the stable-session hook calls this on
     # every reconnect.
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="0")
+    aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
     with patch.object(coordinator, "_apply_gateway_version") as apply:
         await coordinator.async_fetch_gateway_version()
     apply.assert_not_called()
@@ -2144,9 +2160,13 @@ async def test_requests_carry_the_stored_pin(
     aioclient_mock.get(f"{base}/groups", json=[])
     aioclient_mock.get(f"{base}/scenes/", json=[])
     aioclient_mock.get(f"{base}/project/junghome", status=404)
-    aioclient_mock.get(f"{base}/config/parameter/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/config/parameter/version_build", json="2840")
+    aioclient_mock.get(
+        "https://h/api/junghome/version/",
+        json={"version_release": "2.1.3", "version_build": "2840"},
+    )
     aioclient_mock.post(f"{base}/scenes/id0001", json={})
+    aioclient_mock.get(f"{base}/devices/?verbose=true", json=[])
+    aioclient_mock.get(f"{base}/devices/idx?verbose=true", json={})
     session = async_get_clientsession(hass, verify_ssl=False)
     original = session._request
     seen: list[object] = []
@@ -2177,8 +2197,18 @@ async def test_requests_carry_the_stored_pin(
         ),
         patch.object(
             JungHomeDataUpdateCoordinator,
-            "_fetch_config_parameter",
-            _REAL_FETCHES["parameter"],
+            "_fetch_version_from_api",
+            _REAL_FETCHES["version"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_verbose_from_api",
+            _REAL_FETCHES["verbose"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_device_verbose_from_api",
+            _REAL_FETCHES["verbose_one"],
         ),
     ):
         await coordinator._async_update_data()
@@ -2186,8 +2216,10 @@ async def test_requests_carry_the_stored_pin(
         await coordinator.async_fetch_scenes()
         await coordinator.async_fetch_node_identities()
         await coordinator.async_fetch_gateway_version()
+        await coordinator.async_fetch_device_properties()
+        await coordinator._fetch_device_verbose_from_api("h", "t", "idx")
         await coordinator.activate_scene("id0001")
-    assert len(seen) == 7
+    assert len(seen) == 8
     assert all(ssl is fingerprint_ssl(FAKE_FINGERPRINT) for ssl in seen)
     learn.assert_not_called()
 

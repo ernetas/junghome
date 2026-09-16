@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Yhdyskäytävän varmenne poikkeaa",
-        "description": "Osoitteessa {host} oleva yhdyskäytävä esittää TLS-varmenteen, joka poikkeaa tälle merkinnälle kiinnitetystä (kiinnitetty {expected}, esitetty {observed}). Tämä on odotettavissa vain, jos yhdyskäytävä on palautettu tehdasasetuksiin tai vaihdettu tai sen laiteohjelmisto on luonut varmenteen uudelleen. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: palaa takaisin ja tarkista osoite. Sille on toistaiseksi lähetetty vain TLS-kättely. Lähetä, jos haluat luottaa uuteen varmenteeseen ja jatkaa."
+        "description": "Osoitteessa {host} oleva yhdyskäytävä esittää TLS-varmenteen, joka poikkeaa tälle merkinnälle kiinnitetystä (kiinnitetty {expected}, esitetty {observed}). Tämä on odotettavissa vain, jos yhdyskäytävä on vaihdettu tai sen tallennustila on tyhjennetty tai asennettu uudelleen; varmenne säilyy tehdasasetusten palautuksessa ja laiteohjelmistopäivityksissä. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: palaa takaisin ja tarkista osoite. Sille on toistaiseksi lähetetty vain TLS-kättely. Lähetä, jos haluat luottaa uuteen varmenteeseen ja jatkaa."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Teho" },
       "energy": { "name": "Energia" },
+      "total_energy": { "name": "Kokonaisenergia" },
       "voltage": { "name": "Jännite" },
       "current": { "name": "Virta" },
       "frequency": { "name": "Taajuus" },
       "temperature": { "name": "Lämpötila" },
       "illuminance": { "name": "Valaistusvoimakkuus" },
+      "present_illuminance": { "name": "Nykyinen valaistusvoimakkuus" },
       "humidity": { "name": "Kosteus" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Luota yhdyskäytävän uuteen varmenteeseen",
-            "description": "Osoitteessa {host} vastaava laite esittää TLS-varmenteen ({observed}), joka poikkeaa siitä, jonka Home Assistant kiinnitti muodostaessaan ensimmäisen yhteyden tähän Jung Home -yhdyskäytävään ({expected}). Home Assistant on lopettanut yhteydenpidon siihen, edes käyttöoikeustunnusta ei lähetetä, ja yhdyskäytävän entiteetit pysyvät poissa käytöstä, kunnes tämä on ratkaistu. Varmenteen muuttuminen on odotettavissa vain, jos yhdyskäytävä on palautettu tehdasasetuksiin tai vaihdettu tai sen laiteohjelmisto on luonut varmenteen uudelleen. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: älä vahvista, vaan tarkista verkkosi. Vahvista, että osoitteessa {host} oleva Jung Home -yhdyskäytävä on palautettu tai vaihdettu ja että sen nyt esittämään varmenteeseen ({observed}) tulee luottaa kiinnitetyn ({expected}) sijaan. Home Assistant kiinnittää uuden varmenteen, lähettää sille käyttöoikeustunnuksen ja muodostaa yhteyden uudelleen."
+            "description": "Osoitteessa {host} vastaava laite esittää TLS-varmenteen ({observed}), joka poikkeaa siitä, jonka Home Assistant kiinnitti muodostaessaan ensimmäisen yhteyden tähän Jung Home -yhdyskäytävään ({expected}). Home Assistant on lopettanut yhteydenpidon siihen, edes käyttöoikeustunnusta ei lähetetä, ja yhdyskäytävän entiteetit pysyvät poissa käytöstä, kunnes tämä on ratkaistu. Varmenteen muuttuminen on odotettavissa vain, jos yhdyskäytävä on vaihdettu tai sen tallennustila on tyhjennetty tai asennettu uudelleen; varmenne säilyy tehdasasetusten palautuksessa ja laiteohjelmistopäivityksissä. Jos mitään näistä ei ole tapahtunut, tässä osoitteessa saattaa vastata toinen laite: älä vahvista, vaan tarkista verkkosi. Vahvista, että osoitteessa {host} oleva Jung Home -yhdyskäytävä on vaihdettu tai asennettu uudelleen ja että sen nyt esittämään varmenteeseen ({observed}) tulee luottaa kiinnitetyn ({expected}) sijaan. Home Assistant kiinnittää uuden varmenteen, lähettää sille käyttöoikeustunnuksen ja muodostaa yhteyden uudelleen."
           }
         },
         "error": {

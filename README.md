@@ -14,7 +14,9 @@ is required.
   (DALI, etc.) with brightness and colour *temperature* (tunable white; the
   gateway supports 2000–6000 K). Full RGB colour is not exposed by the
   gateway.
-- **Sockets** — on/off plus their live meter readings (power, current, …).
+- **Sockets** — on/off plus their live meter readings (power, current, …)
+  and, on gateway firmware 2.1.x+, the socket's **cumulative energy counter**
+  as a `total_increasing` sensor — add it to the Energy Dashboard directly.
 - **Blinds / shutters (covers)** — open/close/stop, position, and slat tilt.
   Covers that expose slat tilt show up as blinds; position-only ones as roller
   shutters, with the matching icons and controls.
@@ -24,7 +26,9 @@ is required.
 - **Thermostats** (room temperature regulators) — target temperature, presets,
   and heating activity (`hvac_action`). The gateway offers no on/off for a
   regulator, so these entities are heat-only; the **frost protection** preset
-  is the closest thing to "off".
+  is the closest thing to "off". The room temperature is also a standalone
+  **temperature sensor**, so it keeps long-term statistics (a climate
+  entity's own reading has none).
 - **Scenes** — every JUNG HOME scene appears as a `scene.*` entity, and scene
   recalls from *any* source (including physical buttons) fire a Home Assistant
   event — see [Scenes](#scenes).
@@ -111,7 +115,8 @@ on the gateway's **hardware serial** (read from mDNS or the gateway itself),
 so if the gateway's IP later changes while Home Assistant cannot reach it at
 the old one, discovery updates the stored address automatically — however
 the entry was added — provided the gateway at the new address presents the
-pinned certificate (see [Security](#security)). An entry that is connected
+pinned certificate (see [Security](#security); an entry that has not pinned
+yet trusts the announcement, as its first contact). An entry that is connected
 and healthy is never moved by a discovery packet. On networks without mDNS
 (e.g. across VLANs) use **Reconfigure** to point the entry at the new
 address; it verifies the address actually belongs to *this* gateway before
@@ -134,8 +139,9 @@ the mesh. The remaining assumption is the **first connection**: whatever
 answers at the gateway's address when an entry first pins is trusted, so
 set up (and upgrade) on a network you trust.
 
-If the gateway ever presents a different certificate — after a factory
-reset, a replacement, or a firmware update that regenerates it — the
+If the gateway ever presents a different certificate — a replaced gateway,
+or a wiped or re-imaged storage card; the certificate lives on the gateway's
+data partition and survives a factory reset and firmware updates — the
 integration stops talking to it (its entities become unavailable) and
 raises a **"Jung Home gateway certificate changed"** repair issue under
 **Settings → System → Repairs**. Confirm it there only if you know why the
@@ -158,9 +164,11 @@ confirmation before anything is sent to it.
   scales with it (up to ten hours at the maximum).
 - **Ignore duplicate button presses** (on by default) — current JUNG device
   firmware reports every tap twice; the integration drops the copy (a press
-  on the same button within 1.2 s of a click). Turn it off only on older
-  device firmware that reports each tap once, if you need presses closer
-  together than that (double-clicks) — details under
+  on the same button within 1.2 s of a click). A button whose firmware the
+  gateway reports as older than 2.2.0 is exempt automatically (it reports
+  each tap once), so the switch only matters for buttons whose firmware is
+  unknown or current; turn it off only if you need presses closer together
+  than 1.2 s (double-clicks) on such a button — details under
   [Button automations](#button-automations-rocker-switches).
 - **Inverted covers (awnings)** — flag covers whose position is reported
   backwards, as described under [What works](#what-works).
@@ -180,7 +188,11 @@ route for a "press this, do that" automation; no timing to tune.
 
 - Full guide + copy-paste recipes (click, hold-to-dim): [`docs/example-button-automation.md`](docs/example-button-automation.md)
 - Blueprint (a form for click + hold actions): [`blueprints/automation/junghome/button_gestures.yaml`](blueprints/automation/junghome/button_gestures.yaml)
-  — import it by URL (Settings → Automations & scenes → Blueprints → Import).
+  — HACS installs only the integration, never blueprints, so import it with
+  the button below (or by URL: Settings → Automations & scenes → Blueprints
+  → Import).
+
+  [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fernetas%2Fjunghome%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fjunghome%2Fbutton_gestures.yaml)
 
 **Why no double-click?** Current JUNG device firmware (2.2.0.x, mid-2026)
 reports one tap as *two* press/release pairs, which makes a single click
@@ -289,8 +301,9 @@ specifically — see the repair notice above.
 The device answering at the gateway's address presents a TLS certificate
 other than the one pinned when the entry first connected, so the integration
 has stopped sending anything to it — the access token included — and the
-entities are unavailable. Expected after a factory reset, a gateway
-replacement or a firmware update that regenerates the certificate: confirm
+entities are unavailable. Expected only after a gateway replacement or a
+wiped/re-imaged storage card (the certificate survives a factory reset and
+firmware updates): confirm
 the repair to pin the new certificate and reconnect (it still checks the
 gateway's serial, so a *different* gateway is refused — use Reconfigure for
 that). If none of that happened, do not confirm; something else is answering
@@ -331,12 +344,16 @@ handshake presents it).
 
 ## Known limitations
 
-- **Metering sockets report instantaneous power (W) and current (A), not
-  cumulative energy (kWh)**, so they can't go straight onto the Energy
-  Dashboard. To track energy/cost, add a Riemann-sum
+- **The energy counter comes from a deprecated gateway endpoint.** The
+  gateway's function list carries a socket's instantaneous readings only; the
+  cumulative Wh counter lives in the device's *properties*, which only the
+  `/devices/?verbose=true` endpoint (marked deprecated/experimental in the
+  gateway's own API spec) exposes. It works on 2.1.3 and is re-read every
+  five minutes — the gateway's own cadence — but a future firmware could drop
+  it, in which case the sensor simply disappears and the Riemann-sum
   [Integration helper](https://www.home-assistant.io/integrations/integration/)
-  on the socket's power sensor (Settings → Devices & Services → Helpers →
-  Riemann sum), then add that kWh sensor to the Energy Dashboard.
+  on the power sensor is the fallback. Firmware without the endpoint shows no
+  energy sensor at all.
 - **No double-click on current device firmware** — it reports every tap
   twice, so a double is indistinguishable from a single; click and hold are
   what the buttons offer (see
@@ -346,6 +363,10 @@ handshake presents it).
 - **Colour temperature tops out at 6000 K** — the gateway itself clamps every
   tunable-white command to 2000–6000 K, regardless of the fixture.
 - The **puck** isn't supported/validated yet.
+- **Thermostat temperature moves in 0.5 °C steps, a few times an hour.** That
+  is the device's reporting (the BT-Mesh temperature property it publishes
+  has 0.5 °C resolution and the gateway polls it every five minutes), not
+  something the integration can refine.
 - **Two devices with the same label collide.** The gateway's device ids are
   derived from each node's mesh identity and location, so they change when a
   device is re-provisioned or re-enumerated (as app-driven firmware updates

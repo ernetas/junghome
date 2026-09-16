@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Certifikat prehoda se razlikuje",
-        "description": "Prehod na naslovu {host} predstavlja certifikat TLS, ki se razlikuje od certifikata, pripetega za ta vnos (pripet {expected}, predstavljen {observed}). To je pričakovano le, če je bil prehod ponastavljen na tovarniške nastavitve ali zamenjan, ali če je njegova strojna programska oprema certifikat znova ustvarila. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: pojdite nazaj in preverite naslov. Doslej mu je bilo poslano le rokovanje TLS. Pošljite, da zaupate novemu certifikatu in nadaljujete."
+        "description": "Prehod na naslovu {host} predstavlja certifikat TLS, ki se razlikuje od certifikata, pripetega za ta vnos (pripet {expected}, predstavljen {observed}). To je pričakovano le, če je bil prehod zamenjan ali če je bil njegov pomnilnik izbrisan ali znova naložen; certifikat preživi ponastavitev na tovarniške nastavitve in posodobitve strojne programske opreme. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: pojdite nazaj in preverite naslov. Doslej mu je bilo poslano le rokovanje TLS. Pošljite, da zaupate novemu certifikatu in nadaljujete."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Moč" },
       "energy": { "name": "Energija" },
+      "total_energy": { "name": "Skupna energija" },
       "voltage": { "name": "Napetost" },
       "current": { "name": "Tok" },
       "frequency": { "name": "Frekvenca" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Osvetljenost" },
+      "present_illuminance": { "name": "Trenutna osvetljenost" },
       "humidity": { "name": "Vlažnost" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Zaupaj novemu certifikatu prehoda",
-            "description": "Naprava, ki odgovarja na naslovu {host}, predstavlja certifikat TLS ({observed}), ki se razlikuje od tistega, ki ga je Home Assistant pripel ob prvi povezavi s tem prehodom Jung Home ({expected}). Home Assistant je z njo prenehal komunicirati, niti dostopnega žetona ne pošilja, entitete prehoda pa ostanejo nedosegljive, dokler to ni razrešeno. Spremenjen certifikat je pričakovan le, če je bil prehod ponastavljen na tovarniške nastavitve ali zamenjan, ali če je njegova strojna programska oprema certifikat znova ustvarila. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: ne potrdite, temveč preverite svoje omrežje. Potrdite, da je bil prehod Jung Home na naslovu {host} ponastavljen ali zamenjan in da je treba certifikatu, ki ga zdaj predstavlja ({observed}), zaupati namesto pripetemu ({expected}). Home Assistant bo pripel novi certifikat, mu poslal dostopni žeton in se znova povezal."
+            "description": "Naprava, ki odgovarja na naslovu {host}, predstavlja certifikat TLS ({observed}), ki se razlikuje od tistega, ki ga je Home Assistant pripel ob prvi povezavi s tem prehodom Jung Home ({expected}). Home Assistant je z njo prenehal komunicirati, niti dostopnega žetona ne pošilja, entitete prehoda pa ostanejo nedosegljive, dokler to ni razrešeno. Spremenjen certifikat je pričakovan le, če je bil prehod zamenjan ali če je bil njegov pomnilnik izbrisan ali znova naložen; certifikat preživi ponastavitev na tovarniške nastavitve in posodobitve strojne programske opreme. Če se ni zgodilo nič od tega, na tem naslovu morda odgovarja druga naprava: ne potrdite, temveč preverite svoje omrežje. Potrdite, da je bil prehod Jung Home na naslovu {host} zamenjan ali znova naložen in da je treba certifikatu, ki ga zdaj predstavlja ({observed}), zaupati namesto pripetemu ({expected}). Home Assistant bo pripel novi certifikat, mu poslal dostopni žeton in se znova povezal."
           }
         },
         "error": {

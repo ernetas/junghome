@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Gatewaycertificaat wijkt af",
-        "description": "De gateway op {host} toont een TLS-certificaat dat afwijkt van het certificaat dat voor dit item is vastgepind (vastgepind {expected}, getoond {observed}). Dit is alleen te verwachten als de gateway naar fabrieksinstellingen is teruggezet of vervangen, of als de firmware het certificaat opnieuw heeft aangemaakt. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: ga terug en controleer het adres. Tot nu toe is er alleen een TLS-handshake naartoe gestuurd. Verzend om het nieuwe certificaat te vertrouwen en door te gaan."
+        "description": "De gateway op {host} toont een TLS-certificaat dat afwijkt van het certificaat dat voor dit item is vastgepind (vastgepind {expected}, getoond {observed}). Dit is alleen te verwachten als de gateway is vervangen of als zijn opslag is gewist of opnieuw geïnstalleerd; het certificaat overleeft een fabrieksreset en firmware-updates. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: ga terug en controleer het adres. Tot nu toe is er alleen een TLS-handshake naartoe gestuurd. Verzend om het nieuwe certificaat te vertrouwen en door te gaan."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Vermogen" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Totale energie" },
       "voltage": { "name": "Spanning" },
       "current": { "name": "Stroom" },
       "frequency": { "name": "Frequentie" },
       "temperature": { "name": "Temperatuur" },
       "illuminance": { "name": "Verlichtingssterkte" },
+      "present_illuminance": { "name": "Huidige verlichtingssterkte" },
       "humidity": { "name": "Luchtvochtigheid" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Het nieuwe certificaat van de gateway vertrouwen",
-            "description": "Het apparaat dat op {host} antwoordt, toont een TLS-certificaat ({observed}) dat afwijkt van het certificaat dat Home Assistant heeft vastgepind bij de eerste verbinding met deze Jung Home-gateway ({expected}). Home Assistant praat er niet meer mee, zelfs het toegangstoken wordt niet verzonden, en de entiteiten van de gateway blijven niet beschikbaar tot dit is opgelost. Een gewijzigd certificaat is alleen te verwachten als de gateway naar fabrieksinstellingen is teruggezet of vervangen, of als de firmware het certificaat opnieuw heeft aangemaakt. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: bevestig niet, maar controleer je netwerk. Bevestig dat de Jung Home-gateway op {host} is teruggezet of vervangen en dat het certificaat dat hij nu toont ({observed}) vertrouwd moet worden in plaats van het vastgepinde ({expected}). Home Assistant pint het nieuwe certificaat vast, stuurt het toegangstoken ernaartoe en maakt opnieuw verbinding."
+            "description": "Het apparaat dat op {host} antwoordt, toont een TLS-certificaat ({observed}) dat afwijkt van het certificaat dat Home Assistant heeft vastgepind bij de eerste verbinding met deze Jung Home-gateway ({expected}). Home Assistant praat er niet meer mee, zelfs het toegangstoken wordt niet verzonden, en de entiteiten van de gateway blijven niet beschikbaar tot dit is opgelost. Een gewijzigd certificaat is alleen te verwachten als de gateway is vervangen of als zijn opslag is gewist of opnieuw geïnstalleerd; het certificaat overleeft een fabrieksreset en firmware-updates. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: bevestig niet, maar controleer je netwerk. Bevestig dat de Jung Home-gateway op {host} is vervangen of opnieuw geïnstalleerd en dat het certificaat dat hij nu toont ({observed}) vertrouwd moet worden in plaats van het vastgepinde ({expected}). Home Assistant pint het nieuwe certificaat vast, stuurt het toegangstoken ernaartoe en maakt opnieuw verbinding."
           }
         },
         "error": {

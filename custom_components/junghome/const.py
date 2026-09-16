@@ -78,6 +78,22 @@ BUTTON_DUPLICATE_WINDOW = 1.2
 # firmware (one pair per tap) who double-taps faster than that turns it off.
 CONF_SUPPRESS_DUPLICATE_PRESSES = "suppress_duplicate_presses"
 DEFAULT_SUPPRESS_DUPLICATE_PRESSES = True
+# The firmware's copy of a HOLD on a single-key element. The gateway toggles
+# the reported side of such an element on every reception, so while a hold's
+# first copy keeps one side down, the second copy lands as a press on the
+# OTHER side, and the finger's release then lands on that other side too —
+# the first side is never released (live capture 2026-09-16, 1-gang keys:
+# press, other-side press +1.4 s, release on the copy's side at +2.55 s; three
+# further holds on those keys carried no copy at all). A press on the other
+# side of a device whose one side has been down for longer than any
+# synthesised tap pulse (0.53 s measured — a tap's own copy only ever arrives
+# after its release, which BUTTON_DUPLICATE_WINDOW handles) and less than this
+# window is that copy: it is dropped, and its release completes the hold on
+# the side that is actually down. On a rocker the gateway suppresses a hold's
+# copy itself (same side, value unchanged), so this only ever misfires there
+# if the other side is pressed with a second finger while the first is held.
+BUTTON_HOLD_COPY_AFTER = 0.6
+BUTTON_HOLD_COPY_WINDOW = 2.5
 
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
@@ -305,20 +321,30 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     before the platforms create the per-function devices that reference it via
     ``via_device``) and by the connectivity sensor that lives on it, so both
     describe the device identically.
+
+    No ``None`` values, for the same reason ``JungHomeEntity.device_info``
+    has none: ``async_get_or_create`` applies an explicit ``None`` as a
+    change, so a setup whose version read failed (the state DB's ``"0.0.0"``
+    right after a gateway reboot, or a timeout) would blank the version the
+    registry already held from an earlier run until ``_mark_session_stable``
+    re-read it. An omitted key leaves the registry row as it is.
     """
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, gateway_device_id(entry))},
         name=GATEWAY_NAME,
         manufacturer=GATEWAY_MANUFACTURER,
         model=GATEWAY_MODEL,
-        sw_version=sw_version,
-        # The hardware serial the entry already learned (mDNS TXT, or the
-        # gateway's own `config/parameter/system_serial`). Shown on the device
-        # page so a user with two gateways can tell them apart; it is not an
-        # identity field, so adding it never re-keys the device. Absent on a
-        # legacy entry that predates serial discovery.
-        serial_number=entry.data.get(CONF_SERIAL),
     )
+    if sw_version:
+        info["sw_version"] = sw_version
+    # The hardware serial the entry already learned (mDNS TXT, or the
+    # gateway's own `config/parameter/system_serial`). Shown on the device
+    # page so a user with two gateways can tell them apart; it is not an
+    # identity field, so adding it never re-keys the device. Absent on a
+    # legacy entry that predates serial discovery.
+    if serial := entry.data.get(CONF_SERIAL):
+        info["serial_number"] = str(serial)
+    return info
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:

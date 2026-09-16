@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Certificatul gateway-ului diferă",
-        "description": "Gateway-ul de la {host} prezintă un certificat TLS diferit de cel fixat pentru această intrare (fixat {expected}, prezentat {observed}). Acest lucru este de așteptat doar dacă gateway-ul a fost resetat la setările din fabrică sau înlocuit, ori dacă firmware-ul a regenerat certificatul. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: reveniți și verificați adresa. Până acum i s-a trimis doar un handshake TLS. Trimiteți pentru a avea încredere în noul certificat și a continua."
+        "description": "Gateway-ul de la {host} prezintă un certificat TLS diferit de cel fixat pentru această intrare (fixat {expected}, prezentat {observed}). Acest lucru este de așteptat doar dacă gateway-ul a fost înlocuit ori dacă stocarea sa a fost ștearsă sau reinstalată; certificatul supraviețuiește unei resetări din fabrică și actualizărilor de firmware. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: reveniți și verificați adresa. Până acum i s-a trimis doar un handshake TLS. Trimiteți pentru a avea încredere în noul certificat și a continua."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Putere" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Energie totală" },
       "voltage": { "name": "Tensiune" },
       "current": { "name": "Curent" },
       "frequency": { "name": "Frecvență" },
       "temperature": { "name": "Temperatură" },
       "illuminance": { "name": "Iluminare" },
+      "present_illuminance": { "name": "Iluminare actuală" },
       "humidity": { "name": "Umiditate" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Aveți încredere în noul certificat al gateway-ului",
-            "description": "Dispozitivul care răspunde la {host} prezintă un certificat TLS ({observed}) diferit de cel pe care Home Assistant l-a fixat la prima conectare la acest gateway Jung Home ({expected}). Home Assistant a încetat să comunice cu el, nici măcar tokenul de acces nu este trimis, iar entitățile gateway-ului rămân indisponibile până la rezolvare. Un certificat schimbat este de așteptat doar dacă gateway-ul a fost resetat la setările din fabrică sau înlocuit, ori dacă firmware-ul a regenerat certificatul. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: nu confirmați, verificați rețeaua. Confirmați că gateway-ul Jung Home de la {host} a fost resetat sau înlocuit și că certificatul pe care îl prezintă acum ({observed}) trebuie considerat de încredere în locul celui fixat ({expected}). Home Assistant va fixa noul certificat, îi va trimite tokenul de acces și se va reconecta."
+            "description": "Dispozitivul care răspunde la {host} prezintă un certificat TLS ({observed}) diferit de cel pe care Home Assistant l-a fixat la prima conectare la acest gateway Jung Home ({expected}). Home Assistant a încetat să comunice cu el, nici măcar tokenul de acces nu este trimis, iar entitățile gateway-ului rămân indisponibile până la rezolvare. Un certificat schimbat este de așteptat doar dacă gateway-ul a fost înlocuit ori dacă stocarea sa a fost ștearsă sau reinstalată; certificatul supraviețuiește unei resetări din fabrică și actualizărilor de firmware. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: nu confirmați, verificați rețeaua. Confirmați că gateway-ul Jung Home de la {host} a fost înlocuit sau reinstalat și că certificatul pe care îl prezintă acum ({observed}) trebuie considerat de încredere în locul celui fixat ({expected}). Home Assistant va fixa noul certificat, îi va trimite tokenul de acces și se va reconecta."
           }
         },
         "error": {

@@ -472,3 +472,115 @@ def parse_project_export(document: Any) -> dict[str, NodeIdentity]:
             )
 
     return identities
+
+
+# --- Device properties (``GET /devices/?verbose=true``) -----------------------
+#
+# The deprecated/experimental verbose device endpoint returns the middleware's
+# raw ``JungHomeDevice`` objects — ``device_id`` is the function id — and with
+# them the device *properties* the function list never carries (probed live
+# 2026-09-16, docs/gateway-rest-api.md): a metering socket's cumulative energy
+# counter ``total_device_energy_use`` (Wh), every device's ``software_revision``
+# (``[2, 2, 0, 2]``), and per-state ``statistics.reachable``. Only those three
+# are read; the rest of the document is dropped.
+
+# The device firmware that started publishing every button event twice
+# (docs/cross-repo-analysis.md §1.1). A button whose revision is known to be
+# older reports each tap once, so duplicate suppression would only cost it
+# fast double-taps.
+DOUBLED_BUTTON_FIRMWARE = (2, 2, 0)
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceProperties:
+    """The verbose endpoint's per-device facts the integration uses."""
+
+    # The energy counter exists on this device (a metering socket); its value
+    # is None until the middleware has polled it.
+    has_energy: bool = False
+    energy_wh: float | None = None
+    # ``software_revision`` as a version tuple, e.g. ``(2, 2, 0, 2)``.
+    software_revision: tuple[int, ...] | None = None
+    # The middleware's ``isDeviceOnline``: any state reachable.
+    reachable: bool | None = None
+
+
+def _entries(collection: Any) -> list[dict[str, Any]]:
+    """Return the dict-valued entries of a ``states``/``property`` map (dict or list)."""
+    if isinstance(collection, dict):
+        collection = list(collection.values())
+    if not isinstance(collection, list):
+        return []
+    return [item for item in collection if isinstance(item, dict)]
+
+
+def _revision(raw: object) -> tuple[int, ...] | None:
+    """``[2, 2, 0, 2]`` or ``"2.2.0.2"`` -> ``(2, 2, 0, 2)``; anything else None."""
+    parts: list[Any]
+    if isinstance(raw, str):
+        parts = raw.strip().split(".")
+    elif isinstance(raw, list):
+        parts = raw
+    else:
+        return None
+    numbers: list[int] = []
+    for part in parts:
+        value = _decimal_int(part) if isinstance(part, str) else part
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        numbers.append(value)
+    return tuple(numbers) if numbers else None
+
+
+def _energy_wh(prop: dict[str, Any]) -> float | None:
+    """Return the counter's value in Wh (a kWh-labelled value is scaled), or None."""
+    value = prop.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    profile = prop.get("profile")
+    unit = profile.get("unit") if isinstance(profile, dict) else None
+    scale = 1000.0 if isinstance(unit, str) and unit.strip().lower() == "kwh" else 1.0
+    result = float(value) * scale
+    return result if result >= 0 else None
+
+
+def parse_device_properties(document: Any) -> DeviceProperties | None:
+    """Parse one verbose device object; None if it is not one."""
+    if not isinstance(document, dict) or not isinstance(document.get("device_id"), str):
+        return None
+    has_energy = False
+    energy_wh: float | None = None
+    revision: tuple[int, ...] | None = None
+    for prop in _entries(document.get("property")):
+        kind = prop.get("state_type")
+        if kind == "total_device_energy_use":
+            has_energy = True
+            energy_wh = _energy_wh(prop)
+        elif kind == "software_revision":
+            revision = _revision(prop.get("value"))
+    reachable: bool | None = None
+    states = _entries(document.get("states"))
+    if states:
+        reachable = any(
+            isinstance(stats := state.get("statistics"), dict)
+            and stats.get("reachable") is True
+            for state in states
+        )
+    return DeviceProperties(
+        has_energy=has_energy,
+        energy_wh=energy_wh,
+        software_revision=revision,
+        reachable=reachable,
+    )
+
+
+def parse_devices_verbose(raw: Any) -> dict[str, DeviceProperties]:
+    """Map function ids to properties from the verbose device list (best-effort)."""
+    if not isinstance(raw, list):
+        return {}
+    result: dict[str, DeviceProperties] = {}
+    for item in raw:
+        parsed = parse_device_properties(item)
+        if parsed is not None:
+            result[item["device_id"]] = parsed
+    return result

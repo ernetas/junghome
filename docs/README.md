@@ -1,11 +1,12 @@
 # JUNG HOME Gateway documentation
 
 Reverse-engineered reference for the JUNG HOME Gateway, for contributors to this
-integration. Sourced from a gateway microSD image (firmware/API 1.5.0) and the
-live local API. None of this is required to *use* the integration.
+integration. Sourced from a gateway microSD image (gateway firmware v2.1.3 build
+2840, API 1.5.0) and the live local API. None of this is required to *use* the
+integration.
 
 - **[gateway-architecture.md](gateway-architecture.md)** — hardware, microSD
-  partition layout (sdc1–sdc4), the on-board services, the Bluetooth-Mesh
+  partition layout (four partitions), the on-board services, the Bluetooth-Mesh
   stack, the gateway's own role on the mesh (an ordinary node `0x00DC`, not a
   provisioner), and self-hosting without the gateway.
 - **[gateway-rest-api.md](gateway-rest-api.md)** — REST API: auth, the
@@ -25,7 +26,9 @@ live local API. None of this is required to *use* the integration.
 - **[cross-repo-analysis.md](cross-repo-analysis.md)** — 2026-09-15 audit
   against the Bluetooth-direct sibling project and the firmware dump: the
   established mechanism of the double-reporting rockers, other settled
-  gateway facts, and the open bug / improvement / doc-correction tracker.
+  gateway facts, and what is still open (a hardware verification of the
+  gesture rebuild, a few improvements, and the captures that would close the
+  remaining questions). Every bug and doc correction it raised has landed.
 - **[matter-bridge.md](matter-bridge.md)** — getting JUNG devices into Matter
   (the gateway's built-in Matter is inactive; bridge from Home Assistant
   instead).

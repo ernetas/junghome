@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Šliuzo sertifikatas skiriasi",
-        "description": "Šliuzas adresu {host} pateikia TLS sertifikatą, kuris skiriasi nuo šiam įrašui prisegto (prisegtas {expected}, pateiktas {observed}). To tikimasi tik jei šliuzas buvo atkurtas į gamyklinius nustatymus ar pakeistas, arba jo programinė aparatinė įranga iš naujo sukūrė sertifikatą. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: grįžkite ir patikrinkite adresą. Kol kas jam išsiųstas tik TLS rankos paspaudimas. Pateikite, kad pasitikėtumėte nauju sertifikatu ir tęstumėte."
+        "description": "Šliuzas adresu {host} pateikia TLS sertifikatą, kuris skiriasi nuo šiam įrašui prisegto (prisegtas {expected}, pateiktas {observed}). To tikimasi tik jei šliuzas buvo pakeistas arba jo saugykla buvo ištrinta ar įrašyta iš naujo; sertifikatas išlieka po gamyklinių nustatymų atkūrimo ir programinės aparatinės įrangos atnaujinimų. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: grįžkite ir patikrinkite adresą. Kol kas jam išsiųstas tik TLS rankos paspaudimas. Pateikite, kad pasitikėtumėte nauju sertifikatu ir tęstumėte."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Galia" },
       "energy": { "name": "Energija" },
+      "total_energy": { "name": "Bendra energija" },
       "voltage": { "name": "Įtampa" },
       "current": { "name": "Srovė" },
       "frequency": { "name": "Dažnis" },
       "temperature": { "name": "Temperatūra" },
       "illuminance": { "name": "Apšvieta" },
+      "present_illuminance": { "name": "Dabartinis apšvietimas" },
       "humidity": { "name": "Drėgmė" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Pasitikėti nauju šliuzo sertifikatu",
-            "description": "Adresu {host} atsakantis įrenginys pateikia TLS sertifikatą ({observed}), kuris skiriasi nuo to, kurį Home Assistant prisegė pirmą kartą jungdamasis prie šio Jung Home šliuzo ({expected}). Home Assistant nustojo su juo bendrauti, net prieigos raktas nesiunčiamas, o šliuzo objektai lieka nepasiekiami, kol tai neišspręsta. Sertifikato pasikeitimo tikimasi tik jei šliuzas buvo atkurtas į gamyklinius nustatymus ar pakeistas, arba jo programinė aparatinė įranga iš naujo sukūrė sertifikatą. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: nepatvirtinkite, o patikrinkite savo tinklą. Patvirtinkite, kad Jung Home šliuzas adresu {host} buvo atkurtas ar pakeistas ir kad dabar jo pateikiamu sertifikatu ({observed}) reikia pasitikėti vietoj prisegtojo ({expected}). Home Assistant prisegs naują sertifikatą, išsiųs jam prieigos raktą ir prisijungs iš naujo."
+            "description": "Adresu {host} atsakantis įrenginys pateikia TLS sertifikatą ({observed}), kuris skiriasi nuo to, kurį Home Assistant prisegė pirmą kartą jungdamasis prie šio Jung Home šliuzo ({expected}). Home Assistant nustojo su juo bendrauti, net prieigos raktas nesiunčiamas, o šliuzo objektai lieka nepasiekiami, kol tai neišspręsta. Sertifikato pasikeitimo tikimasi tik jei šliuzas buvo pakeistas arba jo saugykla buvo ištrinta ar įrašyta iš naujo; sertifikatas išlieka po gamyklinių nustatymų atkūrimo ir programinės aparatinės įrangos atnaujinimų. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: nepatvirtinkite, o patikrinkite savo tinklą. Patvirtinkite, kad Jung Home šliuzas adresu {host} buvo pakeistas ar įrašytas iš naujo ir kad dabar jo pateikiamu sertifikatu ({observed}) reikia pasitikėti vietoj prisegtojo ({expected}). Home Assistant prisegs naują sertifikatą, išsiųs jam prieigos raktą ir prisijungs iš naujo."
           }
         },
         "error": {

@@ -193,6 +193,13 @@ async def async_get_config_entry_diagnostics(
             function_id: asdict(identity)
             for function_id, identity in coordinator.node_identities.items()
         },
+        # Function id -> what the verbose device endpoint added (energy
+        # counter, firmware revision, reachability); empty on firmware
+        # without it. No labels, no keys — the parser keeps only those fields.
+        "device_properties": {
+            function_id: asdict(props)
+            for function_id, props in coordinator.device_properties.items()
+        },
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...
         "recent_websocket_frames": [

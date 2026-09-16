@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Gatewayens sertifikat avviker",
-        "description": "Gatewayen på {host} presenterer et TLS-sertifikat som avviker fra det som er festet for denne oppføringen (festet {expected}, presentert {observed}). Dette er bare forventet hvis gatewayen er tilbakestilt til fabrikkinnstillinger eller byttet ut, eller hvis fastvaren har generert sertifikatet på nytt. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Gå tilbake og kontroller adressen. Så langt er det bare sendt et TLS-håndtrykk til den. Send inn for å stole på det nye sertifikatet og fortsette."
+        "description": "Gatewayen på {host} presenterer et TLS-sertifikat som avviker fra det som er festet for denne oppføringen (festet {expected}, presentert {observed}). Dette er bare forventet hvis gatewayen er byttet ut, eller hvis lagringen dens er slettet eller installert på nytt; sertifikatet overlever en fabrikktilbakestilling og fastvareoppdateringer. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Gå tilbake og kontroller adressen. Så langt er det bare sendt et TLS-håndtrykk til den. Send inn for å stole på det nye sertifikatet og fortsette."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Effekt" },
       "energy": { "name": "Energi" },
+      "total_energy": { "name": "Total energi" },
       "voltage": { "name": "Spenning" },
       "current": { "name": "Strøm" },
       "frequency": { "name": "Frekvens" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Belysningsstyrke" },
+      "present_illuminance": { "name": "Nåværende belysningsstyrke" },
       "humidity": { "name": "Luftfuktighet" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Stol på gatewayens nye sertifikat",
-            "description": "Enheten som svarer på {host}, presenterer et TLS-sertifikat ({observed}) som avviker fra det Home Assistant festet ved første tilkobling til denne Jung Home-gatewayen ({expected}). Home Assistant har sluttet å snakke med den, ikke engang tilgangstokenet sendes, og gatewayens entiteter forblir utilgjengelige til dette er løst. Et endret sertifikat er bare forventet hvis gatewayen er tilbakestilt til fabrikkinnstillinger eller byttet ut, eller hvis fastvaren har generert sertifikatet på nytt. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Ikke bekreft, kontroller nettverket ditt i stedet. Bekreft at Jung Home-gatewayen på {host} er tilbakestilt eller byttet ut, og at sertifikatet den presenterer nå ({observed}), skal stoles på i stedet for det festede ({expected}). Home Assistant fester det nye sertifikatet, sender tilgangstokenet til det og kobler til på nytt."
+            "description": "Enheten som svarer på {host}, presenterer et TLS-sertifikat ({observed}) som avviker fra det Home Assistant festet ved første tilkobling til denne Jung Home-gatewayen ({expected}). Home Assistant har sluttet å snakke med den, ikke engang tilgangstokenet sendes, og gatewayens entiteter forblir utilgjengelige til dette er løst. Et endret sertifikat er bare forventet hvis gatewayen er byttet ut, eller hvis lagringen dens er slettet eller installert på nytt; sertifikatet overlever en fabrikktilbakestilling og fastvareoppdateringer. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Ikke bekreft, kontroller nettverket ditt i stedet. Bekreft at Jung Home-gatewayen på {host} er byttet ut eller installert på nytt, og at sertifikatet den presenterer nå ({observed}), skal stoles på i stedet for det festede ({expected}). Home Assistant fester det nye sertifikatet, sender tilgangstokenet til det og kobler til på nytt."
           }
         },
         "error": {

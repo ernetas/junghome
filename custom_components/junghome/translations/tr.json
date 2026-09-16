@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Ağ geçidi sertifikası farklı",
-        "description": "{host} adresindeki ağ geçidi, bu kayıt için sabitlenmiş olandan farklı bir TLS sertifikası sunuyor (sabitlenen {expected}, sunulan {observed}). Bu yalnızca ağ geçidi fabrika ayarlarına sıfırlandıysa, değiştirildiyse veya donanım yazılımı sertifikayı yeniden oluşturduysa beklenir. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: geri dönüp adresi kontrol edin. Şimdiye kadar ona yalnızca bir TLS el sıkışması gönderildi. Yeni sertifikaya güvenmek ve devam etmek için gönderin."
+        "description": "{host} adresindeki ağ geçidi, bu kayıt için sabitlenmiş olandan farklı bir TLS sertifikası sunuyor (sabitlenen {expected}, sunulan {observed}). Bu yalnızca ağ geçidi değiştirildiyse veya depolama alanı silindiyse ya da yeniden yüklendiyse beklenir; sertifika fabrika ayarlarına sıfırlama ve donanım yazılımı güncellemelerinden sonra da korunur. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: geri dönüp adresi kontrol edin. Şimdiye kadar ona yalnızca bir TLS el sıkışması gönderildi. Yeni sertifikaya güvenmek ve devam etmek için gönderin."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Güç" },
       "energy": { "name": "Enerji" },
+      "total_energy": { "name": "Toplam enerji" },
       "voltage": { "name": "Gerilim" },
       "current": { "name": "Akım" },
       "frequency": { "name": "Frekans" },
       "temperature": { "name": "Sıcaklık" },
       "illuminance": { "name": "Aydınlık" },
+      "present_illuminance": { "name": "Mevcut aydınlık düzeyi" },
       "humidity": { "name": "Nem" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Ağ geçidinin yeni sertifikasına güven",
-            "description": "{host} adresinde yanıt veren cihaz, Home Assistant'ın bu Jung Home ağ geçidine ilk bağlandığında sabitlediğinden ({expected}) farklı bir TLS sertifikası ({observed}) sunuyor. Home Assistant onunla iletişimi durdurdu, erişim belirteci bile gönderilmiyor ve bu çözülene kadar ağ geçidinin varlıkları kullanılamaz durumda kalıyor. Sertifika değişikliği yalnızca ağ geçidi fabrika ayarlarına sıfırlandıysa, değiştirildiyse veya donanım yazılımı sertifikayı yeniden oluşturduysa beklenir. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: onaylamayın, bunun yerine ağınızı kontrol edin. {host} adresindeki Jung Home ağ geçidinin sıfırlandığını veya değiştirildiğini ve şu anda sunduğu sertifikaya ({observed}) sabitlenmiş olan ({expected}) yerine güvenilmesi gerektiğini onaylayın. Home Assistant yeni sertifikayı sabitleyecek, erişim belirtecini ona gönderecek ve yeniden bağlanacaktır."
+            "description": "{host} adresinde yanıt veren cihaz, Home Assistant'ın bu Jung Home ağ geçidine ilk bağlandığında sabitlediğinden ({expected}) farklı bir TLS sertifikası ({observed}) sunuyor. Home Assistant onunla iletişimi durdurdu, erişim belirteci bile gönderilmiyor ve bu çözülene kadar ağ geçidinin varlıkları kullanılamaz durumda kalıyor. Sertifika değişikliği yalnızca ağ geçidi değiştirildiyse veya depolama alanı silindiyse ya da yeniden yüklendiyse beklenir; sertifika fabrika ayarlarına sıfırlama ve donanım yazılımı güncellemelerinden sonra da korunur. Bunlardan hiçbiri olmadıysa bu adreste başka bir cihaz yanıt veriyor olabilir: onaylamayın, bunun yerine ağınızı kontrol edin. {host} adresindeki Jung Home ağ geçidinin değiştirildiğini veya yeniden yüklendiğini ve şu anda sunduğu sertifikaya ({observed}) sabitlenmiş olan ({expected}) yerine güvenilmesi gerektiğini onaylayın. Home Assistant yeni sertifikayı sabitleyecek, erişim belirtecini ona gönderecek ve yeniden bağlanacaktır."
           }
         },
         "error": {

@@ -554,9 +554,12 @@ def _migrate_to_stable_ids(
 ) -> bool:
     """Re-point existing id-based registry entries to label-based stable ids.
 
-    The Jung HOME gateway exposes no hardware identifier, and it regenerates the
-    random device id on firmware updates, which previously caused Home Assistant
-    to create duplicate entities/devices (the old ones left greyed-out). This maps
+    The gateway's device ids are derived from each node's mesh UUID and element
+    location (``models.function_id_for``), so they change whenever the app
+    re-provisions or re-enumerates a node — which app-driven firmware updates
+    did — and the ``functions`` list carries no hardware identifier to key on
+    instead. That previously caused Home Assistant to create duplicate
+    entities/devices (the old ones left greyed-out). This maps
     the currently-registered entries onto the new stable scheme so existing
     automations keep working and future firmware updates stop creating duplicates.
 

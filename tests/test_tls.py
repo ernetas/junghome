@@ -15,6 +15,8 @@ request it ever sees, so "nothing was sent" is asserted, not assumed.
 import asyncio
 import datetime
 import hashlib
+import importlib.util
+import logging
 import ssl
 from pathlib import Path
 from types import SimpleNamespace
@@ -593,3 +595,136 @@ async def test_learn_timeout_is_bounded(hass: HomeAssistant) -> None:
     ):
         await async_learn_fingerprint(session, "gw")
     gate.set()
+
+
+# ---------------------------------------------------------------------------
+# Floor safety and the pin's persistence rules
+# ---------------------------------------------------------------------------
+
+
+def test_repairs_platform_imports_without_the_2026_6_result_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repairs platform must import on the hacs.json floor (HA 2025.12.4).
+
+    ``RepairsFlowResult`` exists only from HA 2026.6 (``repairs/models.py``);
+    the platform annotates with it type-only. Load the module's source afresh
+    with the name removed from ``homeassistant.components.repairs`` — what the
+    floor core looks like — and it must still import. On the floor a platform
+    ``ImportError`` is swallowed by core at DEBUG, and submitting the
+    certificate issue then runs core's plain confirm flow, which deleted the
+    issue without re-pinning: the repair silently did nothing, on six
+    supported releases.
+    """
+    import homeassistant.components.repairs as repairs_component  # noqa: PLC0415
+
+    import custom_components.junghome.repairs as junghome_repairs  # noqa: PLC0415
+
+    # ``raising=False``: on the floor itself the name is already absent.
+    monkeypatch.delattr(repairs_component, "RepairsFlowResult", raising=False)
+    spec = importlib.util.spec_from_file_location(
+        "custom_components.junghome._repairs_floor_probe",
+        Path(junghome_repairs.__file__),
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # raised ImportError before the fix
+    assert issubclass(module.TlsCertificateChangedFlow, junghome_repairs.RepairsFlow)
+
+
+async def test_learned_fingerprint_never_overwrites_a_pin_written_meanwhile(
+    hass: HomeAssistant,
+) -> None:
+    """A stale coordinator's poll must not put its learned pin back over a newer one.
+
+    A legacy entry learns X on its first poll and persists it. A reconfigure
+    (or the repair flow) then writes Y — the certificate the user just
+    confirmed for the new address — and reloads. Should a poll of the *old*
+    coordinator complete between that write and its ``stop()``, the persist
+    step must leave Y alone: writing X back would pin the new coordinator to
+    the wrong certificate and raise ``tls_certificate_changed`` for the very
+    certificate the user vouched for.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-1",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: TOKEN},
+    )
+    entry.add_to_hass(hass)
+    coordinator = JungHomeDataUpdateCoordinator(
+        hass, {"host": "1.2.3.4", "token": TOKEN}, entry
+    )
+    # The learn happens inside the (mocked) fetch, so take it explicitly: the
+    # autouse stub answers FAKE_FINGERPRINT.
+    await coordinator._async_ssl()
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(return_value=[]),
+    ):
+        await coordinator._async_update_data()
+        assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+        assert coordinator._learned_fingerprint == FAKE_FINGERPRINT
+
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_TLS_FINGERPRINT: "cd" * 32}
+        )
+        await coordinator._async_update_data()
+    assert entry.data[CONF_TLS_FINGERPRINT] == "cd" * 32
+
+
+async def test_mismatch_is_logged_once_per_outage_not_per_coordinator(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The ERROR line survives coordinator rebuilds while the issue stands.
+
+    A mismatch on the first refresh parks the entry in SETUP_RETRY, and every
+    retry (up to one every ten minutes, for as long as the mismatch lasts)
+    builds a fresh coordinator. Its once-per-instance flag is empty again, so
+    the outage used to log a new ERROR per retry; the issue in the registry
+    is the memory that spans the rebuilds. Once the issue is gone, a new
+    mismatch is news again.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-1",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: TOKEN,
+            CONF_SERIAL: "ser-1",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    issue_id = await _raise_issue(hass, entry)
+
+    def _errors() -> int:
+        return sum(
+            1
+            for record in caplog.records
+            if record.levelno == logging.ERROR
+            and "does not match the pinned one" in record.getMessage()
+        )
+
+    assert _errors() == 1
+    mismatch = aiohttp.ServerFingerprintMismatch(
+        bytes.fromhex(FAKE_FINGERPRINT), bytes.fromhex("cd" * 32), "1.2.3.4", 443
+    )
+    # The retry's fresh coordinator: same entry, same standing issue.
+    retry = JungHomeDataUpdateCoordinator(
+        hass, {"host": "1.2.3.4", "token": TOKEN}, entry
+    )
+    retry._report_fingerprint_mismatch(mismatch)
+    retry._report_fingerprint_mismatch(mismatch)
+    assert _errors() == 1
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # Issue withdrawn (the gateway answered again, or the user fixed it): the
+    # next mismatch is a new outage and is reported.
+    ir.async_delete_issue(hass, DOMAIN, issue_id)
+    fresh = JungHomeDataUpdateCoordinator(
+        hass, {"host": "1.2.3.4", "token": TOKEN}, entry
+    )
+    fresh._report_fingerprint_mismatch(mismatch)
+    assert _errors() == 2

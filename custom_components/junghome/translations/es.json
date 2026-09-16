@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "El certificado de la pasarela difiere",
-        "description": "La pasarela en {host} presenta un certificado TLS distinto del fijado para esta entrada (fijado {expected}, presentado {observed}). Esto solo es esperable si la pasarela se restableció de fábrica o se sustituyó, o si su firmware regeneró el certificado. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: vuelve atrás y comprueba la dirección. Hasta ahora solo se le ha enviado un saludo TLS. Envía para confiar en el nuevo certificado y continuar."
+        "description": "La pasarela en {host} presenta un certificado TLS distinto del fijado para esta entrada (fijado {expected}, presentado {observed}). Esto solo es esperable si la pasarela se sustituyó o si su almacenamiento se borró o se reinstaló; el certificado sobrevive a un restablecimiento de fábrica y a las actualizaciones de firmware. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: vuelve atrás y comprueba la dirección. Hasta ahora solo se le ha enviado un saludo TLS. Envía para confiar en el nuevo certificado y continuar."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Potencia" },
       "energy": { "name": "Energía" },
+      "total_energy": { "name": "Energía total" },
       "voltage": { "name": "Voltaje" },
       "current": { "name": "Corriente" },
       "frequency": { "name": "Frecuencia" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Iluminancia" },
+      "present_illuminance": { "name": "Iluminancia actual" },
       "humidity": { "name": "Humedad" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Confiar en el nuevo certificado de la pasarela",
-            "description": "El dispositivo que responde en {host} presenta un certificado TLS ({observed}) distinto del que Home Assistant fijó al conectarse por primera vez a esta pasarela Jung Home ({expected}). Home Assistant ha dejado de comunicarse con él, ni siquiera envía el token de acceso, y las entidades de la pasarela permanecen no disponibles hasta que esto se resuelva. Un cambio de certificado solo es esperable si la pasarela se restableció de fábrica o se sustituyó, o si su firmware regeneró el certificado. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: no confirmes, comprueba tu red. Confirma que la pasarela Jung Home en {host} se restableció o se sustituyó y que el certificado que presenta ahora ({observed}) debe ser de confianza en lugar del fijado ({expected}). Home Assistant fijará el nuevo certificado, le enviará el token de acceso y se reconectará."
+            "description": "El dispositivo que responde en {host} presenta un certificado TLS ({observed}) distinto del que Home Assistant fijó al conectarse por primera vez a esta pasarela Jung Home ({expected}). Home Assistant ha dejado de comunicarse con él, ni siquiera envía el token de acceso, y las entidades de la pasarela permanecen no disponibles hasta que esto se resuelva. Un cambio de certificado solo es esperable si la pasarela se sustituyó o si su almacenamiento se borró o se reinstaló; el certificado sobrevive a un restablecimiento de fábrica y a las actualizaciones de firmware. Si no ocurrió nada de eso, puede que otro dispositivo esté respondiendo en esta dirección: no confirmes, comprueba tu red. Confirma que la pasarela Jung Home en {host} se sustituyó o se reinstaló y que el certificado que presenta ahora ({observed}) debe ser de confianza en lugar del fijado ({expected}). Home Assistant fijará el nuevo certificado, le enviará el token de acceso y se reconectará."
           }
         },
         "error": {

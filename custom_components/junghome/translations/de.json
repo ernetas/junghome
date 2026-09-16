@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Gateway-Zertifikat weicht ab",
-        "description": "Das Gateway unter {host} präsentiert ein TLS-Zertifikat, das von dem für diesen Eintrag gepinnten abweicht (gepinnt {expected}, präsentiert {observed}). Das ist nur zu erwarten, wenn das Gateway auf Werkseinstellungen zurückgesetzt oder ersetzt wurde oder seine Firmware das Zertifikat neu erzeugt hat. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Gehe zurück und prüfe die Adresse. Bisher wurde nur ein TLS-Handshake dorthin gesendet. Sende ab, um dem neuen Zertifikat zu vertrauen und fortzufahren."
+        "description": "Das Gateway unter {host} präsentiert ein TLS-Zertifikat, das von dem für diesen Eintrag gepinnten abweicht (gepinnt {expected}, präsentiert {observed}). Das ist nur zu erwarten, wenn das Gateway ersetzt oder sein Speicher gelöscht oder neu bespielt wurde; das Zertifikat überlebt ein Zurücksetzen auf Werkseinstellungen und Firmware-Updates. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Gehe zurück und prüfe die Adresse. Bisher wurde nur ein TLS-Handshake dorthin gesendet. Sende ab, um dem neuen Zertifikat zu vertrauen und fortzufahren."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Leistung" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Gesamtenergie" },
       "voltage": { "name": "Spannung" },
       "current": { "name": "Stromstärke" },
       "frequency": { "name": "Frequenz" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Beleuchtungsstärke" },
+      "present_illuminance": { "name": "Aktuelle Beleuchtungsstärke" },
       "humidity": { "name": "Luftfeuchtigkeit" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Dem neuen Zertifikat des Gateways vertrauen",
-            "description": "Das Gerät, das unter {host} antwortet, präsentiert ein TLS-Zertifikat ({observed}), das von dem abweicht, das Home Assistant beim ersten Verbinden mit diesem Jung Home Gateway gepinnt hat ({expected}). Home Assistant kommuniziert nicht mehr mit ihm, nicht einmal das Zugriffstoken wird gesendet, und die Entitäten des Gateways bleiben nicht verfügbar, bis dies geklärt ist. Ein geändertes Zertifikat ist nur zu erwarten, wenn das Gateway auf Werkseinstellungen zurückgesetzt oder ersetzt wurde oder seine Firmware das Zertifikat neu erzeugt hat. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Bestätige nicht, sondern prüfe dein Netzwerk. Bestätige, dass das Jung Home Gateway unter {host} zurückgesetzt oder ersetzt wurde und dass dem Zertifikat, das es jetzt präsentiert ({observed}), anstelle des gepinnten ({expected}) vertraut werden soll. Home Assistant pinnt dann das neue Zertifikat, sendet das Zugriffstoken dorthin und verbindet sich neu."
+            "description": "Das Gerät, das unter {host} antwortet, präsentiert ein TLS-Zertifikat ({observed}), das von dem abweicht, das Home Assistant beim ersten Verbinden mit diesem Jung Home Gateway gepinnt hat ({expected}). Home Assistant kommuniziert nicht mehr mit ihm, nicht einmal das Zugriffstoken wird gesendet, und die Entitäten des Gateways bleiben nicht verfügbar, bis dies geklärt ist. Ein geändertes Zertifikat ist nur zu erwarten, wenn das Gateway ersetzt oder sein Speicher gelöscht oder neu bespielt wurde; das Zertifikat überlebt ein Zurücksetzen auf Werkseinstellungen und Firmware-Updates. Falls nichts davon zutrifft, antwortet unter dieser Adresse möglicherweise ein anderes Gerät: Bestätige nicht, sondern prüfe dein Netzwerk. Bestätige, dass das Jung Home Gateway unter {host} ersetzt oder neu bespielt wurde und dass dem Zertifikat, das es jetzt präsentiert ({observed}), anstelle des gepinnten ({expected}) vertraut werden soll. Home Assistant pinnt dann das neue Zertifikat, sendet das Zugriffstoken dorthin und verbindet sich neu."
           }
         },
         "error": {

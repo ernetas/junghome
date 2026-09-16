@@ -161,6 +161,16 @@ def test_function_id_for_matches_the_middleware_formula() -> None:
     # input, so a dash-less spelling would NOT match the gateway.
     assert function_id_for(NODE_A, 2) != expected
     assert function_id_for(NODE_A.replace("-", ""), 0x40) != expected
+    # A location with a hex letter is spelled upper-case (``formatHex`` ends in
+    # ``toUpperCase()``): "004A", never "004a". No test node and no device on
+    # the reference network sits at such a location (they are all 0001, 0002,
+    # 0040-0044), so this is the one spelling real data cannot check — and
+    # a lower-case digit would give every such element an id the gateway
+    # never emits, i.e. no serial number and no Bluetooth address.
+    upper = hashlib.md5((NODE_A + "004A").encode(), usedforsecurity=False)
+    lower = hashlib.md5((NODE_A + "004a").encode(), usedforsecurity=False)
+    assert function_id_for(NODE_A, 0x4A) == "id" + upper.hexdigest()[:15]
+    assert function_id_for(NODE_A, 0x4A) != "id" + lower.hexdigest()[:15]
 
 
 @pytest.mark.parametrize(

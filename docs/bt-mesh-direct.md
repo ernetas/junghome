@@ -93,8 +93,9 @@ So lights, dimmers, tunable-white, sockets, blinds, energy and scenes are all
 parameters use the **vendor property models**. The gateway reads state two
 ways at once: its self-configuration subscribes its client models to every
 element group the devices publish to, *and* it polls every device state with a
-Get every 15 s (`services/self_config_service.js:104-158`; `const/config.json`
-`btmesh.device_state_poll_interval_sec`). A gateway-free client only needs the
+Get every 15 s (`services/self_config_service.js:104-158` for the
+subscriptions, `services/device_state_service.js:37` for the poll loop;
+`const/config.json` `btmesh.device_state_poll_interval_sec`). A gateway-free client only needs the
 subscription half — a proxy client with an empty blacklist filter hears every
 publication in the flat.
 

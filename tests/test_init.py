@@ -2579,8 +2579,8 @@ async def test_gateway_software_version_reaches_every_device_page(
     )
     entry.add_to_hass(hass)
 
-    async def _parameter(_self, _host: str, _token: str, parameter: str) -> str | None:
-        return {"version_release": "2.1.3", "version_build": "2840"}.get(parameter)
+    async def _version(_self, _host: str) -> dict[str, str]:
+        return {"version_release": "2.1.3", "version_build": "2840"}
 
     with (
         patch.object(
@@ -2589,7 +2589,7 @@ async def test_gateway_software_version_reaches_every_device_page(
             AsyncMock(return_value=copy.deepcopy(PRISTINE_DEVICES)),
         ),
         patch.object(
-            JungHomeDataUpdateCoordinator, "_fetch_config_parameter", _parameter
+            JungHomeDataUpdateCoordinator, "_fetch_version_from_api", _version
         ),
         patch.object(
             JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
@@ -3551,3 +3551,120 @@ async def test_removing_an_entry_that_never_loaded_withdraws_its_issues(
         registry.async_get_issue(DOMAIN, f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}")
         is None
     )
+
+
+async def test_an_empty_export_re_read_keeps_the_known_identities(
+    hass: HomeAssistant,
+) -> None:
+    """A re-read that resolves nothing must not wipe the identities already held.
+
+    The debounced re-read (an unidentified function appeared) can come back
+    with a well-formed export the parser finds nothing in — an empty
+    ``meta`` and an empty ``network`` — and replacing the map with that
+    would strip every serial number and connection the registry carries
+    until a later read succeeds. Keeping the previous map is strictly better.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    before = dict(coordinator.node_identities)
+    assert len(before) == 3
+    with patch.object(
+        coordinator,
+        "_fetch_project_export_from_api",
+        AsyncMock(return_value={"version": "1.1", "meta": {}, "network": ""}),
+    ):
+        await coordinator.async_fetch_node_identities()
+    assert dict(coordinator.node_identities) == before
+    assert _device(hass, "Hall Light").serial_number == MAC_A
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_apply_identities_skips_devices_whose_labels_collide(
+    hass: HomeAssistant,
+) -> None:
+    """Two functions on one registry device never take turns writing their MACs.
+
+    ``"Lamp 1"`` (a light) and ``"Lamp-1"`` (a socket) slug identically, so
+    they share one registry device — the documented limitation. They sit on
+    different nodes here, each the node's primary element: without the
+    ``duplicate_slugs`` skip, ``apply_node_identities`` would key both by the
+    one slug, the last one listed would win, and the shared device would be
+    linked by Bluetooth connection to whichever node the gateway's list order
+    favoured on that pass. (The serial number is informational and each
+    entity's ``device_info`` writes its own node's at registration, so the
+    shared row shows one of the two; the connection is what resolves devices
+    and is never written for a colliding slug.)
+    """
+    devices = _identified_devices()
+    devices[0]["label"] = "Lamp 1"  # NODE_A, primary element
+    devices[2]["label"] = "Lamp-1"  # NODE_B, primary element
+    entry = await _setup_with_export(hass, _project_export(), devices=devices)
+    coordinator = entry.runtime_data
+    assert len(coordinator.node_identities) == 3
+    shared = _device(hass, "Lamp 1")
+    assert shared is _device(hass, "Lamp-1")
+    assert shared.connections == set()
+
+    coordinator.apply_node_identities()
+    shared = _device(hass, "Lamp 1")
+    assert shared.connections == set()
+    # The non-colliding device on NODE_A still gets its node's address.
+    assert _device(hass, "Hall Button").serial_number == MAC_A
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_hub_keeps_its_version_when_the_setup_time_read_fails(
+    hass: HomeAssistant,
+) -> None:
+    """A setup that cannot read the version leaves the hub's stored one alone.
+
+    The state DB answers ``"0.0.0"`` until the board controller has reported
+    the version (right after a gateway reboot), and the read can time out. The
+    hub's ``DeviceInfo`` used to pass ``sw_version=None`` then, which the
+    registry applies as a change — blanking the version an earlier run wrote,
+    until the next stable WebSocket session re-read it.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+
+    async def _version(_self, _host: str) -> dict[str, str]:
+        return {"version_release": "2.1.3", "version_build": "2840"}
+
+    devices = AsyncMock(return_value=copy.deepcopy(PRISTINE_DEVICES))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", devices),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_fetch_version_from_api", _version
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        hub = find_device(hass, gateway_device_id(entry))
+        assert hub is not None
+        assert hub.sw_version == "2.1.3 (2840)"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+    # Second start: the version read yields nothing (the autouse default).
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", devices),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        hub = find_device(hass, gateway_device_id(entry))
+        assert hub is not None
+        assert hub.sw_version == "2.1.3 (2840)"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

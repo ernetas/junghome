@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Certifikát brány se liší",
-        "description": "Brána na adrese {host} předkládá TLS certifikát, který se liší od certifikátu připnutého k tomuto záznamu (připnutý {expected}, předložený {observed}). To je očekávané pouze v případě, že byla brána obnovena do továrního nastavení nebo vyměněna, nebo její firmware certifikát znovu vygeneroval. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: vraťte se a adresu zkontrolujte. Zatím mu byl odeslán pouze TLS handshake. Odešlete, pokud chcete novému certifikátu důvěřovat a pokračovat."
+        "description": "Brána na adrese {host} předkládá TLS certifikát, který se liší od certifikátu připnutého k tomuto záznamu (připnutý {expected}, předložený {observed}). To je očekávané pouze v případě, že byla brána vyměněna nebo bylo její úložiště smazáno či znovu nahráno; certifikát přežije obnovení do továrního nastavení i aktualizace firmwaru. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: vraťte se a adresu zkontrolujte. Zatím mu byl odeslán pouze TLS handshake. Odešlete, pokud chcete novému certifikátu důvěřovat a pokračovat."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Výkon" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Celková energie" },
       "voltage": { "name": "Napětí" },
       "current": { "name": "Proud" },
       "frequency": { "name": "Frekvence" },
       "temperature": { "name": "Teplota" },
       "illuminance": { "name": "Osvětlení" },
+      "present_illuminance": { "name": "Aktuální osvětlení" },
       "humidity": { "name": "Vlhkost" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Důvěřovat novému certifikátu brány",
-            "description": "Zařízení odpovídající na adrese {host} předkládá TLS certifikát ({observed}), který se liší od toho, který Home Assistant připnul při prvním připojení k této bráně Jung Home ({expected}). Home Assistant s ním přestal komunikovat, neodesílá ani přístupový token a entity brány zůstávají nedostupné, dokud se to nevyřeší. Změna certifikátu je očekávaná pouze v případě, že byla brána obnovena do továrního nastavení nebo vyměněna, nebo její firmware certifikát znovu vygeneroval. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: nepotvrzujte, raději zkontrolujte svou síť. Potvrďte, že brána Jung Home na adrese {host} byla resetována nebo vyměněna a že certifikátu, který nyní předkládá ({observed}), se má důvěřovat místo připnutého ({expected}). Home Assistant nový certifikát připne, odešle mu přístupový token a znovu se připojí."
+            "description": "Zařízení odpovídající na adrese {host} předkládá TLS certifikát ({observed}), který se liší od toho, který Home Assistant připnul při prvním připojení k této bráně Jung Home ({expected}). Home Assistant s ním přestal komunikovat, neodesílá ani přístupový token a entity brány zůstávají nedostupné, dokud se to nevyřeší. Změna certifikátu je očekávaná pouze v případě, že byla brána vyměněna nebo bylo její úložiště smazáno či znovu nahráno; certifikát přežije obnovení do továrního nastavení i aktualizace firmwaru. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: nepotvrzujte, raději zkontrolujte svou síť. Potvrďte, že brána Jung Home na adrese {host} byla vyměněna nebo znovu nahrána a že certifikátu, který nyní předkládá ({observed}), se má důvěřovat místo připnutého ({expected}). Home Assistant nový certifikát připne, odešle mu přístupový token a znovu se připojí."
           }
         },
         "error": {

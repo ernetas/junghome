@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Gateway certificate differs",
-        "description": "The gateway at {host} presents a TLS certificate that differs from the one pinned for this entry (pinned {expected}, presented {observed}). This is expected only if the gateway was factory-reset or replaced, or its firmware regenerated the certificate. If none of that happened, another device may be answering at this address: go back and check the address instead. Nothing but a TLS handshake has been sent to it so far. Submit to trust the new certificate and continue."
+        "description": "The gateway at {host} presents a TLS certificate that differs from the one pinned for this entry (pinned {expected}, presented {observed}). This is expected only if the gateway was replaced or its storage was wiped or re-imaged; the certificate survives a factory reset and firmware updates. If none of that happened, another device may be answering at this address: go back and check the address instead. Nothing but a TLS handshake has been sent to it so far. Submit to trust the new certificate and continue."
       }
     },
     "progress": {
@@ -183,6 +183,9 @@
       "energy": {
         "name": "Energy"
       },
+      "total_energy": {
+        "name": "Total energy"
+      },
       "voltage": {
         "name": "Voltage"
       },
@@ -197,6 +200,9 @@
       },
       "illuminance": {
         "name": "Illuminance"
+      },
+      "present_illuminance": {
+        "name": "Present Illuminance"
       },
       "humidity": {
         "name": "Humidity"
@@ -248,7 +254,7 @@
         "step": {
           "confirm": {
             "title": "Trust the gateway's new certificate",
-            "description": "The device answering at {host} presents a TLS certificate ({observed}) that differs from the one Home Assistant pinned when it first connected to this Jung Home gateway ({expected}). Home Assistant has stopped talking to it, not even the access token is sent, and the gateway's entities stay unavailable until this is resolved. A changed certificate is expected only if the gateway was factory-reset or replaced, or its firmware regenerated the certificate. If none of that happened, another device may be answering at this address: do not confirm, check your network instead. Confirm that the Jung Home gateway at {host} was reset or replaced and that the certificate it presents now ({observed}) should be trusted instead of the pinned one ({expected}). Home Assistant will pin the new certificate, send the access token to it and reconnect."
+            "description": "The device answering at {host} presents a TLS certificate ({observed}) that differs from the one Home Assistant pinned when it first connected to this Jung Home gateway ({expected}). Home Assistant has stopped talking to it, not even the access token is sent, and the gateway's entities stay unavailable until this is resolved. A changed certificate is expected only if the gateway was replaced or its storage was wiped or re-imaged; the certificate survives a factory reset and firmware updates. If none of that happened, another device may be answering at this address: do not confirm, check your network instead. Confirm that the Jung Home gateway at {host} was replaced or re-imaged and that the certificate it presents now ({observed}) should be trusted instead of the pinned one ({expected}). Home Assistant will pin the new certificate, send the access token to it and reconnect."
           }
         },
         "error": {

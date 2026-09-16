@@ -64,7 +64,7 @@
       },
       "reconfigure_certificate": {
         "title": "Il certificato del gateway è diverso",
-        "description": "Il gateway all'indirizzo {host} presenta un certificato TLS diverso da quello fissato per questa voce (fissato {expected}, presentato {observed}). È previsto solo se il gateway è stato ripristinato alle impostazioni di fabbrica o sostituito, oppure se il firmware ha rigenerato il certificato. Se non è successo nulla di tutto ciò, a questo indirizzo potrebbe rispondere un altro dispositivo: torna indietro e controlla l'indirizzo. Finora gli è stato inviato solo un handshake TLS. Invia per considerare attendibile il nuovo certificato e continuare."
+        "description": "Il gateway all'indirizzo {host} presenta un certificato TLS diverso da quello fissato per questa voce (fissato {expected}, presentato {observed}). È previsto solo se il gateway è stato sostituito o se la sua memoria è stata cancellata o reinstallata; il certificato sopravvive a un ripristino di fabbrica e agli aggiornamenti del firmware. Se non è successo nulla di tutto ciò, a questo indirizzo potrebbe rispondere un altro dispositivo: torna indietro e controlla l'indirizzo. Finora gli è stato inviato solo un handshake TLS. Invia per considerare attendibile il nuovo certificato e continuare."
       }
     },
     "progress": {
@@ -177,11 +177,13 @@
     "sensor": {
       "power": { "name": "Potenza" },
       "energy": { "name": "Energia" },
+      "total_energy": { "name": "Energia totale" },
       "voltage": { "name": "Tensione" },
       "current": { "name": "Corrente" },
       "frequency": { "name": "Frequenza" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Illuminamento" },
+      "present_illuminance": { "name": "Illuminamento attuale" },
       "humidity": { "name": "Umidità" }
     },
     "switch": {
@@ -228,7 +230,7 @@
         "step": {
           "confirm": {
             "title": "Considera attendibile il nuovo certificato del gateway",
-            "description": "Il dispositivo che risponde all'indirizzo {host} presenta un certificato TLS ({observed}) diverso da quello che Home Assistant ha fissato alla prima connessione a questo gateway Jung Home ({expected}). Home Assistant ha smesso di comunicare con esso, non invia nemmeno il token di accesso, e le entità del gateway restano non disponibili finché il problema non viene risolto. Un certificato cambiato è previsto solo se il gateway è stato ripristinato alle impostazioni di fabbrica o sostituito, oppure se il firmware ha rigenerato il certificato. Se non è successo nulla di tutto ciò, a questo indirizzo potrebbe rispondere un altro dispositivo: non confermare, controlla la rete. Conferma che il gateway Jung Home all'indirizzo {host} è stato ripristinato o sostituito e che il certificato che presenta ora ({observed}) deve essere considerato attendibile al posto di quello fissato ({expected}). Home Assistant fisserà il nuovo certificato, gli invierà il token di accesso e si riconnetterà."
+            "description": "Il dispositivo che risponde all'indirizzo {host} presenta un certificato TLS ({observed}) diverso da quello che Home Assistant ha fissato alla prima connessione a questo gateway Jung Home ({expected}). Home Assistant ha smesso di comunicare con esso, non invia nemmeno il token di accesso, e le entità del gateway restano non disponibili finché il problema non viene risolto. Un certificato cambiato è previsto solo se il gateway è stato sostituito o se la sua memoria è stata cancellata o reinstallata; il certificato sopravvive a un ripristino di fabbrica e agli aggiornamenti del firmware. Se non è successo nulla di tutto ciò, a questo indirizzo potrebbe rispondere un altro dispositivo: non confermare, controlla la rete. Conferma che il gateway Jung Home all'indirizzo {host} è stato sostituito o reinstallato e che il certificato che presenta ora ({observed}) deve essere considerato attendibile al posto di quello fissato ({expected}). Home Assistant fisserà il nuovo certificato, gli invierà il token di accesso e si riconnetterà."
           }
         },
         "error": {

@@ -7,22 +7,22 @@ name: HA floor check
 # integration against it, catching an import of an API that does not exist
 # yet at the floor (the scheduled run also catches the floor aging out of
 # installability). It is deliberately not part of the release gate: a floor
-# break means "raise the floor in hacs.json", not "block the release".
+# break means "raise the floor in hacs.json", not "block the release" — or,
+# when the import is type-only, guard it (repairs.py's ``RepairsFlowResult``,
+# HA 2026.6+, shipped through eight betas unnoticed because this job ran on
+# `main` only and the integration branch never saw it). Hence every branch
+# and every pull request, not just `main`: one pip install per push.
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * 1"
   push:
-    branches:
-      - main
     paths:
       - "hacs.json"
       - "custom_components/**"
       - ".github/workflows/floor.yml"
   pull_request:
-    branches:
-      - main
     paths:
       - "hacs.json"
       - "custom_components/**"

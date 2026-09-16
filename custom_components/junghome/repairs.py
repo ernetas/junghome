@@ -9,18 +9,14 @@ confirmed that the gateway was reset or replaced. It is the certificate
 counterpart of the reauth flow for a rejected token.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.components.repairs import (
-    ConfirmRepairFlow,
-    RepairsFlow,
-    RepairsFlowResult,
-)
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 from homeassistant.const import CONF_HOST, CONF_TOKEN
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -28,6 +24,17 @@ from .config_flow import async_fetch_serial
 from .const import CONF_SERIAL, CONF_TLS_FINGERPRINT, DOMAIN
 from .coordinator import ISSUE_TLS_MISMATCH
 from .tls import async_learn_fingerprint, format_fingerprint
+
+if TYPE_CHECKING:
+    # ``RepairsFlowResult`` was added in HA 2026.6 (``repairs.models``); before
+    # that a repairs step returns the plain ``FlowResult``. Type-only, so the
+    # platform still imports on the hacs.json floor (2025.12.4) — a platform
+    # that fails to import there is swallowed by core at DEBUG, and the fix
+    # flow silently degrades to core's confirm flow, which dismisses the
+    # issue without re-pinning.
+    from homeassistant.components.repairs import RepairsFlowResult
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
 
 
 class TlsCertificateChangedFlow(RepairsFlow):
