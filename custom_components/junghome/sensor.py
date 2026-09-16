@@ -1,4 +1,4 @@
-"""Sensor platform for Jung Home (socket energy quantities)."""
+"""Sensor platform for Jung Home (quantities and the socket energy counter)."""
 
 import logging
 import math
@@ -24,7 +24,12 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_value, is_presence_quantity, stable_unique_id
+from .const import (
+    datapoint_value,
+    device_slug,
+    is_presence_quantity,
+    stable_unique_id,
+)
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
@@ -164,6 +169,21 @@ QUANTITY_DESCRIPTIONS: tuple[JungHomeQuantityDescription, ...] = (
         native_unit_of_measurement=LIGHT_LUX,
         suggested_display_precision=0,
     ),
+    # The BWM presence detector labels its ambient reading "Present
+    # Illuminance" (next to the "Presence Detected" flag the binary_sensor
+    # platform claims). Same quantity, its own translation key, so the
+    # English name stays the gateway's label and other locales get a
+    # translation instead of the raw English.
+    JungHomeQuantityDescription(
+        key="present_illuminance",
+        translation_key="present_illuminance",
+        gateway_label="present illuminance",
+        gateway_units=frozenset({"lux", "lx"}),
+        device_class=SensorDeviceClass.ILLUMINANCE,
+        state_class=_MEAS,
+        native_unit_of_measurement=LIGHT_LUX,
+        suggested_display_precision=0,
+    ),
     JungHomeQuantityDescription(
         key="humidity",
         translation_key="humidity",
@@ -229,12 +249,25 @@ async def async_setup_entry(
     @callback
     def _discover_sensors() -> None:
         """Add entities for any sensors not yet created (handles devices added later)."""
-        new_entities: list[JungHomeQuantity] = []
+        new_entities: list[SensorEntity] = []
         for device in coordinator.data or []:
+            # A metering socket's cumulative energy counter is a device
+            # *property* the function list never carries; it comes from the
+            # verbose device endpoint (`coordinator.device_properties`).
+            props = coordinator.device_properties_for(device)
+            if props is not None and props.has_energy:
+                uid = f"{device_slug(device)}_total_energy"
+                if claim_new_entity(known, uid):
+                    new_entities.append(JungHomeEnergyTotal(coordinator, device))
             # Sockets expose energy quantities; Measurement functions (e.g. the
             # ambient readings on a presence detector) expose their own quantity
-            # datapoints — both surface here as quantity sensors.
-            if device.get("type") in ("Socket", "Measurement"):
+            # datapoints; a Thermostat carries its room temperature as one too.
+            # All surface here as quantity sensors. The thermostat's reading
+            # also feeds the climate entity's `current_temperature`, but a
+            # climate attribute has no long-term statistics — the standalone
+            # sensor is what keeps its history past the recorder's purge
+            # horizon (issue #189).
+            if device.get("type") in ("Socket", "Measurement", "Thermostat"):
                 for datapoint in device.get("datapoints", []):
                     if datapoint.get("type") == "quantity":
                         raw_label = datapoint_value(datapoint, "quantity_label")
@@ -370,3 +403,44 @@ class JungHomeQuantity(JungHomeEntity, SensorEntity):
         """Extract the value of the quantity from its datapoint."""
         value = datapoint_value(datapoint, "quantity")
         return None if value is None else str(value)
+
+
+class JungHomeEnergyTotal(JungHomeEntity, SensorEntity):
+    """A metering socket's cumulative energy counter.
+
+    The gateway keeps ``total_device_energy_use`` (Wh) per metering socket as
+    a device *property*, which only the deprecated verbose device endpoint
+    exposes (docs/gateway-rest-api.md); the coordinator reads it at setup
+    and re-reads it every ``DEVICE_PROPERTIES_REFRESH_INTERVAL``. Cumulative,
+    so ``TOTAL_INCREASING`` — this is the sensor the Energy Dashboard wants,
+    without a Riemann-sum helper on the power reading. Unknown until the
+    middleware has polled the counter (its value is ``null`` before that).
+    Firmware without the endpoint creates no such entity.
+    """
+
+    _attr_translation_key = "total_energy"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = _TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_suggested_display_precision = 0
+
+    def __init__(
+        self, coordinator: JungHomeDataUpdateCoordinator, device: Device
+    ) -> None:
+        """Initialize the energy counter sensor."""
+        super().__init__(coordinator, device)
+        # Firmware-stable, label-derived like every other unique_id.
+        self._attr_unique_id = f"{device_slug(device)}_total_energy"
+        self._attr_native_value = self._read()
+
+    def _read(self) -> float | None:
+        props = self.coordinator.device_properties_for(self._device)
+        return props.energy_wh if props is not None else None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Re-read the counter on every non-foreign dispatch."""
+        if self._skip_foreign_device_push():
+            return  # another device's push; the counter is not in pushes anyway
+        self._attr_native_value = self._read()
+        self.async_write_ha_state()

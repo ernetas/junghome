@@ -90,6 +90,27 @@ async def test_measurement_sensor_created(
     assert state.attributes["device_class"] == "illuminance"
 
 
+async def test_thermostat_room_temperature_is_a_sensor(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A Thermostat's ambient reading is a standalone temperature sensor.
+
+    The climate entity shows it as ``current_temperature`` too, but a climate
+    attribute has no long-term statistics, so the reading's history died at
+    the recorder's purge horizon (issue #189). Same datapoint, same value,
+    named by the ``temperature`` translation; the climate entity is untouched.
+    """
+    state = hass.states.get("sensor.living_room_temperature")
+    assert state is not None
+    assert state.state == "20.0"
+    assert state.attributes["unit_of_measurement"] == "°C"
+    assert state.attributes["device_class"] == "temperature"
+    assert state.attributes["state_class"] == "measurement"
+    climate = hass.states.get("climate.living_room")
+    assert climate is not None
+    assert climate.attributes["current_temperature"] == 20.0
+
+
 async def test_sensor_native_value_rejects_nan(hass: HomeAssistant) -> None:
     """A NaN reading on a numeric sensor yields None (never pollutes statistics)."""
     coordinator = bare_coordinator(hass)
@@ -200,7 +221,7 @@ async def test_presence_labelled_quantity_still_goes_to_binary_sensor(
         await hass.async_block_till_done()
 
     assert hass.states.get("sensor.boiler_presence_detected") is None
-    assert hass.states.get("binary_sensor.boiler_presence_detected") is not None
+    assert hass.states.get("binary_sensor.boiler_occupancy") is not None
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -224,6 +245,9 @@ _TOTAL = SensorStateClass.TOTAL_INCREASING
         ("Temperature", "C", "temperature", SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS),
         ("Illuminance ", "lux", "illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
         ("Illuminance", "lx", "illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
+        # The BWM detector's ambient reading: its own key, so the English
+        # name stays the gateway's label and other locales translate it.
+        ("Present Illuminance ", "lux", "present_illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
         ("Humidity", "%", "humidity", SensorDeviceClass.HUMIDITY, PERCENTAGE),
     ],
 )  # fmt: skip

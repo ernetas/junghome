@@ -10,8 +10,9 @@ A ``Thermostat`` function exposes three datapoints (see
   ``none``, but the firmware rejects writing it and never reports it — see
   the preset note in ``docs/gateway-websocket.md``.)
 - ``quantity`` — the room temperature reading, surfaced here as
-  ``current_temperature``. (Sensor discovery does not turn a Thermostat's
-  quantity into a standalone sensor entity; it is only the ambient reading.)
+  ``current_temperature`` and, by the sensor platform, as a standalone
+  temperature sensor (a climate attribute has no long-term statistics; the
+  sensor does).
 - ``switch`` — despite the datapoint *type* name, **not** the thermostat's
   on/off. It is the room regulator's momentary activity, surfaced here as
   ``hvac_action`` (heating / idle), never as ``hvac_mode``.

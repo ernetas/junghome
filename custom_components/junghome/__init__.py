@@ -9,6 +9,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     DATA_AREA_ASSIGNED,
@@ -20,7 +21,13 @@ from .const import (
     gateway_device_id,
     gateway_device_info,
 )
-from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .coordinator import (
+    ISSUE_PUSH_FAILURE,
+    ISSUE_TLS_MISMATCH,
+    JungHomeConfigEntry,
+    JungHomeDataUpdateCoordinator,
+    device_by_identifier,
+)
 from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -268,6 +275,7 @@ def _make_stale_device_pruner(
         # keep it in the live set or it would be pruned on every refresh.
         current.add(gateway_device_id(entry))
         dev_reg = dr.async_get(hass)
+        pruned = False
         for device_entry in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
             slugs = {
                 identifier
@@ -295,16 +303,35 @@ def _make_stale_device_pruner(
                 ", ".join(sorted(slugs)),
                 STALE_DEVICE_PRUNE_MISSES,
             )
-            # Forget this device's unique_ids from the platforms' discovery sets
-            # BEFORE removing it, so if the gateway reports it again the platforms
-            # treat it as new and re-create its entities (otherwise the stale
-            # `known` ids would suppress the re-add until an entry reload).
-            coordinator.forget_device_unique_ids(device_entry.id)
-            dev_reg.async_update_device(
-                device_entry.id, remove_config_entry_id=entry.entry_id
-            )
+            _remove_device(dev_reg, coordinator, device_entry.id)
+            pruned = True
+        if pruned:
+            # A pruned device may have held its node's Bluetooth connection —
+            # a relabelled function's old device does — which its successor
+            # could not take while the old device was live. Hand it over now.
+            coordinator.apply_node_identities()
 
     return _prune_stale_devices
+
+
+@callback
+def _remove_device(
+    dev_reg: dr.DeviceRegistry,
+    coordinator: JungHomeDataUpdateCoordinator,
+    device_id: str,
+) -> None:
+    """Remove one of this entry's devices, forgetting its ids first.
+
+    Shared by the pruner and the manual delete. The device's unique_ids are
+    dropped from the platforms' discovery sets BEFORE it is removed, so if the
+    gateway reports it again the platforms treat it as new and re-create its
+    entities (otherwise the stale ``known`` ids would suppress the re-add
+    until an entry reload). ``async_remove_device`` rather than detaching the
+    entry: a device of this integration belongs to its entry alone, and the
+    detach form is deprecated from HA 2026.9 (a device has one entry there).
+    """
+    coordinator.forget_device_unique_ids(device_id)
+    dev_reg.async_remove_device(device_id)
 
 
 def _make_area_assigner(
@@ -527,9 +554,12 @@ def _migrate_to_stable_ids(
 ) -> bool:
     """Re-point existing id-based registry entries to label-based stable ids.
 
-    The Jung HOME gateway exposes no hardware identifier, and it regenerates the
-    random device id on firmware updates, which previously caused Home Assistant
-    to create duplicate entities/devices (the old ones left greyed-out). This maps
+    The gateway's device ids are derived from each node's mesh UUID and element
+    location (``models.function_id_for``), so they change whenever the app
+    re-provisions or re-enumerates a node — which app-driven firmware updates
+    did — and the ``functions`` list carries no hardware identifier to key on
+    instead. That previously caused Home Assistant to create duplicate
+    entities/devices (the old ones left greyed-out). This maps
     the currently-registered entries onto the new stable scheme so existing
     automations keep working and future firmware updates stop creating duplicates.
 
@@ -676,8 +706,23 @@ def _migrate_device_identifiers(
             # re-logged a full traceback on every single setup, forever. Skip the
             # loser instead: the same "second device loses" outcome `device_slug`
             # documents, but reported once and without blocking the migration.
-            clash = dev_reg.async_get_device(identifiers=new_identifiers)
-            if clash is not None and clash.id != device_entry.id:
+            # (Scoped to this entry: identifiers are unique per entry from HA
+            # 2026.9, and the registry-wide lookup is deprecated there.)
+            clash = next(
+                (
+                    holder
+                    for identifier in new_identifiers
+                    if (
+                        holder := device_by_identifier(
+                            dev_reg, entry.entry_id, identifier
+                        )
+                    )
+                    is not None
+                    and holder.id != device_entry.id
+                ),
+                None,
+            )
+            if clash is not None:
                 _LOGGER.warning(
                     "Jung Home: cannot migrate device %s to %s — already claimed "
                     "by device %s, because two devices share a label. Give them "
@@ -713,6 +758,12 @@ async def async_remove_config_entry_device(
 
     A device the gateway *is* currently reporting is refused: the next poll would
     re-create it immediately, so allowing the delete would just look broken.
+
+    The removal itself happens here, exactly as the pruner does it (core
+    tolerates the integration having removed the device before it gets to —
+    "that is fine" in ``config/device_registry``), because the same follow-up
+    is due: the deleted device may have held its node's Bluetooth connection
+    that the relabelled successor is waiting for.
     """
     coordinator = getattr(config_entry, "runtime_data", None)
     live = {device_slug(d) for d in (coordinator.data or [])} if coordinator else set()
@@ -726,9 +777,8 @@ async def async_remove_config_entry_device(
     if slugs & live:
         return False
     if coordinator is not None:
-        # Mirror the pruner: drop the ids so the platforms treat the device as new
-        # if the gateway ever reports it again.
-        coordinator.forget_device_unique_ids(device_entry.id)
+        _remove_device(dr.async_get(hass), coordinator, device_entry.id)
+        coordinator.apply_node_identities()
     return True
 
 
@@ -739,6 +789,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     # doesn't leak the WebSocket reconnect loop.
     await entry.runtime_data.stop()
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
+    """Withdraw the entry's repair issues.
+
+    ``stop()`` deletes them on unload, but an entry removed while it sits in
+    SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
+    """
+    for issue_id in (
+        f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
+        f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+    ):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:

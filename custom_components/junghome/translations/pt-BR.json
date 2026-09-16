@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Endereço IP ou nome de host do gateway Jung Home (por exemplo, 192.168.1.50 ou junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "O certificado do gateway é diferente",
+        "description": "O gateway em {host} apresenta um certificado TLS diferente do fixado para esta entrada (fixado {expected}, apresentado {observed}). Isso só é esperado se o gateway foi substituído ou se seu armazenamento foi apagado ou reinstalado; o certificado sobrevive a uma restauração de fábrica e a atualizações de firmware. Se nada disso aconteceu, outro dispositivo pode estar respondendo neste endereço: volte e verifique o endereço. Até agora, apenas um handshake TLS foi enviado a ele. Envie para confiar no novo certificado e continuar."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Para cima" },
-      "down": { "name": "Para baixo" },
-      "press": { "name": "Pressionar" }
+      "up": {
+        "name": "Para cima",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressionado",
+              "depressed": "Solto",
+              "click": "Clique",
+              "hold_start": "Início do toque longo",
+              "hold_end": "Fim do toque longo"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Para baixo",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressionado",
+              "depressed": "Solto",
+              "click": "Clique",
+              "hold_start": "Início do toque longo",
+              "hold_end": "Fim do toque longo"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Pressionar",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Pressionado",
+              "depressed": "Solto",
+              "click": "Clique",
+              "hold_start": "Início do toque longo",
+              "hold_end": "Fim do toque longo"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Potência" },
       "energy": { "name": "Energia" },
+      "total_energy": { "name": "Energia total" },
       "voltage": { "name": "Tensão" },
       "current": { "name": "Corrente" },
       "frequency": { "name": "Frequência" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Iluminância" },
+      "present_illuminance": { "name": "Iluminância atual" },
       "humidity": { "name": "Umidade" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Erro ao comunicar com o gateway Jung Home: {error}"
+    },
+    "certificate_changed": {
+      "message": "O dispositivo em {host} não apresenta o certificado TLS fixado para este gateway Jung Home, então o token de acesso não foi enviado. Se você restaurou ou substituiu o gateway, confirme o novo certificado em Configurações, Reparos."
     },
     "cannot_send": {
       "message": "Não foi possível alcançar o gateway Jung Home para enviar o comando; ele está se reconectando. Tente novamente em instantes."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "As atualizações em tempo real do Jung Home pararam",
       "description": "O Home Assistant não conseguiu se reconectar ao gateway Jung Home em {host} {failures} vezes seguidas. Os estados dos dispositivos não são mais enviados instantaneamente e agora são atualizados apenas na consulta REST periódica. Verifique se o gateway está ligado e acessível na sua rede. Este problema desaparece sozinho assim que a conexão for restabelecida."
+    },
+    "tls_certificate_changed": {
+      "title": "O certificado do gateway Jung Home mudou",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Confiar no novo certificado do gateway",
+            "description": "O dispositivo que responde em {host} apresenta um certificado TLS ({observed}) diferente do que o Home Assistant fixou ao conectar-se pela primeira vez a este gateway Jung Home ({expected}). O Home Assistant parou de se comunicar com ele, nem mesmo o token de acesso é enviado, e as entidades do gateway permanecem indisponíveis até que isso seja resolvido. Um certificado alterado só é esperado se o gateway foi substituído ou se seu armazenamento foi apagado ou reinstalado; o certificado sobrevive a uma restauração de fábrica e a atualizações de firmware. Se nada disso aconteceu, outro dispositivo pode estar respondendo neste endereço: não confirme, verifique sua rede. Confirme que o gateway Jung Home em {host} foi substituído ou reinstalado e que o certificado que ele apresenta agora ({observed}) deve ser confiável no lugar do fixado ({expected}). O Home Assistant fixará o novo certificado, enviará o token de acesso a ele e reconectará."
+          }
+        },
+        "error": {
+          "cannot_connect": "Falha ao conectar ao gateway.",
+          "different_gateway": "O endereço responde, mas pertence a um gateway Jung Home diferente desta entrada. Use Reconfigurar para alterar o endereço."
+        }
+      }
     }
   }
 }

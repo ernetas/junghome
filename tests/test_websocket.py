@@ -13,7 +13,10 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.junghome.const import DOMAIN
-from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.coordinator import (
+    WS_KNOWN_FRAME_TYPES,
+    JungHomeDataUpdateCoordinator,
+)
 from tests.conftest import _auto_reply_to_datapoint_commands, bare_coordinator
 
 
@@ -490,11 +493,18 @@ async def test_ws_frame_log_keeps_latest_per_type(hass: HomeAssistant) -> None:
     coordinator._log_ws_frame(big, "functions")
     coordinator._log_ws_frame('{"type":"version","data":"1.5.0"}', "version")
     coordinator._log_ws_frame("not json", None)  # unparseable -> not keyed by type
+    # A group delta (the app added a room) is part of the server's vocabulary
+    # too, so it is kept complete — it used to be missing from the known set
+    # and stored truncated as if a peer had minted the type.
+    delta = '{"type":"groups-new","data":[' + ",".join(['{"id":"g"}'] * 300) + "]}"
+    assert len(delta) > 2000
+    coordinator._log_ws_frame(delta, "groups-new")
     by_type = coordinator.ws_last_frame_by_type
     # Per-type store: full, untruncated.
     assert by_type["functions"] == big
+    assert by_type["groups-new"] == delta
     assert by_type["version"] == '{"type":"version","data":"1.5.0"}'
-    assert set(by_type) == {"functions", "version"}
+    assert set(by_type) == {"functions", "groups-new", "version"}
     # Rolling log: same large frame is truncated there.
     assert coordinator.ws_frame_log[0].endswith("…[truncated]")
 
@@ -553,3 +563,31 @@ async def test_dispatch_contains_absurdly_nested_frames(
     coordinator._dispatch_text_frame("[" * depth + "]" * depth)  # must not raise
     assert coordinator.ws_frame_log[-1].endswith("…[truncated]")
     assert coordinator.ws_last_frame_by_type == {}
+
+
+def test_known_frame_types_are_the_servers_enum() -> None:
+    """The kept-in-full set is exactly the gateway's ``WebSocketMessageType``.
+
+    Sixteen values (api-server ``websocket-server-service.js:36-53``). Three
+    are never emitted on current firmware (``devices``, ``config``, ``state``
+    have their emitters commented out) but belong to the vocabulary; the
+    group deltas ARE emitted and were missing.
+    """
+    assert {
+        "datapoint",
+        "scene",
+        "functions",
+        "groups",
+        "groups-new",
+        "groups-deleted",
+        "config",
+        "scenes",
+        "scenes-new",
+        "scenes-deleted",
+        "message",
+        "version",
+        "devices",
+        "devices-new",
+        "devices-deleted",
+        "state",
+    } == WS_KNOWN_FRAME_TYPES

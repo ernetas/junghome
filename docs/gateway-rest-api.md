@@ -17,6 +17,39 @@ The token is an HS256 JWT whose payload is `{"user_id":"<8 hex>"}`. It is signed
 with a per-user secret stored on the gateway (`api-server/res/tokens/<id>.tkn`).
 An invalid/missing token returns `401 {"error":"Unauthorized"}`.
 
+## `GET /devices/?verbose=true` — the raw device objects
+
+Marked *deprecated / experimental* in the OpenAPI, but live and read-only on
+2.1.3 (2840). Without `verbose` the endpoint returns the reduced DTO
+(`device_id`, `device_type`, `label`, `groups`, `states` with `state_id` /
+`state_type` / `value` / `mode`); with `verbose=true` it returns the middleware's
+`JungHomeDevice` objects verbatim (`04_devices-controller.js:60-70`), i.e.
+everything `/functions/` drops. Probed 2026-09-16 (49 devices, 187 KB):
+
+| field | what it carries |
+|---|---|
+| `device_type` | the middleware's type (`OnOffLight`, `TuneableWhiteLight`, `SocketEnergy`, `PushButton`, …), finer than the function type |
+| `states[*].statistics` | `reachable`, `last_seen` (s), `latest_request` (ms), `retry_attempts`, `connection_quality` (0–100), `not_supported` — **per-device reachability** (`isDeviceOnline` = any state reachable); 19 of 49 devices were unreachable at probe time |
+| `states[*].profile` | `index` (the datapoint suffix, in hex: `input_power` index 16 ↔ `-010`), `range`, `unit`, `readable`/`writeable`/`visible`, `dirtyAfterSeconds` (300 = the 5-minute re-read) |
+| `states[*].model` | the mesh binding: `address` (element unicast), `server`/`client` model ids, `publish` (group), `bind`, `category` |
+| `property` | device *properties* — never states, so never datapoints: `software_revision` (`[2, 2, 0, 2]` on every push button = device firmware 2.2.0.2; `[2, 2, 0, 1]` on the lights that had been read), `key_mode` (0..6, see the WebSocket doc), `switch_operation_mode`, `enforced_output`, `device_key_lock`; on `SocketEnergy` additionally **`total_device_energy_use` in Wh** (e.g. 209655) and `total_device_power_on_time` in h — the cumulative energy the function list lacks |
+
+The integration reads it (`models.parse_devices_verbose`): the full list once
+after the first refresh (and again only when a function appears that the last
+answer did not list — one the endpoint omits is not asked for again; a missing
+endpoint or a failed read is retried every interval, one small request), then
+`GET /devices/{device_id}?verbose=true` — the same object for one device,
+~8 KB — every five minutes for each device that has an energy counter. That
+feeds the `total_energy` sensor (Wh, `total_increasing`) and exempts buttons
+whose `software_revision` is known to predate 2.2.0 from duplicate-press
+suppression. Caveats: the endpoint is declared subject to change (the sensor
+simply disappears on firmware without it); `property` values read `null`
+until the middleware has polled them; the second reference socket's counter
+had `last_seen: 0` (never polled — the device was unreachable), so a counter
+can be stale; no cover exists in the reference network, so
+`move_operation_mode` (the awning hint) is still unobserved. Labels are in it
+— keep captures out of issues.
+
 ## Discovering the full spec
 
 The complete OpenAPI 3.0 document is served **unauthenticated** at:
@@ -71,7 +104,7 @@ the gateway's network-key password.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET  | `/version/` | API version (no auth). |
+| GET  | `/version/` | `api_version` (the API contract, "1.5.0") **plus** `version_release` / `version_build` — the gateway's software version, readable without a token (`01_version-controller.js:32-42`). |
 | GET  | `/apidoc` | Full OpenAPI spec (no auth). |
 | POST | `/register` | Request a token via app approval (no auth). |
 | POST | `/register/by-password` | Request a token via password (no auth). |
@@ -81,7 +114,7 @@ the gateway's network-key password.
 | GET  | `/functions/{function_id}/datapoints` | A function's datapoints. |
 | GET  | `/functions/{function_id}/datapoints/{datapoint_id}` | One datapoint. |
 | PATCH| `/functions/{function_id}/datapoints/{datapoint_id}` | **Set** a datapoint (control). Body `{"data":[{"key":"switch","value":"1"}]}`. |
-| GET  | `/devices/` | All devices (lower-level device view). |
+| GET  | `/devices/` | All devices (lower-level device view); `?verbose=true` returns the raw middleware objects — reachability, properties, energy counters — see the section above. |
 | GET  | `/devices/{device_id}` | One device. |
 | GET  | `/devices/states/{state_id}` | One device state. |
 | PATCH| `/devices/states/{state_id}` | Set a device state. |
@@ -183,6 +216,27 @@ bit 1 = "a client is asking for a name"
   commit either.
 - The TLS certificate is self-signed; the app pins it with a custom trust
   manager that accepts only the certificate whose SHA-256 matches the
-  fingerprint it read over the mesh. Clients that skip verification (this
-  integration uses `verify_ssl=False`) are open to on-path interception of the
-  token.
+  fingerprint it read over the mesh. A client that merely skips verification
+  is open to on-path interception of the token — and, worse, to redirection:
+  the mDNS TXT record carries `serial`/`mac`/`version` but **no
+  fingerprint**, and the serial is public, so a forged `_junghome._tcp`
+  announcement naming a configured serial could point a client at any
+  address. This integration therefore pins too, without the mesh: it learns
+  the fingerprint on first contact (trust on first use — a bare TLS
+  handshake pinned to an impossible digest, whose `ServerFingerprintMismatch`
+  reports the real one; no request is sent) and passes
+  `ssl=aiohttp.Fingerprint(...)` on every request and WebSocket upgrade over
+  Home Assistant's `verify_ssl=False` session, so a mismatch aborts at the
+  handshake before the `token` header exists. A changed certificate is
+  surfaced as a repair issue and re-pinned only after the user confirms;
+  discovery moves an entry's address only when the entry cannot reach its
+  gateway and the new address presents the pinned certificate
+  (`custom_components/junghome/tls.py`, `config_flow.py`, `repairs.py`).
+  The certificate itself is stable: `etc/nginx/generate_ssl_key.sh` (run as
+  `nginx.service` `ExecStartPre`) writes `svs.key`/`svs.crt`/`fingerprint.txt`
+  into `/data/etc/nginx/` only when one is missing, unparseable or
+  mismatched, and the factory-reset sequence in `board_ctrl` wipes only the
+  four `res` trees (`/data/{middleware,api-server,jungremote-client}/res*`,
+  `ncp_ctrl/res`) — the imaged gateway's certificate dates from 2023 and is
+  still in service. A changed fingerprint therefore means a replaced gateway
+  or a re-imaged card, never a factory reset or a firmware update.

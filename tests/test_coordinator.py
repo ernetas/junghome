@@ -1,11 +1,13 @@
 """Tests for the Jung Home data update coordinator."""
 
 import asyncio
+import gc
 import json
 import logging
 import random
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import timedelta
 from typing import Self
 from unittest.mock import AsyncMock, Mock, patch
@@ -18,6 +20,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -26,6 +29,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.junghome.const import (
     CONF_POLL_INTERVAL,
+    CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     MAX_POLL_INTERVAL_SECONDS,
@@ -36,10 +40,25 @@ from custom_components.junghome.const import (
 from custom_components.junghome.coordinator import (
     INITIAL_RECONNECT_DELAY,
     STABLE_SESSION_SECONDS,
+    WS_FRAME_MAX_CHARS,
+    WS_FRAME_TYPES_MAX,
     JungHomeDataUpdateCoordinator,
     poll_interval_from_options,
 )
-from tests.conftest import _auto_reply_to_datapoint_commands
+from custom_components.junghome.tls import fingerprint_ssl
+from tests.conftest import FAKE_FINGERPRINT, _auto_reply_to_datapoint_commands
+from tests.conftest import PRISTINE_DEVICES as PRISTINE
+
+# The real fetch methods, captured at import before the autouse conftest
+# fixtures replace them with stubs for the duration of each test.
+_REAL_FETCHES = {
+    "groups": JungHomeDataUpdateCoordinator._fetch_groups_from_api,
+    "scenes": JungHomeDataUpdateCoordinator._fetch_scenes_from_api,
+    "project": JungHomeDataUpdateCoordinator._fetch_project_export_from_api,
+    "version": JungHomeDataUpdateCoordinator._fetch_version_from_api,
+    "verbose": JungHomeDataUpdateCoordinator._fetch_devices_verbose_from_api,
+    "verbose_one": JungHomeDataUpdateCoordinator._fetch_device_verbose_from_api,
+}
 
 
 @pytest.mark.parametrize(
@@ -358,12 +377,12 @@ async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
 ) -> None:
     """The broadcast counter must only rise once the list is actually adopted.
 
-    `_reload_if_device_ids_changed` runs before the adoption and can raise on a
-    malformed frame — `device_slug` slugifies the label, which throws on a
-    non-string — and `_dispatch_text_frame`'s catch-all swallows it. Counting
-    the broadcast before that point would let such a frame suppress a racing
-    poll that carried the fresher list, leaving stale membership for a full
-    poll interval.
+    `_reload_if_device_ids_changed` runs before the adoption; should it raise
+    (it used to, on a non-string label, until `sanitize_devices` enforced the
+    shape at the boundary — so the raise is forced here), `_dispatch_text_frame`'s
+    catch-all swallows it. Counting the broadcast before that point would let
+    such a frame suppress a racing poll that carried the fresher list, leaving
+    stale membership for a full poll interval.
     """
     coordinator = _coordinator(hass)
     coordinator.data = [_switch_device("0")]
@@ -389,13 +408,17 @@ async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
     with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
         poll = asyncio.ensure_future(coordinator._async_update_data())
         await fetch_started.wait()
-        # A malformed broadcast: the label is not a string, so slugify raises
-        # out of the id-churn check and the list is never adopted. Routed
-        # through `_dispatch_text_frame`, whose catch-all swallows it exactly
-        # as it would for a real frame off the wire.
-        coordinator._dispatch_text_frame(
-            json.dumps({"type": "functions", "data": [{"id": "dev1", "label": 7}]})
-        )
+        # A broadcast whose id-churn check raises, so the list is never
+        # adopted. Routed through `_dispatch_text_frame`, whose catch-all
+        # swallows it exactly as it would for a real frame off the wire.
+        with patch.object(
+            coordinator,
+            "_reload_if_device_ids_changed",
+            side_effect=TypeError("malformed frame"),
+        ):
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "functions", "data": [{"id": "dev1"}]})
+            )
         release_fetch.set()
         result = await poll
 
@@ -1670,71 +1693,665 @@ async def test_gateway_version_is_read_over_rest(
     Stamping it as `sw_version` reported "1.5.0" on every device page for a
     gateway actually running 2.1.3 build 2840. The real value lives in the
     middleware's `version` topic, populated from the board controller's
-    `MSG_SW_VERSION_IND`.
+    `MSG_SW_VERSION_IND`; the unauthenticated `/version/` reply carries it
+    next to the API version (the exact shape a live 2.1.3 gateway returned on
+    2026-09-16), so one token-less request answers both.
     """
     coordinator = _coordinator(hass)
-    base = "https://h/api/junghome/config/parameter"
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="2840")
+    aioclient_mock.get(
+        "https://h/api/junghome/version/",
+        json={
+            "version_release": "2.1.3 Release",
+            "version_build": "2840",
+            "api_version": "1.5.0",
+        },
+    )
 
     await coordinator.async_fetch_gateway_version()
 
-    assert coordinator.gateway_version == "2.1.3 (2840)"
-    # The API version is a separate number and must not be confused with it.
-    assert coordinator.api_version is None
+    assert coordinator.gateway_version == "2.1.3 Release (2840)"
+    # The API version is a separate number: known from REST now, never
+    # confused with the software version.
+    assert coordinator.api_version == "1.5.0"
+    request = aioclient_mock.mock_calls[0]
+    assert "token" not in {k.lower() for k in (request[3] or {})}  # no token
 
 
 @pytest.mark.real_version_fetch
-async def test_gateway_version_tolerates_missing_or_unread_parameters(
+async def test_gateway_version_tolerates_missing_or_unread_fields(
     hass: HomeAssistant, aioclient_mock
 ) -> None:
     """Anything short of a real reading must leave the version unset.
 
     `"0.0.0"` / `"0"` are the state DB's declared defaults: the middleware ships
     them until the board controller has answered, so they mean "not known yet",
-    not "version 0". Firmware without the parameter 404s. Neither is worth
-    failing setup over, and neither may be published as a version.
+    not "version 0". Firmware before API 1.5.0 answers `/version/` with
+    `api_version` alone. Neither is worth failing setup over, and neither may
+    be published as a version.
     """
     coordinator = _coordinator(hass)
-    base = "https://h/api/junghome/config/parameter"
+    url = "https://h/api/junghome/version/"
 
-    # Older firmware: parameter unknown -> 404.
-    aioclient_mock.get(f"{base}/version_release", status=404)
+    # Older firmware: only the API version in the reply.
+    aioclient_mock.get(url, json={"api_version": "1.4.1"})
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version is None
+    assert coordinator.api_version == "1.4.1"
 
-    # Middleware has not read the board yet -> the declared default.
+    # Middleware has not read the board yet -> the declared defaults.
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="0.0.0")
+    aioclient_mock.get(
+        url, json={"version_release": "0.0.0", "version_build": "0", "api_version": ""}
+    )
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version is None
+    assert coordinator.api_version == "1.4.1"  # an empty string is not a version
 
     # A release with no build yet -> the release alone, not "2.1.3 (0)".
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="0")
+    aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version == "2.1.3"
 
-    # A transport failure leaves the previously known value in place.
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", exc=aiohttp.ClientError())
-    await coordinator.async_fetch_gateway_version()
-    assert coordinator.gateway_version == "2.1.3"
-
-    # A non-string body is not a version either.
-    aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json=213)
-    await coordinator.async_fetch_gateway_version()
-    assert coordinator.gateway_version == "2.1.3"
+    # A transport failure, a non-200 and a non-object body each leave the
+    # previously known value in place.
+    for fail in (
+        {"exc": aiohttp.ClientError()},
+        {"status": 404},
+        {"json": "2.1.3"},
+        {"json": {"version_release": 213}},
+    ):
+        aioclient_mock.clear_requests()
+        aioclient_mock.get(url, **fail)
+        await coordinator.async_fetch_gateway_version()
+        assert coordinator.gateway_version == "2.1.3"
 
     # Re-reading the same version writes nothing: `_apply_gateway_version`
     # walks every registry row, and the stable-session hook calls this on
     # every reconnect.
     aioclient_mock.clear_requests()
-    aioclient_mock.get(f"{base}/version_release", json="2.1.3")
-    aioclient_mock.get(f"{base}/version_build", json="0")
+    aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
     with patch.object(coordinator, "_apply_gateway_version") as apply:
         await coordinator.async_fetch_gateway_version()
     apply.assert_not_called()
     assert coordinator.gateway_version == "2.1.3"
+
+
+# --- Input hardening (review 2026-09-16) -----------------------------------
+
+
+async def test_a_parser_that_raises_on_the_export_does_not_fail_setup(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`parse_project_export` is written never to raise; the call site still
+    contains it, and the log names the exception TYPE only.
+
+    A malformed export reached `async_config_entry_first_refresh` as an
+    uncaught exception and turned the whole entry into SETUP_ERROR — for an
+    optional enrichment. The document carries the mesh keys, so neither the
+    document nor the exception's text (which may quote it) may be logged.
+    """
+    caplog.set_level(logging.DEBUG)
+    coordinator = _coordinator(hass)
+    document = {"network": "KEYMATERIAL-0123456789ABCDEF"}
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=document),
+        ),
+        patch(
+            "custom_components.junghome.coordinator.parse_project_export",
+            side_effect=RuntimeError("parser saw KEYMATERIAL-0123456789ABCDEF"),
+        ),
+    ):
+        await coordinator.async_fetch_node_identities()  # must not raise
+    assert dict(coordinator.node_identities) == {}
+    records = [r for r in caplog.records if "project export" in r.getMessage()]
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert records[0].getMessage() == "Could not parse the project export: RuntimeError"
+    assert "KEYMATERIAL" not in caplog.text
+
+
+_MALFORMED_DEVICES: dict[str, dict] = {
+    "label int": {"label": 123},
+    "label list": {"label": ["a"]},
+    "label bool": {"label": True},
+    "datapoint without id": {"datapoints": [{"type": "switch", "values": []}]},
+    "datapoints None": {"datapoints": None},
+    "datapoints dict": {"datapoints": {"id": "x"}},
+    "datapoints string": {"datapoints": "abc"},
+    "datapoints contains non-dict": {"datapoints": ["x", 1]},
+    "values None": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": None}]
+    },
+    "values string": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": "ab"}]
+    },
+    "values contains non-dict": {
+        "datapoints": [{"id": "idfuzz-001", "type": "switch", "values": [1, "x"]}]
+    },
+    "datapoint id int": {"datapoints": [{"id": 5, "type": "switch", "values": []}]},
+    "datapoint id list": {
+        "datapoints": [{"id": ["a"], "type": "switch", "values": []}]
+    },
+    "thermostat preset value is list": {
+        "type": "Thermostat",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "temperature_ctrl",
+                "values": [
+                    {"key": "temperature_ctrl", "value": "21"},
+                    {"key": "temperature_ctrl_preset", "value": ["eco"]},
+                ],
+            },
+            {
+                "id": "idfuzz-000",
+                "type": "switch",
+                "values": [{"key": "switch", "value": ["1"]}],
+            },
+        ],
+    },
+    "sensor label list": {
+        "type": "Socket",
+        "datapoints": [
+            {
+                "id": "idfuzz-002",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "1"},
+                    {"key": "quantity_label", "value": ["Power"]},
+                    {"key": "quantity_unit", "value": "W"},
+                ],
+            }
+        ],
+    },
+    "sensor unit list": {
+        "type": "Socket",
+        "datapoints": [
+            {
+                "id": "idfuzz-002",
+                "type": "quantity",
+                "values": [
+                    {"key": "quantity", "value": "1"},
+                    {"key": "quantity_label", "value": "Power"},
+                    {"key": "quantity_unit", "value": ["W"]},
+                ],
+            }
+        ],
+    },
+    "brightness value list": {
+        "type": "DimmerLight",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+            {
+                "id": "idfuzz-002",
+                "type": "brightness",
+                "values": [{"key": "brightness", "value": [50]}],
+            },
+        ],
+    },
+    "type list": {"type": ["OnOff"]},
+    "sw_version list": {"sw_version": ["1"]},
+}
+
+
+def malformed_device(name: str) -> dict:
+    """One gateway device object with the named defect (shared with test_init)."""
+    device = {
+        "id": "idfuzz",
+        "type": "OnOff",
+        "label": "Fuzz",
+        "datapoints": [
+            {
+                "id": "idfuzz-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "0"}],
+            }
+        ],
+    }
+    device.update(deepcopy(_MALFORMED_DEVICES[name]))
+    return device
+
+
+@pytest.mark.parametrize("name", list(_MALFORMED_DEVICES))
+async def test_functions_broadcast_with_a_malformed_device_is_still_adopted(
+    hass: HomeAssistant, init_integration, name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The WebSocket adoption point takes the same boundary as the REST poll.
+
+    A `functions` broadcast carrying one malformed device must adopt the list
+    (the other devices' state keeps flowing), log the repair once, and raise
+    nothing into the frame handler's catch-all (which would log a traceback
+    and — before the sanitiser — could suppress a racing poll).
+    """
+    caplog.set_level(logging.WARNING)
+    coordinator = init_integration.runtime_data
+    frame = {"type": "functions", "data": [*deepcopy(PRISTINE), malformed_device(name)]}
+    # Discovering the new device requests a refresh (`update_before_add`),
+    # which the mocked poll would answer with the fixture list, replacing the
+    # adopted one before it can be read; keep the adoption observable.
+    with patch.object(coordinator, "async_request_refresh", AsyncMock()):
+        coordinator._dispatch_text_frame(json.dumps(frame))
+        await hass.async_block_till_done()
+
+    assert [d["id"] for d in coordinator.data] == [
+        *(d["id"] for d in PRISTINE),
+        "idfuzz",
+    ]
+    assert hass.states.get("light.strip").state == "on"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    repairs = [r for r in caplog.records if "malformed item(s)" in r.getMessage()]
+    assert len(repairs) == 1
+
+
+async def test_frame_type_store_is_bounded_against_a_peer_minting_types(
+    hass: HomeAssistant,
+) -> None:
+    """2000 distinct frame types must not mean 2000 full frames retained.
+
+    The per-type store kept the latest frame of EVERY type in full, and the
+    type is the peer's to fill in — 2000 types of 100 kB each was 200 MB of
+    diagnostics state. Known types stay complete; unknown ones are truncated
+    and capped in number, and always land in the rolling log regardless.
+    """
+    coordinator = _coordinator(hass)
+    big = "x" * 100_000
+    for i in range(2000):
+        coordinator._dispatch_text_frame(json.dumps({"type": f"t{i}", "data": big}))
+    store = coordinator.ws_last_frame_by_type
+    assert len(store) == WS_FRAME_TYPES_MAX
+    assert all(frame.endswith("…[truncated]") for frame in store.values())
+    assert sum(len(frame) for frame in store.values()) < WS_FRAME_TYPES_MAX * 2100
+    # The rolling log saw every frame (bounded by its own maxlen).
+    assert coordinator.ws_frame_log[-1].startswith('{"type": "t1999"')
+
+    # A known type still arrives in full, even with the store at its cap ...
+    functions = json.dumps(
+        {"type": "functions", "data": [{"id": "x"} for _ in range(500)]}
+    )
+    assert len(functions) > WS_FRAME_MAX_CHARS
+    coordinator._dispatch_text_frame(functions)
+    assert store["functions"] == functions
+    # ... and an unknown type already in the store keeps updating (truncated).
+    coordinator._dispatch_text_frame(json.dumps({"type": "t0", "data": "fresh"}))
+    assert store["t0"] == '{"type": "t0", "data": "fresh"}'
+    assert "t1999" not in store
+    await coordinator.async_shutdown()
+
+
+async def test_stop_during_the_connect_time_refresh_still_tears_the_session_down(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A cancel landing inside the connect-time refresh runs the teardown.
+
+    `stop()` cancels the WebSocket task; if the cancel arrives while the
+    resync's REST fetch is in flight, the session's `finally` used to be
+    skipped (the refresh sat before the `try`): `ws_connected` stayed True,
+    an in-flight command's future was never failed, and the stable-session
+    timer fired `_mark_session_stable` on a stopped coordinator 30 s later.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = []
+    ws = _HoldingWS()
+    session = Mock()
+    session.ws_connect = Mock(return_value=ws)
+    refresh_started = asyncio.Event()
+
+    async def _slow_refresh() -> None:
+        refresh_started.set()
+        await asyncio.Event().wait()  # the REST fetch never returns in time
+
+    stable_calls: list[object] = []
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", _slow_refresh),
+        patch.object(coordinator, "_mark_session_stable", stable_calls.append),
+    ):
+        await coordinator.start()
+        await refresh_started.wait()
+        assert coordinator.ws_connected is True
+        # A command in flight on this session: registered, not yet answered.
+        pending: asyncio.Future[dict] = hass.loop.create_future()
+        coordinator._pending_replies["ha1"] = pending
+
+        await coordinator.stop()
+
+        assert coordinator.ws_connected is False
+        assert coordinator.websocket is None
+        assert pending.done()
+        with pytest.raises(HomeAssistantError) as failed:
+            pending.result()
+        assert failed.value.translation_key == "cannot_send"
+
+        freezer.tick(timedelta(seconds=STABLE_SESSION_SECONDS + 1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert stable_calls == []
+    coordinator._pending_replies.clear()
+
+
+async def test_send_failure_after_the_session_failed_the_future_is_quiet(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No "Future exception was never retrieved" from a drop mid-send.
+
+    `send_str` can suspend on transport backpressure; if the session ends
+    then, `_fail_pending_replies` sets `cannot_send` on the command's future
+    and `send_str` raises before the sender ever awaits it. The sender must
+    retrieve that exception on its way out, or asyncio logs an ERROR when the
+    future is collected — on every such drop, for a condition already handled.
+    """
+    coordinator = _coordinator(hass)
+    ws = AsyncMock()
+    ws.closed = False
+    gate = asyncio.Event()
+
+    async def _slow_send(_raw: str) -> None:
+        await gate.wait()
+        raise ConnectionResetError("Cannot write to closing transport")
+
+    ws.send_str = _slow_send
+    coordinator.websocket = ws
+
+    task = hass.async_create_task(coordinator.turn_on_switch("dp-1"))
+    await asyncio.sleep(0)
+    assert len(coordinator._pending_replies) == 1
+    coordinator._fail_pending_replies()  # the reader loop's finally, mid-send
+    gate.set()
+    with pytest.raises(HomeAssistantError) as raised:
+        await task
+    assert raised.value.translation_key == "cannot_send"
+    assert coordinator._pending_replies == {}
+    del task, raised
+    gc.collect()
+    await asyncio.sleep(0)
+    gc.collect()
+    await asyncio.sleep(0)
+    assert not [r for r in caplog.records if "never retrieved" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# TLS certificate pinning (tls.py): where the fingerprint is learned, stored
+# and enforced by the coordinator. The wire-level proof that a pin blocks an
+# impostor before any byte is sent lives in tests/test_tls.py.
+# ---------------------------------------------------------------------------
+
+
+def _mismatch(host: str = "h") -> aiohttp.ServerFingerprintMismatch:
+    return aiohttp.ServerFingerprintMismatch(
+        bytes.fromhex(FAKE_FINGERPRINT), bytes.fromhex("cd" * 32), host, 443
+    )
+
+
+def _pinned_coordinator(
+    hass: HomeAssistant, fingerprint: str | None
+) -> JungHomeDataUpdateCoordinator:
+    data = {CONF_HOST: "h", CONF_TOKEN: "t"}
+    if fingerprint is not None:
+        data[CONF_TLS_FINGERPRINT] = fingerprint
+    entry = MockConfigEntry(domain=DOMAIN, data=data)
+    entry.add_to_hass(hass)
+    return JungHomeDataUpdateCoordinator(hass, {"host": "h", "token": "t"}, entry)
+
+
+async def test_tofu_learns_the_pin_and_persists_it_after_the_first_success(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """An entry from before pinning learns its gateway's certificate on first use.
+
+    The learn is a bare handshake to the entry's CURRENT host (stubbed to
+    ``FAKE_FINGERPRINT``); the fetch itself goes out pinned to what the
+    learn saw, and only once that authenticated fetch has succeeded is the
+    fingerprint written into the entry — from then on it is read from there
+    and never learned again.
+    """
+    coordinator = _pinned_coordinator(hass, None)
+    entry = coordinator.config_entry
+    assert entry is not None
+    aioclient_mock.get("https://h/api/junghome/functions", json=[])
+    learn = AsyncMock(return_value=FAKE_FINGERPRINT)
+    with patch.object(coordinator, "_async_learn_fingerprint", learn):
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+        learn.assert_awaited_once_with("h")
+
+        # Pinned now: a further request reads the entry, no learn.
+        await coordinator.async_refresh()
+        learn.assert_awaited_once()
+    await coordinator.async_shutdown()
+
+
+async def test_tofu_does_not_persist_a_pin_the_gateway_never_answered_on(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A failed first fetch leaves the entry unpinned (nothing proven yet)."""
+    coordinator = _pinned_coordinator(hass, None)
+    entry = coordinator.config_entry
+    assert entry is not None
+    aioclient_mock.get("https://h/api/junghome/functions", status=500)
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert CONF_TLS_FINGERPRINT not in entry.data
+    await coordinator.async_shutdown()
+
+
+async def test_requests_carry_the_stored_pin(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """Every REST request passes ``ssl=`` pinned to the entry's fingerprint.
+
+    ``aioclient_mock`` does not record ``ssl``, so the session's request
+    entry point is wrapped to capture it. A stored pin is used as-is — the
+    learn seam must not be touched.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    base = "https://h/api/junghome"
+    aioclient_mock.get(f"{base}/functions", json=[])
+    aioclient_mock.get(f"{base}/groups", json=[])
+    aioclient_mock.get(f"{base}/scenes/", json=[])
+    aioclient_mock.get(f"{base}/project/junghome", status=404)
+    aioclient_mock.get(
+        "https://h/api/junghome/version/",
+        json={"version_release": "2.1.3", "version_build": "2840"},
+    )
+    aioclient_mock.post(f"{base}/scenes/id0001", json={})
+    aioclient_mock.get(f"{base}/devices/?verbose=true", json=[])
+    aioclient_mock.get(f"{base}/devices/idx?verbose=true", json={})
+    session = async_get_clientsession(hass, verify_ssl=False)
+    original = session._request
+    seen: list[object] = []
+
+    async def _spy(method, url, **kwargs):
+        seen.append(kwargs.get("ssl"))
+        return await original(method, url, **kwargs)
+
+    learn = AsyncMock(side_effect=AssertionError("must not learn"))
+    with (
+        patch.object(session, "_request", _spy),
+        patch.object(coordinator, "_async_learn_fingerprint", learn),
+        # The autouse stubs replace these with AsyncMocks; run the real ones.
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_groups_from_api",
+            _REAL_FETCHES["groups"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_scenes_from_api",
+            _REAL_FETCHES["scenes"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_project_export_from_api",
+            _REAL_FETCHES["project"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_version_from_api",
+            _REAL_FETCHES["version"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_verbose_from_api",
+            _REAL_FETCHES["verbose"],
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_device_verbose_from_api",
+            _REAL_FETCHES["verbose_one"],
+        ),
+    ):
+        await coordinator._async_update_data()
+        await coordinator.async_fetch_groups()
+        await coordinator.async_fetch_scenes()
+        await coordinator.async_fetch_node_identities()
+        await coordinator.async_fetch_gateway_version()
+        await coordinator.async_fetch_device_properties()
+        await coordinator._fetch_device_verbose_from_api("h", "t", "idx")
+        await coordinator.activate_scene("id0001")
+    assert len(seen) == 8
+    assert all(ssl is fingerprint_ssl(FAKE_FINGERPRINT) for ssl in seen)
+    learn.assert_not_called()
+
+
+async def test_websocket_upgrade_carries_the_pin(hass: HomeAssistant) -> None:
+    """The WS upgrade (which carries the token) is pinned like a REST request."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    coordinator.data = []
+    session = Mock()
+    session.ws_connect = Mock(return_value=_EmptyWS())
+    with (
+        patch(
+            "custom_components.junghome.coordinator.async_get_clientsession",
+            return_value=session,
+        ),
+        patch.object(coordinator, "async_request_refresh", AsyncMock()),
+        pytest.raises(ConnectionError),
+    ):
+        await coordinator._run_websocket()
+    session.ws_connect.assert_called_once_with(
+        "wss://h/ws",
+        headers={"token": "t"},
+        heartbeat=30,
+        ssl=fingerprint_ssl(FAKE_FINGERPRINT),
+    )
+
+
+async def test_poll_reports_a_certificate_mismatch_and_recovers(
+    hass: HomeAssistant,
+) -> None:
+    """A responder with the wrong certificate fails the poll and raises the issue.
+
+    aiohttp raises the mismatch at the handshake, so the request (and the
+    token) never went out; the coordinator must neither retry unpinned nor
+    re-learn: entities go unavailable (``UpdateFailed``) and the user gets
+    a fixable repair issue naming both digests. A later poll that succeeds
+    (the gateway back on its address) withdraws the issue.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    entry = coordinator.config_entry
+    assert entry is not None
+    registry = ir.async_get(hass)
+    with (
+        patch.object(coordinator, "_fetch_devices_from_api", side_effect=_mismatch()),
+        pytest.raises(UpdateFailed) as excinfo,
+    ):
+        await coordinator._async_update_data()
+    assert excinfo.value.translation_key == "certificate_changed"
+    issue = registry.async_get_issue(DOMAIN, coordinator._tls_issue_id)
+    assert issue is not None
+    assert issue.is_fixable is True
+    assert issue.severity is ir.IssueSeverity.ERROR
+    assert issue.translation_key == "tls_certificate_changed"
+    assert issue.data == {"entry_id": entry.entry_id}
+    assert issue.translation_placeholders == {
+        "host": "h",
+        "expected": "AB:" * 31 + "AB",
+        "observed": "CD:" * 31 + "CD",
+    }
+    assert coordinator.last_error is not None
+    assert "expected AB:AB" in coordinator.last_error
+    # The pin is untouched: no silent re-learn.
+    assert entry.data[CONF_TLS_FINGERPRINT] == FAKE_FINGERPRINT
+
+    with patch.object(coordinator, "_fetch_devices_from_api", return_value=[]):
+        await coordinator._async_update_data()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id) is None
+
+
+async def test_scene_recall_reports_a_certificate_mismatch(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """The scene POST is the third token-carrying path; same contract."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    aioclient_mock.post("https://h/api/junghome/scenes/id0001", exc=_mismatch())
+    with pytest.raises(HomeAssistantError) as excinfo:
+        await coordinator.activate_scene("id0001")
+    assert excinfo.value.translation_key == "certificate_changed"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, coordinator._tls_issue_id)
+
+
+async def test_websocket_loop_reports_a_certificate_mismatch_and_keeps_backing_off(
+    hass: HomeAssistant,
+) -> None:
+    """A mismatched upgrade raises the issue and counts as a failed reconnect.
+
+    The loop keeps its ordinary backoff rather than stopping: every retry is
+    another aborted handshake (no token), so a transient impostor costs
+    nothing and the real gateway back on its address is picked up without a
+    reload.
+    """
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    attempts = 0
+
+    async def _mismatching(self: JungHomeDataUpdateCoordinator) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 2:
+            self._closing = True
+        raise _mismatch()
+
+    async def _sleep(delay: float) -> None:
+        pass
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", _mismatching),
+        patch("custom_components.junghome.coordinator.asyncio.sleep", _sleep),
+    ):
+        await coordinator._websocket_loop()
+    assert attempts == 2
+    assert coordinator._reconnect_failures == 2
+    assert ir.async_get(hass).async_get_issue(DOMAIN, coordinator._tls_issue_id)
+
+
+async def test_stop_clears_the_certificate_issue(hass: HomeAssistant) -> None:
+    """Unloading while the issue stands must not strand it in the repairs UI."""
+    coordinator = _pinned_coordinator(hass, FAKE_FINGERPRINT)
+    registry = ir.async_get(hass)
+    with (
+        patch.object(coordinator, "_fetch_devices_from_api", side_effect=_mismatch()),
+        pytest.raises(UpdateFailed),
+    ):
+        await coordinator._async_update_data()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id)
+    await coordinator.stop()
+    assert registry.async_get_issue(DOMAIN, coordinator._tls_issue_id) is None
+
+
+async def test_a_corrupt_stored_pin_is_treated_as_absent(hass: HomeAssistant) -> None:
+    """A hand-edited fingerprint that is not a SHA-256 digest is re-learned."""
+    coordinator = _pinned_coordinator(hass, "not-a-digest")
+    learn = AsyncMock(return_value=FAKE_FINGERPRINT)
+    with patch.object(coordinator, "_async_learn_fingerprint", learn):
+        assert await coordinator._async_ssl() is fingerprint_ssl(FAKE_FINGERPRINT)
+    learn.assert_awaited_once_with("h")

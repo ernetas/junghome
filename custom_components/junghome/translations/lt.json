@@ -61,6 +61,10 @@
         "data_description": {
           "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50 arba junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Šliuzo sertifikatas skiriasi",
+        "description": "Šliuzas adresu {host} pateikia TLS sertifikatą, kuris skiriasi nuo šiam įrašui prisegto (prisegtas {expected}, pateiktas {observed}). To tikimasi tik jei šliuzas buvo pakeistas arba jo saugykla buvo ištrinta ar įrašyta iš naujo; sertifikatas išlieka po gamyklinių nustatymų atkūrimo ir programinės aparatinės įrangos atnaujinimų. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: grįžkite ir patikrinkite adresą. Kol kas jam išsiųstas tik TLS rankos paspaudimas. Pateikite, kad pasitikėtumėte nauju sertifikatu ir tęstumėte."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Aukštyn" },
-      "down": { "name": "Žemyn" },
-      "press": { "name": "Paspaudimas" }
+      "up": {
+        "name": "Viršutinis",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Apatinis",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Paspaudimas",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Paspausta",
+              "depressed": "Atleista",
+              "click": "Spustelėjimas",
+              "hold_start": "Laikymo pradžia",
+              "hold_end": "Laikymo pabaiga"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Galia" },
       "energy": { "name": "Energija" },
+      "total_energy": { "name": "Bendra energija" },
       "voltage": { "name": "Įtampa" },
       "current": { "name": "Srovė" },
       "frequency": { "name": "Dažnis" },
       "temperature": { "name": "Temperatūra" },
       "illuminance": { "name": "Apšvieta" },
+      "present_illuminance": { "name": "Dabartinis apšvietimas" },
       "humidity": { "name": "Drėgmė" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Ryšio su „Jung Home“ sietuvu klaida: {error}"
+    },
+    "certificate_changed": {
+      "message": "Įrenginys adresu {host} nepateikia šiam Jung Home šliuzui prisegto TLS sertifikato, todėl prieigos raktas nebuvo išsiųstas. Jei šliuzą atkūrėte ar pakeitėte, patvirtinkite naują sertifikatą skiltyje Nustatymai, Taisymai."
     },
     "cannot_send": {
       "message": "Nepavyko pasiekti „Jung Home“ sietuvo komandai išsiųsti; jis jungiasi iš naujo. Pabandykite dar kartą po akimirkos."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "„Jung Home“ tiesioginiai atnaujinimai sustojo",
       "description": "„Home Assistant“ {failures} kartus iš eilės nepavyko iš naujo prisijungti prie „Jung Home“ sietuvo adresu {host}. Įrenginių būsenos nebesiunčiamos akimirksniu ir dabar atnaujinamos tik periodinės REST apklausos metu. Patikrinkite, ar sietuvas įjungtas ir pasiekiamas jūsų tinkle. Ši problema išnyks savaime, kai ryšys bus atkurtas."
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home šliuzo sertifikatas pasikeitė",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Pasitikėti nauju šliuzo sertifikatu",
+            "description": "Adresu {host} atsakantis įrenginys pateikia TLS sertifikatą ({observed}), kuris skiriasi nuo to, kurį Home Assistant prisegė pirmą kartą jungdamasis prie šio Jung Home šliuzo ({expected}). Home Assistant nustojo su juo bendrauti, net prieigos raktas nesiunčiamas, o šliuzo objektai lieka nepasiekiami, kol tai neišspręsta. Sertifikato pasikeitimo tikimasi tik jei šliuzas buvo pakeistas arba jo saugykla buvo ištrinta ar įrašyta iš naujo; sertifikatas išlieka po gamyklinių nustatymų atkūrimo ir programinės aparatinės įrangos atnaujinimų. Jei nieko iš to nenutiko, šiuo adresu gali atsakinėti kitas įrenginys: nepatvirtinkite, o patikrinkite savo tinklą. Patvirtinkite, kad Jung Home šliuzas adresu {host} buvo pakeistas ar įrašytas iš naujo ir kad dabar jo pateikiamu sertifikatu ({observed}) reikia pasitikėti vietoj prisegtojo ({expected}). Home Assistant prisegs naują sertifikatą, išsiųs jam prieigos raktą ir prisijungs iš naujo."
+          }
+        },
+        "error": {
+          "cannot_connect": "Nepavyko prisijungti prie šliuzo.",
+          "different_gateway": "Adresas atsako, bet priklauso kitam Jung Home šliuzui nei šis įrašas. Adresui pakeisti naudokite Konfigūruoti iš naujo."
+        }
+      }
     }
   }
 }

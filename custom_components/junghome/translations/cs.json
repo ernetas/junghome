@@ -61,6 +61,10 @@
         "data_description": {
           "host": "IP adresa nebo název hostitele brány Jung Home (například 192.168.1.50 nebo junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Certifikát brány se liší",
+        "description": "Brána na adrese {host} předkládá TLS certifikát, který se liší od certifikátu připnutého k tomuto záznamu (připnutý {expected}, předložený {observed}). To je očekávané pouze v případě, že byla brána vyměněna nebo bylo její úložiště smazáno či znovu nahráno; certifikát přežije obnovení do továrního nastavení i aktualizace firmwaru. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: vraťte se a adresu zkontrolujte. Zatím mu byl odeslán pouze TLS handshake. Odešlete, pokud chcete novému certifikátu důvěřovat a pokračovat."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Nahoru" },
-      "down": { "name": "Dolů" },
-      "press": { "name": "Stisknutí" }
+      "up": {
+        "name": "Nahoru",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Dolů",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Stisknutí",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Stisknuto",
+              "depressed": "Uvolněno",
+              "click": "Kliknutí",
+              "hold_start": "Začátek podržení",
+              "hold_end": "Konec podržení"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Výkon" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Celková energie" },
       "voltage": { "name": "Napětí" },
       "current": { "name": "Proud" },
       "frequency": { "name": "Frekvence" },
       "temperature": { "name": "Teplota" },
       "illuminance": { "name": "Osvětlení" },
+      "present_illuminance": { "name": "Aktuální osvětlení" },
       "humidity": { "name": "Vlhkost" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Chyba při komunikaci s bránou Jung Home: {error}"
+    },
+    "certificate_changed": {
+      "message": "Zařízení na adrese {host} nepředkládá TLS certifikát připnutý k této bráně Jung Home, proto nebyl přístupový token odeslán. Pokud jste bránu resetovali nebo vyměnili, potvrďte nový certifikát v Nastavení, Opravy."
     },
     "cannot_send": {
       "message": "Bránu Jung Home se nepodařilo kontaktovat pro odeslání příkazu; probíhá opětovné připojení. Zkuste to za okamžik znovu."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Živé aktualizace Jung Home se zastavily",
       "description": "Home Assistantu se {failures}× po sobě nepodařilo znovu připojit k bráně Jung Home na adrese {host}. Stavy zařízení už nejsou odesílány okamžitě a obnovují se pouze při pravidelném dotazování přes REST. Zkontrolujte, zda je brána zapnutá a dostupná ve vaší síti. Tento problém zmizí sám, jakmile se připojení obnoví."
+    },
+    "tls_certificate_changed": {
+      "title": "Certifikát brány Jung Home se změnil",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Důvěřovat novému certifikátu brány",
+            "description": "Zařízení odpovídající na adrese {host} předkládá TLS certifikát ({observed}), který se liší od toho, který Home Assistant připnul při prvním připojení k této bráně Jung Home ({expected}). Home Assistant s ním přestal komunikovat, neodesílá ani přístupový token a entity brány zůstávají nedostupné, dokud se to nevyřeší. Změna certifikátu je očekávaná pouze v případě, že byla brána vyměněna nebo bylo její úložiště smazáno či znovu nahráno; certifikát přežije obnovení do továrního nastavení i aktualizace firmwaru. Pokud nic z toho nenastalo, na této adrese může odpovídat jiné zařízení: nepotvrzujte, raději zkontrolujte svou síť. Potvrďte, že brána Jung Home na adrese {host} byla vyměněna nebo znovu nahrána a že certifikátu, který nyní předkládá ({observed}), se má důvěřovat místo připnutého ({expected}). Home Assistant nový certifikát připne, odešle mu přístupový token a znovu se připojí."
+          }
+        },
+        "error": {
+          "cannot_connect": "Připojení k bráně se nezdařilo.",
+          "different_gateway": "Adresa odpovídá, ale patří jiné bráně Jung Home než tomuto záznamu. Ke změně adresy použijte Překonfigurovat."
+        }
+      }
     }
   }
 }

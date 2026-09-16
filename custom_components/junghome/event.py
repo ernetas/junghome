@@ -29,6 +29,14 @@ a real hold following a quick tap, so it is reinstated then: its ``pressed``
 edge fires late, followed by ``hold_start``. The option
 ``CONF_SUPPRESS_DUPLICATE_PRESSES`` (default on) switches suppression off for
 older device firmware that reports each tap once.
+
+A **hold** on a single-key element can be copied too, and the copy lands on the
+*other* side while the first is still down (the gateway toggles the side on
+every reception); the finger's release then arrives on the copy's side and
+the first side is never released. A press on the other side of a device whose
+one side has been down for longer than a tap pulse is that copy: it is
+dropped, and its release completes the hold on the side that is down
+(``BUTTON_HOLD_COPY_AFTER`` / ``BUTTON_HOLD_COPY_WINDOW``).
 """
 
 import logging
@@ -44,6 +52,8 @@ from .const import (
     BUTTON_DATAPOINT_TYPES,
     BUTTON_DUPLICATE_WINDOW,
     BUTTON_EVENT_TYPES,
+    BUTTON_HOLD_COPY_AFTER,
+    BUTTON_HOLD_COPY_WINDOW,
     BUTTON_HOLD_THRESHOLD,
     CONF_SUBTYPE,
     CONF_SUPPRESS_DUPLICATE_PRESSES,
@@ -86,6 +96,10 @@ class ButtonGestureTracker:
         # Loop time of the release that completed the last click, until the
         # next press on any side has consumed it.
         self._last_click_release: float | None = None
+        # The side currently down — its entity and the loop time of its press
+        # — so a press on the OTHER side can be recognised as the firmware's
+        # copy of a hold (``hold_copy_target``).
+        self._down: tuple[JungHomeEventEntity, float] | None = None
 
     def note_click(self, now: float) -> None:
         """Record the release that completed a click."""
@@ -102,6 +116,41 @@ class ButtonGestureTracker:
         since_release = now - self._last_click_release
         self._last_click_release = None
         return since_release <= BUTTON_DUPLICATE_WINDOW
+
+    def note_press(self, entity: "JungHomeEventEntity", now: float) -> None:
+        """Record that ``entity``'s side went down at ``now``."""
+        self._down = (entity, now)
+
+    def note_up(self, entity: "JungHomeEventEntity") -> None:
+        """Forget ``entity``'s press, if it is the one recorded."""
+        if self._down is not None and self._down[0] is entity:
+            self._down = None
+
+    def hold_copy_target(
+        self, entity: "JungHomeEventEntity", now: float
+    ) -> "JungHomeEventEntity | None":
+        """Return the side whose hold a press on ``entity`` copies, or None.
+
+        The gateway toggles the reported side of a single-key element on every
+        reception, so the firmware's second copy of a HOLD lands on the other
+        datapoint while the first side is still down, and the finger's release
+        follows on the copy's side (captured 2026-09-16: press, other-side press
+        +1.4 s, release there at +2.55 s, the first side never released). A
+        press on the other side is that copy when this device's down side has
+        been down longer than any synthesised tap pulse — a tap's own copy only
+        arrives after its release, which the click window handles — and less
+        than the copy window. Nothing is consumed here: the copy's release is
+        what ends the hold. Off with suppression off (older firmware sends no
+        copies).
+        """
+        if not self.suppress_duplicates or self._down is None:
+            return None
+        other, since = self._down
+        if other is entity:
+            return None
+        if BUTTON_HOLD_COPY_AFTER <= now - since <= BUTTON_HOLD_COPY_WINDOW:
+            return other
+        return None
 
 
 async def async_setup_entry(
@@ -139,10 +188,15 @@ async def async_setup_entry(
                         uid = stable_unique_id(device, datapoint, "event")
                         if not claim_new_entity(known, uid):
                             continue
+                        # A button the gateway reports as running firmware
+                        # older than the doubling one (verbose device
+                        # endpoint) reports each tap once: no copies to drop,
+                        # only fast double-taps to lose. Unknown stays on.
                         tracker = trackers.setdefault(
                             str(device.get("id")),
                             ButtonGestureTracker(
                                 suppress_duplicates=suppress_duplicates
+                                and not coordinator.button_reports_each_tap_once(device)
                             ),
                         )
                         new_entities.append(
@@ -203,6 +257,9 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         self._cancel_hold_timer: CALLBACK_TYPE | None = None
         self._suppressed = False
         self._holding = False
+        # Set while this side's press was taken as the firmware's copy of a
+        # hold on the other side: its release then completes that hold.
+        self._copy_of: JungHomeEventEntity | None = None
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel a pending hold timer so it cannot fire on a removed entity."""
@@ -259,13 +316,30 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         """
         now = self.hass.loop.time()
         emitted = self._end_open_hold()
+        if (target := self._tracker.hold_copy_target(self, now)) is not None:
+            # The other side is mid-hold: this press is the firmware's copy
+            # of it. Withheld, edges included; its release ends that hold.
+            _LOGGER.debug(
+                "Dropping press on %s: the firmware's copy of the hold on %s",
+                self.entity_id,
+                target.entity_id,
+            )
+            self._copy_of = target
+            return emitted
         if self._press_pending:
             _LOGGER.debug(
                 "%s pressed while already down; restarting the gesture",
                 self.entity_id,
             )
             self._stop_hold_timer()
+        # A genuine press supersedes a copy marker left over from a hold the
+        # other side finished itself (its release can land there after all:
+        # the gateway's side toggle is shared by every button, so an unrelated
+        # key pressed mid-hold flips it back). Stale, it would route THIS
+        # press's release to the other side and lose the click.
+        self._copy_of = None
         self._press_pending = True
+        self._tracker.note_press(self, now)
         self._suppressed = self._tracker.is_duplicate_press(now)
         if self._suppressed:
             _LOGGER.debug(
@@ -289,12 +363,42 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         Completes the pending press as a click or a hold. Without a pending
         press the edge is still re-fired (the gateway re-sends a value on a
         mode-only change), and it closes a hold whose press was abandoned
-        while the entity was unavailable.
+        while the entity was unavailable. A release on a side whose press was
+        the copy of the other side's hold is the finger's release of THAT
+        hold, and completes it there; nothing fires on this side.
         """
         now = self.hass.loop.time()
+        if (target := self._copy_of) is not None:
+            self._copy_of = None
+            _LOGGER.debug(
+                "Release on %s ends the hold on %s (the copy's release is the "
+                "finger's)",
+                self.entity_id,
+                target.entity_id,
+            )
+            return target.complete_copied_hold(now)
+        return self._complete_release(now)
+
+    @callback
+    def complete_copied_hold(self, now: float) -> bool:
+        """Finish this side's press with its copy's release; nothing if already over.
+
+        The held side may have been released on its own first (see
+        ``_on_press``); the copy's release is then the copy's alone and is
+        dropped whole, like its press — re-firing a ``depressed`` here would
+        report an edge the gateway never sent for this side.
+        """
+        if not self._press_pending:
+            return False
+        return self._complete_release(now)
+
+    @callback
+    def _complete_release(self, now: float) -> bool:
+        """Finish this side's press at ``now``; return whether anything was emitted."""
         self._stop_hold_timer()
         suppressed, pending = self._suppressed, self._press_pending
         self._press_pending = self._suppressed = False
+        self._tracker.note_up(self)
         if suppressed:
             _LOGGER.debug(
                 "Dropping the duplicate press's release on %s", self.entity_id
@@ -339,6 +443,7 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
     @callback
     def _abandon_press(self) -> None:
         """Forget a press in flight without emitting anything for it."""
+        self._copy_of = None
         if not self._press_pending:
             return
         _LOGGER.debug(
@@ -346,6 +451,7 @@ class JungHomeEventEntity(JungHomeEntity, EventEntity):
         )
         self._stop_hold_timer()
         self._press_pending = self._suppressed = False
+        self._tracker.note_up(self)
 
     @callback
     def _stop_hold_timer(self) -> None:

@@ -16,7 +16,7 @@
       'model': 'PositionAndAngle',
       'name': 'Bedroom Blind',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -39,7 +39,7 @@
       'model': 'Socket',
       'name': 'Boiler',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -62,7 +62,7 @@
       'model': 'RockerSwitch',
       'name': 'Button A',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -85,7 +85,7 @@
       'model': 'DimmerLight',
       'name': 'Dimmer',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -126,7 +126,7 @@
       'model': 'OnOff',
       'name': 'Hall Light',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -149,7 +149,7 @@
       'model': 'Measurement',
       'name': 'Hallway Sensor',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -172,7 +172,7 @@
       'model': 'Position',
       'name': 'Kitchen Shade',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -195,7 +195,7 @@
       'model': 'Thermostat',
       'name': 'Living Room',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',
@@ -218,7 +218,7 @@
       'model': 'ColorLight',
       'name': 'Strip',
       'serial_number': None,
-      'sw_version': 'Unknown Version',
+      'sw_version': None,
       'via_device': list([
         tuple(
           'junghome',

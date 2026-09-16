@@ -32,11 +32,12 @@ from custom_components.junghome.const import (
     DOMAIN,
 )
 from custom_components.junghome.device_trigger import async_validate_trigger_config
+from tests.conftest import find_device
 
 
 def _device_id(hass: HomeAssistant, slug: str) -> str:
     """Return the HA device id for a Jung Home device slug."""
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, slug)})
+    device = find_device(hass, slug)
     assert device is not None
     return device.id
 
@@ -225,8 +226,10 @@ async def test_no_triggers_when_entry_not_loaded(hass: HomeAssistant) -> None:
     """A junghome device whose entry is not loaded resolves to no triggers.
 
     ``runtime_data`` only exists while the entry is loaded; the lookup must
-    skip such entries (and any non-junghome entries sharing the device)
-    rather than raise, so the automation UI degrades to an empty list.
+    skip such entries rather than raise, so the automation UI degrades to an
+    empty list. Same for a device carrying a junghome identifier that another
+    integration's entry owns (a device belongs to one entry from HA 2026.9,
+    so the two cases are two devices, not one shared device).
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -237,15 +240,19 @@ async def test_no_triggers_when_entry_not_loaded(hass: HomeAssistant) -> None:
     other = MockConfigEntry(domain="other_domain", unique_id="x")
     other.add_to_hass(hass)
     registry = dr.async_get(hass)
-    device = registry.async_get_or_create(
+    not_loaded = registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, "button_b")},
     )
-    registry.async_update_device(device.id, add_config_entry_id=other.entry_id)
-    triggers = await async_get_device_automations(
-        hass, DeviceAutomationType.TRIGGER, device.id
+    foreign_owner = registry.async_get_or_create(
+        config_entry_id=other.entry_id,
+        identifiers={(DOMAIN, "button_c")},
     )
-    assert [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN] == []
+    for device in (not_loaded, foreign_owner):
+        triggers = await async_get_device_automations(
+            hass, DeviceAutomationType.TRIGGER, device.id
+        )
+        assert [t for t in triggers if t.get(CONF_DOMAIN) == DOMAIN] == []
 
 
 async def test_no_triggers_when_device_missing_from_poll(

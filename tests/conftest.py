@@ -12,12 +12,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.const import CONF_HOST, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.syrupy import (
     HomeAssistantSnapshotExtension,
 )
 from syrupy.assertion import SnapshotAssertion
 
+from custom_components.junghome.config_flow import JungHomeConfigFlow
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 
@@ -48,6 +50,36 @@ DEVICES: list[dict] = load_json_fixture("functions.json")
 # otherwise pass or fail depending on execution order. Snapshot setups start
 # from this pristine copy instead.
 PRISTINE_DEVICES: list[dict] = deepcopy(DEVICES)
+
+# The certificate fingerprint every stubbed TLS probe reports (see
+# ``mock_tls_fingerprint_learn``): a syntactically valid SHA-256 hex digest,
+# so it round-trips through ``tls.fingerprint_ssl`` like a real one. Tests that
+# pin an entry up front store this so the stub "matches"; a test that wants a
+# mismatch stores anything else.
+FAKE_FINGERPRINT = "ab" * 32
+
+
+def find_device(hass: HomeAssistant, slug: str) -> dr.DeviceEntry | None:
+    """Return the junghome device registered under ``slug``, if any.
+
+    The one registry lookup the tests use. ``async_get_device(identifiers=…)``
+    is deprecated from HA 2026.9 and its report *raises* when the caller has no
+    integration frame on the stack — i.e. from every test — while the scoped
+    replacement (``async_get_device_by_identifier``) does not exist before
+    2026.9. Walking the junghome entries' devices works on every core and asks
+    the same question: which of our devices carries this slug.
+    """
+    registry = dr.async_get(hass)
+    identifier = (DOMAIN, slug)
+    return next(
+        (
+            device
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+            if identifier in device.identifiers
+        ),
+        None,
+    )
 
 
 def bare_coordinator(hass: HomeAssistant) -> JungHomeDataUpdateCoordinator:
@@ -235,14 +267,25 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        "real_version_fetch: let the test run the real _fetch_config_parameter "
+        "real_version_fetch: let the test run the real _fetch_version_from_api "
         "(pair with aioclient_mock); by default it is stubbed to avoid a socket.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_device_properties_fetch: let the test run the real verbose "
+        "device reads (pair with aioclient_mock); by default they are stubbed.",
     )
     config.addinivalue_line(
         "markers",
         "real_project_fetch: let the test run the real "
         "_fetch_project_export_from_api (pair with aioclient_mock); by default "
         "it is stubbed to avoid a socket.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_tls_probe: let the test run the real certificate-fingerprint "
+        "learn (a TLS handshake — pair with a local TLS server or "
+        "aioclient_mock); by default it is stubbed to FAKE_FINGERPRINT.",
     )
 
 
@@ -258,12 +301,16 @@ def fail_on_home_assistant_deprecation_reports(caplog: pytest.LogCaptureFixture)
     2026.6 — survived unnoticed in the reauth path.
 
     The reports name the integration, so this catches ours and stays quiet for
-    anything HA reports about itself.
+    anything HA reports about itself. Both the test body and its fixture setup
+    are scanned: ``init_integration`` and friends run the whole setup path —
+    migrations, the identity back-fill, the first prune — inside a fixture,
+    so a report raised there would otherwise never be seen.
     """
     yield
     offenders = [
         record.getMessage()
-        for record in caplog.get_records("call")
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
         if record.name == "homeassistant.helpers.frame"
         and record.levelno >= logging.WARNING
     ]
@@ -307,17 +354,17 @@ def mock_version_fetch(request):
     """Keep the setup-time REST gateway-version read off the network.
 
     The mirror of ``mock_groups_fetch``: ``async_setup_entry`` also reads
-    ``config/parameter/version_release`` (and ``version_build``) before the hub
-    device is registered, so every device page carries the gateway's software
-    version. Defaults to "parameter unavailable", which is exactly what an older
-    firmware returns, so entity/lifecycle tests behave as they always did.
+    ``GET /version/`` before the hub device is registered, so every device
+    page carries the gateway's software version. Defaults to "nothing
+    readable", which is what a transport failure yields, so entity/lifecycle
+    tests behave as they always did.
     """
     if request.node.get_closest_marker("real_version_fetch") is not None:
         yield
         return
     with patch.object(
         JungHomeDataUpdateCoordinator,
-        "_fetch_config_parameter",
+        "_fetch_version_from_api",
         AsyncMock(return_value=None),
     ):
         yield
@@ -363,5 +410,65 @@ def mock_project_export_fetch(request):
         JungHomeDataUpdateCoordinator,
         "_fetch_project_export_from_api",
         AsyncMock(return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_device_properties_fetch(request):
+    """Keep the verbose device reads off the network.
+
+    ``async_setup_entry`` reads ``GET /devices/?verbose=true`` once after the
+    first refresh (energy counters, firmware revisions) and the periodic
+    refresh re-reads single devices. Defaults to "no endpoint" — firmware
+    before 2.1.x — so entity/lifecycle tests see no energy sensor and no
+    per-device firmware knowledge, as before.
+    """
+    if request.node.get_closest_marker("real_device_properties_fetch") is not None:
+        yield
+        return
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_verbose_from_api",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_device_verbose_from_api",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_tls_fingerprint_learn(request):
+    """Keep the certificate-fingerprint learn off the network.
+
+    Every request the integration sends is pinned to the gateway's TLS
+    certificate (``tls.py``), and an entry or flow that holds no fingerprint
+    yet learns one first with a bare TLS handshake — a real socket, which the
+    test harness rejects, and one ``aioclient_mock`` cannot answer either (a
+    mocked response never presents a certificate). Stub the learn on both
+    seams (the coordinator's and the config flow's) to a fixed digest so every
+    existing test behaves as before, with one visible difference: an entry
+    that connects successfully now records ``FAKE_FINGERPRINT``. Tests of the
+    real learn opt out with ``@pytest.mark.real_tls_probe``.
+    """
+    if request.node.get_closest_marker("real_tls_probe") is not None:
+        yield
+        return
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_async_learn_fingerprint",
+            AsyncMock(return_value=FAKE_FINGERPRINT),
+        ),
+        patch.object(
+            JungHomeConfigFlow,
+            "_async_learn_fingerprint",
+            AsyncMock(return_value=FAKE_FINGERPRINT),
+        ),
     ):
         yield

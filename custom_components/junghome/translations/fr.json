@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50 ou junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Le certificat de la passerelle diffère",
+        "description": "La passerelle à l'adresse {host} présente un certificat TLS différent de celui épinglé pour cette entrée (épinglé {expected}, présenté {observed}). C'est attendu uniquement si la passerelle a été remplacée ou si son stockage a été effacé ou réinstallé ; le certificat survit à une réinitialisation d'usine et aux mises à jour du firmware. Sinon, un autre appareil répond peut-être à cette adresse : revenez en arrière et vérifiez l'adresse. Seule une négociation TLS lui a été envoyée jusqu'ici. Validez pour faire confiance au nouveau certificat et continuer."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Haut" },
-      "down": { "name": "Bas" },
-      "press": { "name": "Appui" }
+      "up": {
+        "name": "Haut",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Appuyé",
+              "depressed": "Relâché",
+              "click": "Clic",
+              "hold_start": "Début du maintien",
+              "hold_end": "Fin du maintien"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Bas",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Appuyé",
+              "depressed": "Relâché",
+              "click": "Clic",
+              "hold_start": "Début du maintien",
+              "hold_end": "Fin du maintien"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Appui",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Appuyé",
+              "depressed": "Relâché",
+              "click": "Clic",
+              "hold_start": "Début du maintien",
+              "hold_end": "Fin du maintien"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Puissance" },
       "energy": { "name": "Énergie" },
+      "total_energy": { "name": "Énergie totale" },
       "voltage": { "name": "Tension" },
       "current": { "name": "Courant" },
       "frequency": { "name": "Fréquence" },
       "temperature": { "name": "Température" },
       "illuminance": { "name": "Éclairement" },
+      "present_illuminance": { "name": "Éclairement actuel" },
       "humidity": { "name": "Humidité" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Erreur de communication avec la passerelle Jung Home : {error}"
+    },
+    "certificate_changed": {
+      "message": "L'appareil à l'adresse {host} ne présente pas le certificat TLS épinglé pour cette passerelle Jung Home, le jeton d'accès n'a donc pas été envoyé. Si vous avez réinitialisé ou remplacé la passerelle, confirmez le nouveau certificat dans Paramètres, Réparations."
     },
     "cannot_send": {
       "message": "Impossible de joindre la passerelle Jung Home pour envoyer la commande ; elle est en cours de reconnexion. Réessayez dans un instant."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Les mises à jour en direct de Jung Home se sont arrêtées",
       "description": "Home Assistant n'a pas réussi à se reconnecter à la passerelle Jung Home à l'adresse {host} {failures} fois de suite. Les états des appareils ne sont plus transmis instantanément et ne se rafraîchissent plus qu'à chaque interrogation REST périodique. Vérifiez que la passerelle est allumée et joignable sur votre réseau. Ce problème disparaîtra de lui-même dès que la connexion sera rétablie."
+    },
+    "tls_certificate_changed": {
+      "title": "Le certificat de la passerelle Jung Home a changé",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Faire confiance au nouveau certificat de la passerelle",
+            "description": "L'appareil qui répond à l'adresse {host} présente un certificat TLS ({observed}) différent de celui que Home Assistant a épinglé lors de sa première connexion à cette passerelle Jung Home ({expected}). Home Assistant a cessé de lui parler, le jeton d'accès n'est même pas envoyé, et les entités de la passerelle restent indisponibles tant que ce n'est pas résolu. Un changement de certificat n'est attendu que si la passerelle a été remplacée ou si son stockage a été effacé ou réinstallé ; le certificat survit à une réinitialisation d'usine et aux mises à jour du firmware. Sinon, un autre appareil répond peut-être à cette adresse : ne confirmez pas, vérifiez plutôt votre réseau. Confirmez que la passerelle Jung Home à l'adresse {host} a été remplacée ou réinstallée et que le certificat qu'elle présente maintenant ({observed}) doit être approuvé à la place de celui épinglé ({expected}). Home Assistant épinglera le nouveau certificat, lui enverra le jeton d'accès et se reconnectera."
+          }
+        },
+        "error": {
+          "cannot_connect": "Échec de la connexion à la passerelle.",
+          "different_gateway": "L'adresse répond, mais elle appartient à une autre passerelle Jung Home que cette entrée. Utilisez plutôt Reconfigurer pour changer l'adresse."
+        }
+      }
     }
   }
 }

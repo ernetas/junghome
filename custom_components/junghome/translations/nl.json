@@ -61,6 +61,10 @@
         "data_description": {
           "host": "IP-adres of hostnaam van de Jung Home-gateway (bijvoorbeeld 192.168.1.50 of junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Gatewaycertificaat wijkt af",
+        "description": "De gateway op {host} toont een TLS-certificaat dat afwijkt van het certificaat dat voor dit item is vastgepind (vastgepind {expected}, getoond {observed}). Dit is alleen te verwachten als de gateway is vervangen of als zijn opslag is gewist of opnieuw geïnstalleerd; het certificaat overleeft een fabrieksreset en firmware-updates. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: ga terug en controleer het adres. Tot nu toe is er alleen een TLS-handshake naartoe gestuurd. Verzend om het nieuwe certificaat te vertrouwen en door te gaan."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Omhoog" },
-      "down": { "name": "Omlaag" },
-      "press": { "name": "Druk" }
+      "up": {
+        "name": "Omhoog",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Omlaag",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Druk",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Ingedrukt",
+              "depressed": "Losgelaten",
+              "click": "Klik",
+              "hold_start": "Vasthouden gestart",
+              "hold_end": "Vasthouden beëindigd"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Vermogen" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Totale energie" },
       "voltage": { "name": "Spanning" },
       "current": { "name": "Stroom" },
       "frequency": { "name": "Frequentie" },
       "temperature": { "name": "Temperatuur" },
       "illuminance": { "name": "Verlichtingssterkte" },
+      "present_illuminance": { "name": "Huidige verlichtingssterkte" },
       "humidity": { "name": "Luchtvochtigheid" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Fout bij communicatie met de Jung Home-gateway: {error}"
+    },
+    "certificate_changed": {
+      "message": "Het apparaat op {host} toont niet het TLS-certificaat dat voor deze Jung Home-gateway is vastgepind, dus het toegangstoken is niet verzonden. Als je de gateway hebt teruggezet of vervangen, bevestig dan het nieuwe certificaat onder Instellingen, Reparaties."
     },
     "cannot_send": {
       "message": "De Jung Home-gateway was niet bereikbaar om de opdracht te versturen; de verbinding wordt hersteld. Probeer het zo meteen opnieuw."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Live-updates van Jung Home zijn gestopt",
       "description": "Home Assistant kon {failures} keer achter elkaar geen verbinding maken met de Jung Home-gateway op {host}. Apparaatstatussen worden niet meer direct doorgestuurd en worden nu alleen nog bij de periodieke REST-polling vernieuwd. Controleer of de gateway aanstaat en bereikbaar is in je netwerk. Dit probleem verdwijnt vanzelf zodra de verbinding is hersteld."
+    },
+    "tls_certificate_changed": {
+      "title": "Certificaat van de Jung Home-gateway is gewijzigd",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Het nieuwe certificaat van de gateway vertrouwen",
+            "description": "Het apparaat dat op {host} antwoordt, toont een TLS-certificaat ({observed}) dat afwijkt van het certificaat dat Home Assistant heeft vastgepind bij de eerste verbinding met deze Jung Home-gateway ({expected}). Home Assistant praat er niet meer mee, zelfs het toegangstoken wordt niet verzonden, en de entiteiten van de gateway blijven niet beschikbaar tot dit is opgelost. Een gewijzigd certificaat is alleen te verwachten als de gateway is vervangen of als zijn opslag is gewist of opnieuw geïnstalleerd; het certificaat overleeft een fabrieksreset en firmware-updates. Als dat niet is gebeurd, antwoordt er mogelijk een ander apparaat op dit adres: bevestig niet, maar controleer je netwerk. Bevestig dat de Jung Home-gateway op {host} is vervangen of opnieuw geïnstalleerd en dat het certificaat dat hij nu toont ({observed}) vertrouwd moet worden in plaats van het vastgepinde ({expected}). Home Assistant pint het nieuwe certificaat vast, stuurt het toegangstoken ernaartoe en maakt opnieuw verbinding."
+          }
+        },
+        "error": {
+          "cannot_connect": "Verbinding met de gateway mislukt.",
+          "different_gateway": "Het adres antwoordt, maar hoort bij een andere Jung Home-gateway dan dit item. Gebruik Opnieuw configureren om het adres te wijzigen."
+        }
+      }
     }
   }
 }

@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Jung Home ゲートウェイの IP アドレスまたはホスト名（例: 192.168.1.50 または junghome.local）。"
         }
+      },
+      "reconfigure_certificate": {
+        "title": "ゲートウェイの証明書が異なります",
+        "description": "{host} のゲートウェイは、このエントリに固定されている証明書とは異なる TLS 証明書を提示しています（固定 {expected}、提示 {observed}）。これはゲートウェイが交換されたか、そのストレージが消去または再インストールされた場合にのみ想定される状況です。証明書は工場出荷時リセットやファームウェア更新後も維持されます。いずれにも該当しない場合は、このアドレスで別のデバイスが応答している可能性があります。戻ってアドレスを確認してください。これまでに送信されたのは TLS ハンドシェイクのみです。新しい証明書を信頼して続行するには送信してください。"
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "上" },
-      "down": { "name": "下" },
-      "press": { "name": "押下" }
+      "up": {
+        "name": "上",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "押下",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "押下",
+              "depressed": "解放",
+              "click": "クリック",
+              "hold_start": "長押し開始",
+              "hold_end": "長押し終了"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "電力" },
       "energy": { "name": "エネルギー" },
+      "total_energy": { "name": "累計電力量" },
       "voltage": { "name": "電圧" },
       "current": { "name": "電流" },
       "frequency": { "name": "周波数" },
       "temperature": { "name": "温度" },
       "illuminance": { "name": "照度" },
+      "present_illuminance": { "name": "現在の照度" },
       "humidity": { "name": "湿度" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Jung Home ゲートウェイとの通信エラー: {error}"
+    },
+    "certificate_changed": {
+      "message": "{host} のデバイスは、この Jung Home ゲートウェイに固定されている TLS 証明書を提示していないため、アクセストークンは送信されませんでした。ゲートウェイをリセットまたは交換した場合は、設定の「修復」で新しい証明書を確認してください。"
     },
     "cannot_send": {
       "message": "コマンドを送信するために Jung Home ゲートウェイに接続できませんでした。再接続中です。しばらくしてからもう一度お試しください。"
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Jung Home のリアルタイム更新が停止しました",
       "description": "Home Assistant は {host} の Jung Home ゲートウェイへの再接続に {failures} 回連続で失敗しました。デバイスの状態は即座に送信されなくなり、現在は定期的な REST ポーリングでのみ更新されます。ゲートウェイの電源が入っており、ネットワーク上で到達できることを確認してください。接続が回復すると、この問題は自動的に解消されます。"
+    },
+    "tls_certificate_changed": {
+      "title": "Jung Home ゲートウェイの証明書が変更されました",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "ゲートウェイの新しい証明書を信頼する",
+            "description": "{host} で応答しているデバイスは、Home Assistant がこの Jung Home ゲートウェイに最初に接続したときに固定した証明書（{expected}）とは異なる TLS 証明書（{observed}）を提示しています。Home Assistant はこのデバイスとの通信を停止しており、アクセストークンも送信されません。解決されるまでゲートウェイのエンティティは利用不可のままです。証明書の変更は、ゲートウェイが交換されたか、そのストレージが消去または再インストールされた場合にのみ想定されます。証明書は工場出荷時リセットやファームウェア更新後も維持されます。いずれにも該当しない場合は、このアドレスで別のデバイスが応答している可能性があります。確認せずに、ネットワークを点検してください。 {host} の Jung Home ゲートウェイが交換または再インストールされたこと、および現在提示されている証明書（{observed}）を固定済みの証明書（{expected}）の代わりに信頼することを確認してください。Home Assistant は新しい証明書を固定し、アクセストークンを送信して再接続します。"
+          }
+        },
+        "error": {
+          "cannot_connect": "ゲートウェイへの接続に失敗しました。",
+          "different_gateway": "このアドレスは応答していますが、このエントリとは別の Jung Home ゲートウェイのものです。アドレスを変更するには「再設定」を使用してください。"
+        }
+      }
     }
   }
 }

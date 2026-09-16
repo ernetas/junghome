@@ -15,18 +15,19 @@ from urllib.parse import quote
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_POLL_INTERVAL,
+    CONF_TLS_FINGERPRINT,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_SCENE_RECALLED,
@@ -37,7 +38,23 @@ from .const import (
     duplicate_slugs,
     scene_unique_id,
 )
-from .models import Device, NodeIdentity, Scene, parse_project_export
+from .models import (
+    DOUBLED_BUTTON_FIRMWARE,
+    Device,
+    DeviceProperties,
+    NodeIdentity,
+    Scene,
+    parse_device_properties,
+    parse_devices_verbose,
+    parse_project_export,
+    sanitize_devices,
+)
+from .tls import (
+    async_learn_fingerprint,
+    fingerprint_ssl,
+    format_fingerprint,
+    normalize_fingerprint,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +111,11 @@ WS_SEND_TIMEOUT = 10
 COMMAND_REPLY_TIMEOUT = 5
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
+# Repair-issue translation key for "the gateway presents a certificate other
+# than the pinned one" (see `_report_fingerprint_mismatch`). Fixable: the fix
+# flow in repairs.py re-learns the fingerprint, but only once the user has
+# confirmed the gateway was reset or replaced — never silently.
+ISSUE_TLS_MISMATCH = "tls_certificate_changed"
 
 # Minimum spacing, in seconds, between two reads of the gateway's project
 # export (`GET /project/junghome`) after the one at setup. The export is read
@@ -108,6 +130,19 @@ ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # request every ten minutes, logged at DEBUG.
 NODE_IDENTITY_REFETCH_INTERVAL = 600
 
+# How often, in seconds, the device *properties* the function list lacks are
+# re-read from the deprecated verbose device endpoint (`GET /devices/{id}?
+# verbose=true`, ~8 KB per device — probed 2026-09-16): a metering socket's
+# cumulative energy counter, every device's firmware revision, reachability.
+# The middleware itself re-polls a device's properties every five minutes
+# (`profile.dirtyAfterSeconds` 300), so reading more often buys nothing. Only
+# the devices with an energy counter are re-read each interval; the full list
+# (~190 KB on 49 devices) is read once at setup and again only when a function
+# appears that the last answer did not list (one the endpoint omits is not
+# asked for again — it would be omitted again; only a missing endpoint or a
+# failed read is retried, and that is one small request).
+DEVICE_PROPERTIES_REFRESH_INTERVAL = 300
+
 # Diagnostics: a bounded log of the most recent raw WebSocket frames so a
 # downloadable report shows what the gateway actually sends (the connect-time
 # handshake — version/message/functions/groups/scenes — plus live datapoint
@@ -116,6 +151,48 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # only the most recent are kept.
 WS_FRAME_LOG_SIZE = 60
 WS_FRAME_MAX_CHARS = 2000
+# The sixteen frame types the gateway's WebSocket server enumerates
+# (`WebSocketMessageType`, api-server `websocket-server-service.js:36-53`;
+# the table in docs/gateway-websocket.md). Three of them — `devices`,
+# `config` and `state` — have their emitters commented out on current
+# firmware and never arrive, but the set is the server's own vocabulary,
+# kept whole so a firmware that re-enables one is still captured complete.
+# The latest frame of each is kept IN FULL in `ws_last_frame_by_type`, so a
+# report always carries the complete handshake (and the `groups-new` /
+# `groups-deleted` deltas an app edit produces). The `type` field is the
+# peer's to fill in, though, so a type outside this vocabulary is stored
+# truncated, and only while the store holds fewer than WS_FRAME_TYPES_MAX
+# distinct types — a peer minting a new type per frame could otherwise grow
+# the store without bound, each entry a full frame.
+WS_KNOWN_FRAME_TYPES = frozenset(
+    {
+        "message",
+        "version",
+        "functions",
+        "groups",
+        "groups-new",
+        "groups-deleted",
+        "scenes",
+        "scenes-new",
+        "scenes-deleted",
+        "devices",
+        "devices-new",
+        "devices-deleted",
+        "config",
+        "datapoint",
+        "scene",
+        "state",
+    }
+)
+WS_FRAME_TYPES_MAX = 32
+
+
+def _truncate_frame(raw: str) -> str:
+    """Cut a raw frame down to WS_FRAME_MAX_CHARS for the rolling frame log."""
+    if len(raw) > WS_FRAME_MAX_CHARS:
+        return raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
+    return raw
+
 
 # Sanity bounds for a gateway-advertised colour-temperature range. Anything
 # outside this is not a plausible tunable-white range and is treated as an
@@ -129,6 +206,14 @@ MAX_PLAUSIBLE_KELVIN = 20000
 # `MSG_SW_VERSION_IND`, so they mean "not known yet", not "version 0".
 UNREAD_VERSION_RELEASE = "0.0.0"
 UNREAD_VERSION_BUILD = "0"
+
+
+def _clean_version_field(raw: Any) -> str | None:
+    """Return a stripped, non-empty string version field, else ``None``."""
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
 
 # Config entry carrying the coordinator as runtime_data.
 type JungHomeConfigEntry = ConfigEntry[JungHomeDataUpdateCoordinator]
@@ -219,6 +304,52 @@ def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
     if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
         return None
     return low_k, high_k
+
+
+# Registry lookups scoped to one config entry, on every supported core.
+#
+# HA 2026.9 made device identifiers and connections unique per config entry
+# (not registry-wide), added ``async_get_device_by_identifier`` /
+# ``async_get_device_by_connection`` for the scoped lookup, and deprecated the
+# registry-wide ``async_get_device`` (removed in 2027.8; its ``report_usage``
+# raises when no integration frame is on the stack). Older cores have only the
+# registry-wide call. Every device this integration looks up is one of its own
+# entry's, so a walk of that entry's devices asks the same question wherever
+# the scoped lookup is missing — and the deprecated call is made on no core.
+# Feature-detected (``getattr``), never version-compared; the floor is
+# HA 2025.12.4.
+def device_by_identifier(
+    registry: dr.DeviceRegistry, entry_id: str, identifier: tuple[str, str]
+) -> dr.DeviceEntry | None:
+    """Return the config entry's device holding ``identifier``, if any."""
+    lookup = getattr(registry, "async_get_device_by_identifier", None)
+    if lookup is not None:
+        return cast("dr.DeviceEntry | None", lookup(identifier, entry_id))
+    return next(
+        (
+            device
+            for device in dr.async_entries_for_config_entry(registry, entry_id)
+            if identifier in device.identifiers
+        ),
+        None,
+    )
+
+
+def device_by_connection(
+    registry: dr.DeviceRegistry, entry_id: str, connection: tuple[str, str]
+) -> dr.DeviceEntry | None:
+    """Return the config entry's device holding ``connection``, if any."""
+    lookup = getattr(registry, "async_get_device_by_connection", None)
+    if lookup is not None:
+        return cast("dr.DeviceEntry | None", lookup(connection, entry_id))
+    return next(
+        (
+            device
+            for device in dr.async_entries_for_config_entry(registry, entry_id)
+            if connection in device.connections
+        ),
+        None,
+    )
 
 
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
@@ -365,6 +496,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # The in-flight debounced re-read, so adoptions arriving while one is
         # running do not stack more.
         self._node_identity_task: asyncio.Task[None] | None = None
+        # Function id -> what the verbose device endpoint adds to that function
+        # (`models.DeviceProperties`): the energy counter of a metering socket,
+        # the device's firmware revision, reachability. Read once at setup
+        # (`async_fetch_device_properties`), the energy counters re-read every
+        # DEVICE_PROPERTIES_REFRESH_INTERVAL (`_async_refresh_device_properties`,
+        # armed by `start`). Replaced wholesale, never mutated. Empty on
+        # firmware without the endpoint.
+        self.device_properties: Mapping[str, DeviceProperties] = MappingProxyType({})
+        # The live function ids at the last full-list read the endpoint
+        # answered (None until it has): a function outside this set is new
+        # since, and asks for the list again; one inside it that the map does
+        # not cover was omitted by the gateway and is not asked for again.
+        self._properties_listed_for: frozenset[str] | None = None
+        self._properties_unsub: CALLBACK_TYPE | None = None
+        self._properties_refresh_running = False
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
         # device pruner clears a removed device's ids from them (see
@@ -390,6 +536,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Repair-issue id, scoped to this entry so two gateways each report
         # their own outage instead of overwriting one shared issue.
         self._push_failure_issue_id = f"{ISSUE_PUSH_FAILURE}_{config_entry.entry_id}"
+        # TLS certificate pinning (tls.py). Every request and the WebSocket
+        # upgrade pass ``ssl=`` from ``_async_ssl``: the fingerprint stored in
+        # the entry, or — for an entry created before pinning existed — one
+        # learned from the gateway on first contact and held here until the
+        # first authenticated fetch on it succeeds, at which point
+        # ``_persist_learned_fingerprint`` writes it into the entry (trust on
+        # first use, against the entry's CURRENT host). Read from the entry
+        # live rather than snapshotted at construction, so a fix flow that
+        # re-pins reaches the next request even before its reload lands.
+        self._learned_fingerprint: str | None = None
+        # Per-entry repair issue for a mismatch (``_report_fingerprint_mismatch``),
+        # and whether it is currently raised, so a poll that succeeds again
+        # (a transient impostor, or the real gateway back on its address)
+        # clears it without touching the registry on every healthy poll.
+        self._tls_issue_id = f"{ISSUE_TLS_MISMATCH}_{config_entry.entry_id}"
+        self._tls_mismatch_reported = False
         super().__init__(
             hass,
             _LOGGER,
@@ -441,6 +603,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_key="cannot_connect",
                 translation_placeholders={"error": str(err)},
             ) from err
+        except aiohttp.ServerFingerprintMismatch as err:
+            # The responder at the stored address is not the gateway this
+            # entry pinned. aiohttp raised this at the TLS handshake, before
+            # the request — so the token never left — and it must stay that
+            # way: no fallback, no re-learn. Surface it as a repair issue
+            # (fixable only by the user confirming the gateway was reset or
+            # replaced) and fail the poll so every entity reads unavailable
+            # rather than quietly polling a stranger every minute. Ordered
+            # before the generic ClientError arm it would otherwise land in.
+            self._report_fingerprint_mismatch(err)
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="certificate_changed",
+                translation_placeholders={"host": str(self.config["host"])},
+            ) from err
         except aiohttp.ClientError as err:
             self._record_error(err)
             raise UpdateFailed(
@@ -474,6 +651,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             else:
                 overlay = dict(self._poll_push_overlay or {})
 
+        # The gateway answered an authenticated request on the pinned
+        # connection: an entry that was still learning its fingerprint keeps
+        # it from here on, and a mismatch reported earlier (a transient
+        # impostor, or the gateway back on its address) is over.
+        self._persist_learned_fingerprint()
+        self._clear_fingerprint_mismatch()
         _LOGGER.debug("API Response: %s", response)
         if self._functions_broadcasts_seen != broadcasts_seen and self.data is not None:
             # A `functions` broadcast adopted a fresher, authoritative device
@@ -587,16 +770,149 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
 
+    def _stored_fingerprint(self) -> str | None:
+        """Return the fingerprint pinned in the entry, if it holds a valid one."""
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
+            return None
+        return normalize_fingerprint(entry.data.get(CONF_TLS_FINGERPRINT))
+
+    async def _async_learn_fingerprint(self, host: str) -> str:
+        """Learn the certificate fingerprint ``host`` presents (see tls.py).
+
+        A thin, patchable seam over the module helper: the test suite stubs it
+        the way it stubs every other network read, so the setup fixtures never
+        open a socket.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        return await async_learn_fingerprint(session, host)
+
+    async def _async_ssl(self) -> aiohttp.Fingerprint:
+        """Return the ``ssl=`` argument every request and WS upgrade must pass.
+
+        The pinned certificate: the fingerprint stored in the entry, else the
+        one learned earlier in this coordinator's life, else — trust on first
+        use, for an entry created before pinning existed — the one the
+        gateway at the entry's CURRENT host presents right now. The learn is
+        a bare TLS handshake that aiohttp aborts before any request (tls.py),
+        so even that first contact sends no token to an unverified peer: the
+        request that follows is already pinned to what the learn saw. Held in
+        ``_learned_fingerprint`` and written into the entry only once an
+        authenticated fetch has succeeded on it
+        (``_persist_learned_fingerprint``).
+        """
+        fingerprint = self._stored_fingerprint() or self._learned_fingerprint
+        if fingerprint is None:
+            fingerprint = await self._async_learn_fingerprint(self.config["host"])
+            self._learned_fingerprint = fingerprint
+            _LOGGER.info(
+                "Learned the Jung Home gateway's TLS certificate fingerprint "
+                "(%s); it is pinned from now on",
+                format_fingerprint(fingerprint),
+            )
+        return fingerprint_ssl(fingerprint)
+
+    @callback
+    def _persist_learned_fingerprint(self) -> None:
+        """Store the fingerprint learned on first use once it has proven itself.
+
+        Called after every successful authenticated ``/functions`` fetch; a
+        no-op unless this coordinator learned the fingerprint itself and the
+        entry still lacks one. The write touches neither host, token nor
+        options, so the entry's update listener does not reload it.
+        """
+        entry = self.config_entry
+        if (
+            self._learned_fingerprint is None
+            or entry is None
+            or self._stored_fingerprint() is not None
+        ):
+            return
+        self.hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_TLS_FINGERPRINT: self._learned_fingerprint},
+        )
+
+    @callback
+    def _report_fingerprint_mismatch(
+        self, err: aiohttp.ServerFingerprintMismatch
+    ) -> None:
+        """Raise the repair issue for a responder with the wrong certificate.
+
+        Shared by the REST poll and the WebSocket loop: whichever hits the
+        mismatch first reports it, the other re-reports the same issue id.
+        The issue names both digests so a user comparing against the JUNG
+        app or the gateway itself can tell a regenerated certificate from an
+        impostor; its fix flow (repairs.py) re-pins only after the user
+        confirms. ``last_error`` gets a readable line rather than aiohttp's
+        tuple repr (the host in it is scrubbed by diagnostics as usual).
+        """
+        expected = err.expected.hex()
+        observed = err.got.hex()
+        self.last_error = (
+            f"TLS certificate of {self.config['host']} changed: expected "
+            f"{format_fingerprint(expected)}, got {format_fingerprint(observed)}"
+        )
+        self.last_error_at = dt_util.utcnow()
+        # Once per outage, not once per coordinator: a mismatch on the first
+        # refresh leaves the entry in SETUP_RETRY, and every retry (up to one
+        # every ten minutes, for as long as the mismatch lasts) builds a fresh
+        # coordinator with this flag cleared. The issue in the registry is
+        # the memory that spans those rebuilds — it is only ever withdrawn
+        # when the pinned gateway answers again or the entry goes away.
+        if not self._tls_mismatch_reported and (
+            ir.async_get(self.hass).async_get_issue(DOMAIN, self._tls_issue_id) is None
+        ):
+            _LOGGER.error(
+                "The Jung Home gateway at %s presents a TLS certificate that "
+                "does not match the pinned one (expected %s, got %s); refusing "
+                "to send the access token until the change is confirmed in "
+                "Settings > Repairs",
+                self.config["host"],
+                format_fingerprint(expected),
+                format_fingerprint(observed),
+            )
+        self._tls_mismatch_reported = True
+        entry_id = self.config_entry.entry_id if self.config_entry else ""
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._tls_issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_TLS_MISMATCH,
+            translation_placeholders={
+                "host": str(self.config["host"]),
+                "expected": format_fingerprint(expected),
+                "observed": format_fingerprint(observed),
+            },
+            data={"entry_id": entry_id},
+        )
+
+    @callback
+    def _clear_fingerprint_mismatch(self) -> None:
+        """Withdraw the mismatch issue once the pinned gateway answers again."""
+        if not self._tls_mismatch_reported:
+            return
+        self._tls_mismatch_reported = False
+        _LOGGER.info(
+            "The Jung Home gateway at %s presents the pinned TLS certificate again",
+            self.config["host"],
+        )
+        ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
+
     async def _fetch_devices_from_api(self, host: str, token: str) -> list[Device]:
         """Fetch devices from the Jung Home API."""
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
-        # cert without building an SSL context on the event loop.
+        # cert without building an SSL context on the event loop. The pin
+        # (`ssl=`) is what actually authenticates the peer — see tls.py.
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/functions"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
 
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
 
@@ -610,9 +926,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # Keep the full device payload so any firmware-stable identifier
         # (serial / address / etc.) is available for building unique IDs,
         # and is visible in the debug log above for inspection. This is the
-        # trust boundary: untyped gateway JSON becomes the typed `Device` model.
-        # Downstream code keeps defensive `.get(...)` access for malformed items.
-        return cast("list[Device]", [d for d in data if isinstance(d, dict)])
+        # trust boundary: untyped gateway JSON becomes the typed `Device` model
+        # (`sanitize_devices` drops or repairs malformed objects — the same
+        # boundary the `functions` broadcast passes through). Downstream code
+        # keeps defensive `.get(...)` access for absent keys.
+        return sanitize_devices(data)
 
     async def _fetch_groups_from_api(
         self, host: str, token: str
@@ -625,50 +943,49 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         for the WebSocket handshake to deliver the groups a moment later.
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/groups"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
         if not isinstance(data, list):
             return []
         return [g for g in data if isinstance(g, dict)]
 
-    async def _fetch_config_parameter(
-        self, host: str, token: str, parameter: str
-    ) -> str | None:
-        """Best-effort read of one gateway configuration parameter over REST.
+    async def _fetch_version_from_api(self, host: str) -> dict[str, Any] | None:
+        """Best-effort read of ``GET /version/`` — the gateway's version numbers.
 
-        ``GET /config/parameter/{name}`` returns the parameter's bare value as
-        JSON. The api-server derives the topic from the name's first underscore
-        segment (``version_release`` -> topic ``version``) and 404s on an
-        unknown topic or key, so an older firmware simply yields ``None``.
+        The one unauthenticated data endpoint: it returns ``api_version``
+        (``api-junghome``'s package version, the API contract) next to
+        ``version_release`` / ``version_build`` (the gateway's own software
+        version, from the middleware's ``version`` topic —
+        ``01_version-controller.js:32-42``). No token is sent; the request is
+        still pinned to the gateway's certificate like every other one.
+        Firmware before API 1.5.0 answers with ``api_version`` only.
 
-        Every value the state DB can hold before the middleware has read it is
-        its declared default, so a caller must decide what counts as "not known
-        yet" for its own parameter — this helper only strips and rejects empty.
+        Returns the decoded object, or ``None`` for any transport failure,
+        non-200 or non-object body — callers treat that as "unknown".
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{host}/api/junghome/config/parameter/{parameter}"
-        headers = {"token": f"{token}"}
+        url = f"https://{host}/api/junghome/version/"
         try:
+            ssl = await self._async_ssl()
             async with (
                 asyncio.timeout(30),
-                session.get(url, headers=headers) as response,
+                session.get(url, ssl=ssl) as response,
             ):
                 if response.status != 200:
                     return None
                 data = await response.json()
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-            _LOGGER.debug("Could not read gateway parameter %s: %s", parameter, err)
+            _LOGGER.debug("Could not read the gateway version: %s", err)
             return None
-        if isinstance(data, str) and data.strip():
-            return data.strip()
-        return None
+        return data if isinstance(data, dict) else None
 
     async def async_fetch_gateway_version(self) -> None:
-        """Populate ``gateway_version`` from the gateway's own software version.
+        """Populate ``gateway_version`` (and ``api_version``) from ``GET /version/``.
 
         The WebSocket handshake's ``version`` frame carries the *API* version
         (``api-junghome``'s package version, "1.5.0"), which was being stamped
@@ -678,24 +995,31 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The real value lives in the middleware's ``version`` topic, populated
         from the board controller's ``MSG_SW_VERSION_IND`` (which reports e.g.
         ``"2.1.3 Release (2840)"``; the middleware splits the parenthesised
-        build into ``version_build`` and keeps the rest as ``version_release``).
-        Both are read-only parameters, so this is a plain read.
+        build into ``version_build`` and keeps the rest as
+        ``version_release``). The unauthenticated ``/version/`` reply carries
+        both, so this is one token-less request rather than two authenticated
+        ``config/parameter`` reads.
 
         Best-effort, like the groups and scenes fetches: a version string is not
-        worth failing setup over, and an older firmware without the parameter
+        worth failing setup over, and an older firmware without the fields
         just leaves the previous value in place. ``"0.0.0"`` is the state DB's
         declared default and means the middleware has not read the board yet —
         treated as unknown rather than published as a version.
         """
-        release = await self._fetch_config_parameter(
-            self.config["host"], self.config["token"], "version_release"
-        )
+        data = await self._fetch_version_from_api(self.config["host"])
+        if data is None:
+            _LOGGER.debug("Gateway version not available")
+            return
+        api_version = data.get("api_version")
+        if isinstance(api_version, str) and api_version.strip():
+            # The same number the WebSocket handshake announces; REST makes
+            # it known before the socket connects (or when it never does).
+            self.api_version = api_version.strip()
+        release = _clean_version_field(data.get("version_release"))
         if not release or release == UNREAD_VERSION_RELEASE:
             _LOGGER.debug("Gateway software version not available yet")
             return
-        build = await self._fetch_config_parameter(
-            self.config["host"], self.config["token"], "version_build"
-        )
+        build = _clean_version_field(data.get("version_build"))
         version = (
             f"{release} ({build})"
             if build and build != UNREAD_VERSION_BUILD
@@ -710,10 +1034,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/scenes/"
         headers = {"token": f"{token}", "Content-Type": "application/json"}
         async with asyncio.timeout(30):
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, ssl=ssl) as response:
                 response.raise_for_status()
                 data = await response.json()
         if not isinstance(data, list):
@@ -774,6 +1099,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         await super().async_config_entry_first_refresh()
         await self.async_fetch_node_identities()
+        await self.async_fetch_device_properties()
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
         """Read the gateway's project export (``GET /project/junghome``).
@@ -789,11 +1115,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         fields out of it and drops it.
         """
         session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
         url = f"https://{host}/api/junghome/project/junghome"
         headers = {"token": f"{token}"}
         async with (
             asyncio.timeout(30),
-            session.get(url, headers=headers) as response,
+            session.get(url, headers=headers, ssl=ssl) as response,
         ):
             if response.status != 200:
                 _LOGGER.debug(
@@ -819,7 +1146,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The parsed map replaces the old one only when it resolved something:
         an export the parser cannot make sense of (a shape this code does not
         know) reads as "nothing learned", and keeping the previous map is
-        strictly better than emptying it.
+        strictly better than emptying it. The parser is written never to
+        raise, and its own guards cover every shape found so far — but the
+        document is untrusted and the enrichment is optional, so should it
+        raise anyway, that is logged by exception *type* (never the document,
+        which carries the mesh keys) and setup carries on without identities
+        rather than failing with ``SETUP_ERROR``.
         """
         self._node_identity_fetched_at = time.monotonic()
         try:
@@ -831,9 +1163,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         if document is None:
             return
-        identities = parse_project_export(document)
-        # Drop the document (and its keys) the moment the identities are out.
-        del document
+        try:
+            identities = parse_project_export(document)
+        except Exception as err:
+            _LOGGER.warning(
+                "Could not parse the project export: %s", type(err).__name__
+            )
+            return
+        finally:
+            # Drop the document (and its keys) the moment the parse is over.
+            del document
         if not identities:
             _LOGGER.debug("Project export carried no usable node identities")
             return
@@ -843,7 +1182,152 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         _LOGGER.debug(
             "Resolved hardware identity for %d gateway functions", len(identities)
         )
-        self._apply_node_identities()
+        self.apply_node_identities()
+
+    async def _fetch_devices_verbose_from_api(
+        self, host: str, token: str
+    ) -> list[Any] | None:
+        """Read ``GET /devices/?verbose=true``: the raw middleware device objects.
+
+        Deprecated/experimental in the gateway's OpenAPI but live on 2.1.3;
+        ``None`` for any non-200 (older firmware) or a non-list body. Large
+        (~190 KB on 49 devices), so read sparingly — see
+        DEVICE_PROPERTIES_REFRESH_INTERVAL. Labels are in it; never logged.
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        url = f"https://{host}/api/junghome/devices/?verbose=true"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                _LOGGER.debug(
+                    "Gateway has no verbose device list (HTTP %s)", response.status
+                )
+                return None
+            data = await response.json()
+        return data if isinstance(data, list) else None
+
+    async def _fetch_device_verbose_from_api(
+        self, host: str, token: str, device_id: str
+    ) -> dict[str, Any] | None:
+        """Read one device's verbose object (``GET /devices/{id}?verbose=true``)."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        safe_id = quote(device_id, safe="")
+        url = f"https://{host}/api/junghome/devices/{safe_id}?verbose=true"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                return None
+            data = await response.json()
+        return data if isinstance(data, dict) else None
+
+    async def async_fetch_device_properties(self) -> None:
+        """Populate ``device_properties`` from the verbose device list, best-effort.
+
+        Best-effort like the identities: firmware without the endpoint, a
+        transport failure or an unusable body leaves the map as it was — an
+        empty map at setup, the previous map on a re-read.
+        """
+        try:
+            raw = await self._fetch_devices_verbose_from_api(
+                self.config["host"], self.config["token"]
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the verbose device list: %s", err)
+            return
+        if raw is None:
+            return
+        # The endpoint answered: whatever live function it left out, it will
+        # leave out next time too, so the periodic refresh stops asking for
+        # the full list until the membership changes (`_properties_listed_for`).
+        self._properties_listed_for = frozenset(
+            device_id
+            for d in self.data or []
+            if isinstance(device_id := d.get("id"), str)
+        )
+        parsed = parse_devices_verbose(raw)
+        if not parsed or parsed == dict(self.device_properties):
+            return
+        self.device_properties = MappingProxyType(parsed)
+        _LOGGER.debug("Read properties for %d gateway devices", len(parsed))
+
+    async def _async_refresh_device_properties(self, _now: datetime) -> None:
+        """Periodic re-read of the properties that change: the energy counters.
+
+        A function that appeared since the last full-list answer (added in the
+        app), or no answer yet (firmware without the endpoint, a failed read),
+        triggers a full-list read instead; otherwise each device holding an
+        energy counter is re-read on its own, small endpoint. Listeners are
+        notified only when a value changed. Runs are not stacked.
+        """
+        if self._properties_refresh_running:
+            return
+        self._properties_refresh_running = True
+        try:
+            await self._refresh_device_properties()
+        finally:
+            self._properties_refresh_running = False
+
+    async def _refresh_device_properties(self) -> None:
+        known = self.device_properties
+        listed = self._properties_listed_for
+        if listed is None or any(
+            isinstance(device_id := d.get("id"), str) and device_id not in listed
+            for d in self.data or []
+        ):
+            await self.async_fetch_device_properties()
+            if self.device_properties is not known:
+                self.async_update_listeners()
+            return
+        updated = dict(known)
+        changed = False
+        for device_id, props in known.items():
+            if not props.has_energy:
+                continue
+            try:
+                document = await self._fetch_device_verbose_from_api(
+                    self.config["host"], self.config["token"], device_id
+                )
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.debug("Could not re-read device %s: %s", device_id, err)
+                continue
+            fresh = parse_device_properties(document)
+            if fresh is not None and fresh != props:
+                updated[device_id] = fresh
+                changed = True
+        if changed:
+            self.device_properties = MappingProxyType(updated)
+            self.async_update_listeners()
+
+    def device_properties_for(self, device: Device) -> DeviceProperties | None:
+        """Return the verbose endpoint's properties for a function, if read."""
+        device_id = device.get("id")
+        if not isinstance(device_id, str):
+            return None
+        return self.device_properties.get(device_id)
+
+    def button_reports_each_tap_once(self, device: Device) -> bool:
+        """Whether ``device`` is KNOWN to run firmware older than the doubling one.
+
+        Device firmware 2.2.0.x publishes every button event twice; older
+        firmware reports each tap once, so suppressing duplicates there only
+        costs fast double-taps. Only a revision the verbose endpoint actually
+        reported, and that is older, exempts a device — unknown stays
+        suppressed, the safe default.
+        """
+        props = self.device_properties_for(device)
+        return (
+            props is not None
+            and props.software_revision is not None
+            and props.software_revision < DOUBLED_BUTTON_FIRMWARE
+        )
 
     def node_identity_for(self, device: Device) -> NodeIdentity | None:
         """Return the hardware identity behind a gateway function, if known.
@@ -897,28 +1381,22 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         )
 
     @callback
-    def _apply_node_identities(self) -> None:
-        """Write the resolved identities onto devices already in the registry.
+    def apply_node_identities(self) -> None:
+        """Write the resolved identities onto every device of the entry.
 
-        An entity's ``device_info`` is only read when it is first added, so a
-        device registered before its identity was known — every device on an
-        install upgraded to this version whose entities were added before a
-        re-read resolved them, or a device the gateway reported while the
-        export still lacked its node — would otherwise wait for a reload. The
-        values written mirror ``JungHomeEntity.device_info`` exactly: the
-        node's Bluetooth address as ``serial_number`` on every function of the
-        node, and as a ``CONNECTION_BLUETOOTH`` connection on the function at
-        the node's primary element only (a connection resolves devices in the
-        registry, so it must be unique per device — see ``NodeIdentity``).
-
-        A connection already held by *another* device — a device page another
-        integration keeps for the same radio — is left alone rather than
-        merged or collided with (``async_update_device`` raises on a
-        collision); the serial number is still written.
+        The registry's identity rows are written from here and from
+        ``link_node_identity`` only — never from ``device_info``. Runs when
+        the identity map is (re)resolved, so a device registered before its
+        identity was known — every device on an install upgraded to this
+        version, or one the gateway reported while the export still lacked
+        its node — is filled in without a reload; and after a device of this
+        entry is removed (the stale-device pruner, a manual delete), because
+        the removed device may have held the node's Bluetooth connection that
+        its relabelled successor is waiting for (see ``_write_node_identity``).
 
         Colliding slugs are skipped (``duplicate_slugs``): two functions
         sharing one registry device would otherwise take turns writing their
-        own node's address over each other on every adoption.
+        own node's address over each other on every pass.
         """
         if not self.node_identities or self.config_entry is None:
             return
@@ -928,9 +1406,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             device_slug(d): d for d in devices if device_slug(d) not in colliding
         }
         registry = dr.async_get(self.hass)
-        for device_entry in dr.async_entries_for_config_entry(
-            registry, self.config_entry.entry_id
-        ):
+        entry_id = self.config_entry.entry_id
+        for device_entry in dr.async_entries_for_config_entry(registry, entry_id):
             identity = next(
                 (
                     self.node_identity_for(by_slug[identifier])
@@ -939,26 +1416,95 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 ),
                 None,
             )
-            if identity is None or identity.mac is None:
-                continue
-            changes: dict[str, Any] = {}
-            if device_entry.serial_number != identity.mac:
-                changes["serial_number"] = identity.mac
-            connection = (dr.CONNECTION_BLUETOOTH, identity.mac)
-            if identity.primary and connection not in device_entry.connections:
-                holder = registry.async_get_device(connections={connection})
-                if holder is None:
-                    changes["merge_connections"] = {connection}
-                else:
-                    _LOGGER.debug(
-                        "Not linking %s to Bluetooth address %s: already held by "
-                        "device %s",
-                        device_entry.name,
-                        identity.mac,
-                        holder.id,
-                    )
-            if changes:
-                registry.async_update_device(device_entry.id, **changes)
+            if identity is not None:
+                self._write_node_identity(registry, entry_id, device_entry, identity)
+
+    @callback
+    def link_node_identity(self, device_id: str, device: Device) -> None:
+        """Write ``device``'s identity onto its just-registered registry row.
+
+        Called from ``JungHomeEntity.async_added_to_hass`` — the first moment
+        the device's registry row exists. ``device_info`` deliberately carries
+        no connection (see its docstring), so this is how a device registered
+        while its identity is already known gets one: every device of a fresh
+        install, a device the gateway starts reporting later, a pruned device
+        the gateway reports again. Same collision guard as
+        ``apply_node_identities``; a device whose identity is still unknown is
+        picked up by that pass once the export re-read resolves it.
+        """
+        if self.config_entry is None:
+            return
+        identity = self.node_identity_for(device)
+        if identity is None or device_slug(device) in duplicate_slugs(self.data or []):
+            return
+        registry = dr.async_get(self.hass)
+        device_entry = registry.async_get(device_id)
+        # ``isinstance`` rather than a None check: from HA 2026.9 ``async_get``
+        # may also return a child device, which no entity of ours ever has.
+        if isinstance(device_entry, dr.DeviceEntry):
+            self._write_node_identity(
+                registry, self.config_entry.entry_id, device_entry, identity
+            )
+
+    def _write_node_identity(
+        self,
+        registry: dr.DeviceRegistry,
+        entry_id: str,
+        device_entry: dr.DeviceEntry,
+        identity: NodeIdentity,
+    ) -> None:
+        """Write one function's identity onto one registry device.
+
+        The node's Bluetooth address goes on as ``serial_number`` on every
+        function of the node, and as a ``CONNECTION_BLUETOOTH`` connection on
+        the function at the node's primary element only (a connection
+        resolves devices in the registry, so it must be unique per device —
+        see ``NodeIdentity``) — and only when no other live device of this
+        entry holds it. That holder check is the point of writing the
+        connection here rather than in ``device_info``: a relabelled function
+        registers under a new slug while the old device is still live (the
+        pruner keeps it for ``STALE_DEVICE_PRUNE_MISSES`` adoptions), and a
+        connection in ``device_info`` made ``async_get_or_create`` resolve the
+        new slug to the OLD device by connection and merge the two — the old
+        entity then stayed registered and live forever, and the pruner never
+        removed a device whose identifiers were all still current. Now the
+        successor is a fresh device, the old one is pruned as documented, and
+        the successor gains the connection on the pass that follows the prune.
+
+        On cores before HA 2026.9 a connection is unique across ALL config
+        entries, so a device another integration keeps for the same radio
+        (the Bluetooth-direct sibling) blocks the link with a collision the
+        per-entry lookup cannot see; the write is let raise and the address
+        left to its holder. The serial number is written either way.
+        """
+        if identity.mac is None:
+            return
+        if device_entry.serial_number != identity.mac:
+            registry.async_update_device(device_entry.id, serial_number=identity.mac)
+        connection = (dr.CONNECTION_BLUETOOTH, identity.mac)
+        if not identity.primary or connection in device_entry.connections:
+            return
+        holder = device_by_connection(registry, entry_id, connection)
+        if holder is not None:
+            _LOGGER.debug(
+                "Not linking %s to Bluetooth address %s: held by device %s (%s)",
+                device_entry.name,
+                identity.mac,
+                holder.id,
+                holder.name,
+            )
+            return
+        try:
+            registry.async_update_device(
+                device_entry.id, new_connections=device_entry.connections | {connection}
+            )
+        except dr.DeviceConnectionCollisionError as err:
+            _LOGGER.debug(
+                "Not linking %s to Bluetooth address %s: %s",
+                device_entry.name,
+                identity.mac,
+                err,
+            )
 
     def area_for_device(self, device: Device) -> str | None:
         """Return the room/area name for a device from its parent groups.
@@ -1091,8 +1637,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "Content-Type": "application/json",
         }
         try:
+            ssl = await self._async_ssl()
             async with asyncio.timeout(30):
-                async with session.post(url, headers=headers) as response:
+                async with session.post(url, headers=headers, ssl=ssl) as response:
                     response.raise_for_status()
         except aiohttp.ClientResponseError as err:
             if err.status in (401, 403):
@@ -1113,6 +1660,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 ) from err
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="cannot_send"
+            ) from err
+        except aiohttp.ServerFingerprintMismatch as err:
+            # Same contract as the poll: the token was never sent, the user
+            # gets the repair issue, and the service call fails with the
+            # reason rather than a "reconnecting, try again" that never
+            # comes true.
+            self._report_fingerprint_mismatch(err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="certificate_changed",
+                translation_placeholders={"host": str(self.config["host"])},
             ) from err
         except (aiohttp.ClientError, TimeoutError) as err:
             raise HomeAssistantError(
@@ -1147,6 +1705,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                         self.config_entry.async_start_reauth(self.hass)
                     return
                 self._record_error(err)
+                self._log_disconnected(err)
+                self._note_reconnect_failure()
+            except aiohttp.ServerFingerprintMismatch as err:
+                # The upgrade was refused at the TLS handshake (no token
+                # sent). Report it like the poll does, then keep the ordinary
+                # backoff: each retry is another aborted handshake, so a
+                # transient impostor costs nothing and the real gateway back
+                # on its address is picked up without a reload.
+                self._report_fingerprint_mismatch(err)
                 self._log_disconnected(err)
                 self._note_reconnect_failure()
             except Exception as err:
@@ -1356,9 +1923,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         headers = {"token": f"{self.config['token']}"}
         # Only the handshake is bounded — wrapping the `async with` below would
         # tear down a perfectly healthy session after WS_CONNECT_TIMEOUT. Once
-        # connected, `heartbeat=30` is what detects a silently dead peer.
+        # connected, `heartbeat=30` is what detects a silently dead peer. The
+        # upgrade carries the token, so it is pinned exactly like a REST
+        # request (`ssl=` is honoured by ws_connect — see tls.py).
         async with asyncio.timeout(WS_CONNECT_TIMEOUT):
-            ws = await session.ws_connect(url, headers=headers, heartbeat=30)
+            ssl = await self._async_ssl()
+            ws = await session.ws_connect(url, headers=headers, heartbeat=30, ssl=ssl)
         async with ws:
             self.websocket = ws
             # Connected: resync state we may have missed while disconnected.
@@ -1381,8 +1951,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             cancel_stable = async_call_later(
                 self.hass, STABLE_SESSION_SECONDS, self._mark_session_stable
             )
-            await self.async_request_refresh()
             try:
+                # Inside the try: `stop()` cancels this task, and a cancel that
+                # lands while the resync's REST fetch is still in flight must
+                # run the same teardown as a drop — outside it, the session
+                # ended with `ws_connected` stuck True, in-flight commands
+                # left to sit out their timeout, and the stable-session timer
+                # still armed to fire on a stopped coordinator.
+                await self.async_request_refresh()
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         self._dispatch_text_frame(msg.data)
@@ -1456,17 +2032,25 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``json.loads`` (``_dispatch_text_frame``), or ``None`` for a frame that
         is unparseable or carries no usable type — decoding the frame a second
         time here doubled the JSON work on the hottest path the integration has.
-        The per-type store keeps the latest frame of each type IN FULL — it holds
-        at most one frame per type, so it cannot grow unbounded, and keeping the
-        connect-time handshake (functions/groups/scenes/version/message) complete
-        makes it directly comparable to the raw wire format. The rolling buffer,
-        which fills with high-frequency datapoint pushes, stays truncated.
+        The per-type store keeps the latest frame of each KNOWN type IN FULL:
+        the gateway's frame vocabulary (``WS_KNOWN_FRAME_TYPES``) is a dozen
+        strings, so that part holds at most one frame per type, and keeping
+        the connect-time handshake (functions/groups/scenes/version/message)
+        complete makes it directly comparable to the raw wire format. A type
+        outside that vocabulary is the peer's to invent — a hostile or buggy
+        one could mint a fresh type per frame — so those are kept as truncated
+        previews and only while the store holds fewer than
+        ``WS_FRAME_TYPES_MAX`` types; past that they land in the rolling
+        buffer alone. The rolling buffer, which fills with high-frequency
+        datapoint pushes, is always truncated.
         """
         if frame_type is not None:
-            self.ws_last_frame_by_type[frame_type] = raw
-        if len(raw) > WS_FRAME_MAX_CHARS:
-            raw = raw[:WS_FRAME_MAX_CHARS] + "…[truncated]"
-        self.ws_frame_log.append(raw)
+            store = self.ws_last_frame_by_type
+            if frame_type in WS_KNOWN_FRAME_TYPES:
+                store[frame_type] = raw
+            elif frame_type in store or len(store) < WS_FRAME_TYPES_MAX:
+                store[frame_type] = _truncate_frame(raw)
+        self.ws_frame_log.append(_truncate_frame(raw))
 
     def _handle_websocket_message(self, message: dict[str, Any]) -> None:
         """Handle incoming WebSocket messages."""
@@ -1623,16 +2207,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         unmatched-id memory resets because the authoritative list may have just
         added those devices.
         """
-        devices = cast("list[Device]", [d for d in data if isinstance(d, dict)])
+        # The same trust boundary as the REST poll (`_fetch_devices_from_api`):
+        # a malformed device object is dropped or repaired here, not left to
+        # raise out of a platform listener.
+        devices = sanitize_devices(data)
         _LOGGER.debug("Adopting functions broadcast (%d devices)", len(devices))
         self._unmatched_push_ids.clear()
         self._reload_if_device_ids_changed(devices)
         # Counted immediately before the adoption, and never before it: a poll
         # whose fetch was in flight across this point discards its own older
         # snapshot in favour of this list (see `_async_update_data`), so the
-        # count must only rise once this list is actually adopted.
-        # `_reload_if_device_ids_changed` above can raise on a malformed frame
-        # (`device_slug` slugifies the label, which throws on a non-string) and
+        # count must only rise once this list is actually adopted. Should
+        # `_reload_if_device_ids_changed` above ever raise (it used to, on a
+        # non-string label, before `sanitize_devices` enforced the shape),
         # `_dispatch_text_frame`'s catch-all swallows it — counting first would
         # let that frame suppress a racing poll that carried the fresher list,
         # leaving stale membership for a full poll interval. Nothing awaits
@@ -1659,7 +2246,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             for scene in items:
                 by_id[scene.get("id")] = scene
             # De-duplicate by label, newest wins. Scene identity is the label
-            # (ids regenerate on firmware updates), so a delta that assigned a
+            # (a scene's id is `id` + hex(mesh scene number), a number the app
+            # may reassign — see `models.Scene`), so a delta that assigned a
             # scene a new id would otherwise leave the old and new entries side
             # by side — and activation resolves the FIRST label match, which
             # could be the dead id. Scenes without a label can't back an entity
@@ -1752,6 +2340,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task = entry.async_create_background_task(
             self.hass, self._websocket_loop(), name="junghome_ws"
         )
+        # The energy counters move; everything else in the map is static.
+        self._properties_unsub = async_track_time_interval(
+            self.hass,
+            self._async_refresh_device_properties,
+            timedelta(seconds=DEVICE_PROPERTIES_REFRESH_INTERVAL),
+        )
 
     async def stop(self) -> None:
         """Stop the coordinator and close the WebSocket connection."""
@@ -1762,6 +2356,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # the entry while degraded stranded it in the repairs UI forever, naming
         # a gateway that may no longer be configured. A no-op when unraised.
         ir.async_delete_issue(self.hass, DOMAIN, self._push_failure_issue_id)
+        # Same for the certificate-mismatch issue: a reload (the fix flow's
+        # own, or a reconfigure onto a confirmed new certificate) rebuilds the
+        # coordinator, which re-raises it on the next poll if it still holds.
+        ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:
@@ -1769,6 +2367,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             except asyncio.CancelledError:
                 pass
             self._ws_task = None
+        if self._properties_unsub is not None:
+            self._properties_unsub()
+            self._properties_unsub = None
         if (task := self._node_identity_task) is not None and not task.done():
             # Entry unload cancels its background tasks itself; a full HA
             # shutdown reaches here without an unload, so cancel explicitly.
@@ -1815,7 +2416,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         The pending entry is always popped in ``finally``, whether the wait
         succeeded, timed out, or ``send_websocket_message`` raised first (e.g.
         no live socket) — so a send failure can never leak a future nothing
-        will ever resolve.
+        will ever resolve. A send can also fail *because* the session ended
+        while ``send_str`` was suspended on the transport, in which case
+        ``_fail_pending_replies`` has already set ``cannot_send`` on the
+        future this method then never awaits; its exception is retrieved on
+        that path so asyncio does not report it as never retrieved.
         """
         self._next_message_id += 1
         message_id = f"ha{self._next_message_id}"
@@ -1827,7 +2432,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
         try:
-            await self.send_websocket_message(message)
+            try:
+                await self.send_websocket_message(message)
+            except BaseException:
+                if future.done() and not future.cancelled():
+                    future.exception()  # settled by the session's teardown
+                raise
             try:
                 async with asyncio.timeout(COMMAND_REPLY_TIMEOUT):
                     await future

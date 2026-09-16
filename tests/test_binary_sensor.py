@@ -115,7 +115,7 @@ async def test_presence_discovered_and_split_from_numeric_sensor(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        bs = hass.states.get("binary_sensor.hallway_motion_presence_detected")
+        bs = hass.states.get("binary_sensor.hallway_motion_occupancy")
         assert bs is not None
         assert bs.state == "on"
         assert bs.attributes["device_class"] == "occupancy"

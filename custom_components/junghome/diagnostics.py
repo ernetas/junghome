@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 
-from .const import DOMAIN, device_slug, gateway_device_id
+from .const import CONF_TLS_FINGERPRINT, DOMAIN, device_slug, gateway_device_id
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -137,8 +137,17 @@ async def async_get_config_entry_diagnostics(
             # Redacted through the same key set as `data` for symmetry; nothing
             # in here is secret today, but a future option might be.
             "options": async_redact_data(entry.options, TO_REDACT),
-            "title": entry.title,
+            # The flow titles an entry "Jung Home (<host>)", and a user can
+            # rename it to anything — free-form text that quotes exactly what
+            # TO_REDACT keeps out of `data`, so it takes the literal sweep.
+            "title": _scrub(entry.title, secrets),
         },
+        # The SHA-256 fingerprint of the gateway certificate this entry pins
+        # (`tls.py`). Deliberately NOT redacted: a certificate fingerprint is
+        # public — every TLS handshake presents it — and a report about
+        # "certificate changed" or "cannot connect" is unreadable without it.
+        # None on an entry that has not pinned yet.
+        "pinned_tls_fingerprint_sha256": entry.data.get(CONF_TLS_FINGERPRINT),
         # The gateway's own software version ("2.1.3 (2840)"), read over REST.
         "gateway_version": coordinator.gateway_version,
         # The API contract version the gateway announces in the WebSocket
@@ -183,6 +192,13 @@ async def async_get_config_entry_diagnostics(
         "node_identities": {
             function_id: asdict(identity)
             for function_id, identity in coordinator.node_identities.items()
+        },
+        # Function id -> what the verbose device endpoint added (energy
+        # counter, firmware revision, reachability); empty on firmware
+        # without it. No labels, no keys — the parser keeps only those fields.
+        "device_properties": {
+            function_id: asdict(props)
+            for function_id, props in coordinator.device_properties.items()
         },
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...

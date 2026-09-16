@@ -78,6 +78,22 @@ BUTTON_DUPLICATE_WINDOW = 1.2
 # firmware (one pair per tap) who double-taps faster than that turns it off.
 CONF_SUPPRESS_DUPLICATE_PRESSES = "suppress_duplicate_presses"
 DEFAULT_SUPPRESS_DUPLICATE_PRESSES = True
+# The firmware's copy of a HOLD on a single-key element. The gateway toggles
+# the reported side of such an element on every reception, so while a hold's
+# first copy keeps one side down, the second copy lands as a press on the
+# OTHER side, and the finger's release then lands on that other side too —
+# the first side is never released (live capture 2026-09-16, 1-gang keys:
+# press, other-side press +1.4 s, release on the copy's side at +2.55 s; three
+# further holds on those keys carried no copy at all). A press on the other
+# side of a device whose one side has been down for longer than any
+# synthesised tap pulse (0.53 s measured — a tap's own copy only ever arrives
+# after its release, which BUTTON_DUPLICATE_WINDOW handles) and less than this
+# window is that copy: it is dropped, and its release completes the hold on
+# the side that is actually down. On a rocker the gateway suppresses a hold's
+# copy itself (same side, value unchanged), so this only ever misfires there
+# if the other side is pressed with a second finger while the first is held.
+BUTTON_HOLD_COPY_AFTER = 0.6
+BUTTON_HOLD_COPY_WINDOW = 2.5
 
 # Presentation of the synthetic gateway (hub) device. Kept as constants so the
 # up-front registration in ``__init__`` and the connectivity sensor that lives on
@@ -154,6 +170,24 @@ CONF_SERIAL = "serial"
 # anchor at creation/migration time decouples entry identity (unique_id, may
 # change) from entity identity (anchor, never changes).
 CONF_IDENTITY_ANCHOR = "identity_anchor"
+
+# Entry-data key: the SHA-256 fingerprint (64 lower-case hex characters) of
+# the TLS certificate this entry's gateway presents. The gateway's certificate
+# is self-signed, so certificate-authority verification is impossible and the
+# integration talks over Home Assistant's no-verify session — without a pin,
+# ANY HTTPS responder at the stored address would be handed the API token.
+# The JUNG app pins the certificate by the fingerprint it reads over the mesh
+# (docs/gateway-rest-api.md, security notes); Home Assistant has no mesh
+# path, so the fingerprint is learned on first contact (trust on first use)
+# and enforced on every request and WebSocket upgrade from then on — see
+# ``tls.py``. Learned at registration for new entries; an entry created
+# before pinning existed learns it on its next successful connect to its
+# CURRENT host (coordinator TOFU) and carries it from then on. A later
+# mismatch never re-learns silently: it raises the ``tls_certificate_changed``
+# repair issue, whose fix flow re-pins only after the user confirms. The
+# fingerprint is not a secret (it is public on every TLS handshake), so
+# diagnostics list it.
+CONF_TLS_FINGERPRINT = "tls_fingerprint"
 
 # Entry-data key: the device slugs whose Home Assistant area has already been
 # considered for auto-placement from the gateway's group (room) data.
@@ -238,11 +272,17 @@ def gateway_device_id(entry: "ConfigEntry") -> str:
 def entry_scope(entry: "ConfigEntry") -> str:
     """Return a per-gateway prefix for ids that aren't tied to a device.
 
-    Device-backed ids are already unique per gateway, because they carry the
-    device slug. Scenes have no device, so their id was the scene label alone —
-    and Home Assistant requires a unique_id to be unique across *all* config
-    entries of an integration, so two gateways each holding a "Movie night"
-    scene collided and the second entity was rejected.
+    Scenes have no device, so their id was the scene label alone — and Home
+    Assistant requires a unique_id to be unique across *all* config entries
+    of an integration, so two gateways each holding a "Movie night" scene
+    collided and the second entity was rejected. Device-backed ids are NOT
+    scoped this way: they are the device slug plus a datapoint suffix
+    (``stable_unique_id``), so two gateways each reporting a function with
+    the same label produce the same unique_id and the second entity is
+    rejected exactly as the scenes were. That is a known limitation of the
+    label-keyed scheme (multi-gateway installs must keep labels distinct
+    across gateways), accepted rather than fixed: prefixing device ids would
+    re-key every existing install's entities.
 
     Anchored on ``entry_anchor`` (frozen at entry creation; survives
     reconfigure and unique_id migration). Same anchor as
@@ -281,20 +321,30 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     before the platforms create the per-function devices that reference it via
     ``via_device``) and by the connectivity sensor that lives on it, so both
     describe the device identically.
+
+    No ``None`` values, for the same reason ``JungHomeEntity.device_info``
+    has none: ``async_get_or_create`` applies an explicit ``None`` as a
+    change, so a setup whose version read failed (the state DB's ``"0.0.0"``
+    right after a gateway reboot, or a timeout) would blank the version the
+    registry already held from an earlier run until ``_mark_session_stable``
+    re-read it. An omitted key leaves the registry row as it is.
     """
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, gateway_device_id(entry))},
         name=GATEWAY_NAME,
         manufacturer=GATEWAY_MANUFACTURER,
         model=GATEWAY_MODEL,
-        sw_version=sw_version,
-        # The hardware serial the entry already learned (mDNS TXT, or the
-        # gateway's own `config/parameter/system_serial`). Shown on the device
-        # page so a user with two gateways can tell them apart; it is not an
-        # identity field, so adding it never re-keys the device. Absent on a
-        # legacy entry that predates serial discovery.
-        serial_number=entry.data.get(CONF_SERIAL),
     )
+    if sw_version:
+        info["sw_version"] = sw_version
+    # The hardware serial the entry already learned (mDNS TXT, or the
+    # gateway's own `config/parameter/system_serial`). Shown on the device
+    # page so a user with two gateways can tell them apart; it is not an
+    # identity field, so adding it never re-keys the device. Absent on a
+    # legacy entry that predates serial discovery.
+    if serial := entry.data.get(CONF_SERIAL):
+        info["serial_number"] = str(serial)
+    return info
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
@@ -369,9 +419,12 @@ def device_slug(device: Device) -> str:
     The hardware identity the ``functions`` payload lacks *is* available on
     API 1.5.0+ (``GET /project/junghome``: node UUID / Bluetooth address /
     unicast / element location — ``models.parse_project_export``); it is
-    attached to the registry device as ``serial_number`` and, on the node's
-    primary function, a Bluetooth ``connection`` (``entity.py``), never used
-    as an identifier — existing registrations must keep merging on the slug.
+    attached to the registry device as ``serial_number`` (``entity.py``) and,
+    on the node's primary function, a Bluetooth ``connection`` written by the
+    coordinator after registration (never through ``device_info`` — the
+    registry also matches on connections, and a relabelled function would
+    merge into its old device), never used as an identifier — existing
+    registrations must keep merging on the slug.
 
     The fallback inspects the slug *result*, not the raw candidate: HA's
     ``slugify`` maps symbol/whitespace-only strings (e.g. ``"❤"`` or ``"   "``)

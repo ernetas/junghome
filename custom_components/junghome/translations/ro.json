@@ -61,6 +61,10 @@
         "data_description": {
           "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home (de exemplu 192.168.1.50 sau junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Certificatul gateway-ului diferă",
+        "description": "Gateway-ul de la {host} prezintă un certificat TLS diferit de cel fixat pentru această intrare (fixat {expected}, prezentat {observed}). Acest lucru este de așteptat doar dacă gateway-ul a fost înlocuit ori dacă stocarea sa a fost ștearsă sau reinstalată; certificatul supraviețuiește unei resetări din fabrică și actualizărilor de firmware. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: reveniți și verificați adresa. Până acum i s-a trimis doar un handshake TLS. Trimiteți pentru a avea încredere în noul certificat și a continua."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Sus" },
-      "down": { "name": "Jos" },
-      "press": { "name": "Apăsare" }
+      "up": {
+        "name": "Sus",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Jos",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Apăsare",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Apăsat",
+              "depressed": "Eliberat",
+              "click": "Clic",
+              "hold_start": "Început apăsare lungă",
+              "hold_end": "Sfârșit apăsare lungă"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Putere" },
       "energy": { "name": "Energie" },
+      "total_energy": { "name": "Energie totală" },
       "voltage": { "name": "Tensiune" },
       "current": { "name": "Curent" },
       "frequency": { "name": "Frecvență" },
       "temperature": { "name": "Temperatură" },
       "illuminance": { "name": "Iluminare" },
+      "present_illuminance": { "name": "Iluminare actuală" },
       "humidity": { "name": "Umiditate" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Eroare la comunicarea cu gateway-ul Jung Home: {error}"
+    },
+    "certificate_changed": {
+      "message": "Dispozitivul de la {host} nu prezintă certificatul TLS fixat pentru acest gateway Jung Home, așa că tokenul de acces nu a fost trimis. Dacă ați resetat sau înlocuit gateway-ul, confirmați noul certificat în Setări, Reparații."
     },
     "cannot_send": {
       "message": "Gateway-ul Jung Home nu a putut fi contactat pentru a trimite comanda; se reconectează. Încearcă din nou peste o clipă."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Actualizările în timp real Jung Home s-au oprit",
       "description": "Home Assistant nu a reușit să se reconecteze la gateway-ul Jung Home de la {host} de {failures} ori la rând. Stările dispozitivelor nu mai sunt trimise instantaneu și acum se actualizează doar la interogarea REST periodică. Verifică dacă gateway-ul este pornit și accesibil în rețeaua ta. Această problemă dispare de la sine după restabilirea conexiunii."
+    },
+    "tls_certificate_changed": {
+      "title": "Certificatul gateway-ului Jung Home s-a schimbat",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Aveți încredere în noul certificat al gateway-ului",
+            "description": "Dispozitivul care răspunde la {host} prezintă un certificat TLS ({observed}) diferit de cel pe care Home Assistant l-a fixat la prima conectare la acest gateway Jung Home ({expected}). Home Assistant a încetat să comunice cu el, nici măcar tokenul de acces nu este trimis, iar entitățile gateway-ului rămân indisponibile până la rezolvare. Un certificat schimbat este de așteptat doar dacă gateway-ul a fost înlocuit ori dacă stocarea sa a fost ștearsă sau reinstalată; certificatul supraviețuiește unei resetări din fabrică și actualizărilor de firmware. Dacă nu s-a întâmplat nimic din acestea, este posibil ca un alt dispozitiv să răspundă la această adresă: nu confirmați, verificați rețeaua. Confirmați că gateway-ul Jung Home de la {host} a fost înlocuit sau reinstalat și că certificatul pe care îl prezintă acum ({observed}) trebuie considerat de încredere în locul celui fixat ({expected}). Home Assistant va fixa noul certificat, îi va trimite tokenul de acces și se va reconecta."
+          }
+        },
+        "error": {
+          "cannot_connect": "Conectarea la gateway a eșuat.",
+          "different_gateway": "Adresa răspunde, dar aparține unui alt gateway Jung Home decât această intrare. Folosiți Reconfigurare pentru a schimba adresa."
+        }
+      }
     }
   }
 }

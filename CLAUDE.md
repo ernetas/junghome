@@ -7,16 +7,36 @@ JUNG HOME Gateway over its REST API and WebSocket.
 
 - `custom_components/junghome/` — the integration.
   - `__init__.py` — setup/unload, one-time stable-ID registry migrations,
-    stale-device pruner, area auto-assignment, capability-change reload.
+    stale-device pruner, area auto-assignment, capability-change reload,
+    manual device delete, repair-issue withdrawal on entry removal.
   - `coordinator.py` — REST poll (default 60 s, options-configurable) +
     WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
     on change) is adopted exactly like a poll result, so device add/remove is
-    push-driven; the poll is the backstop.
+    push-driven; the poll is the backstop. Also the two best-effort
+    enrichments read after the first refresh: node identities from the
+    project export (`node_identities`) and device properties from the
+    deprecated verbose device endpoint (`device_properties`: energy counters
+    re-read every 5 min, firmware revisions, reachability).
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
     (REST poll interval, duplicate-press suppression, inverted covers).
+  - `tls.py` — TOFU certificate pinning: `async_learn_fingerprint` reads the
+    gateway certificate's SHA-256 through a deliberately mismatching pin (no
+    request, no token leaves), `fingerprint_ssl` builds the cached
+    `aiohttp.Fingerprint` every REST call and the WS upgrade carry. The pin
+    lives in `entry.data[CONF_TLS_FINGERPRINT]`; a mismatch raises the fixable
+    `tls_certificate_changed` issue handled by `repairs.py` (confirm → re-pin
+    against the serial). Discovery never rewrites a healthy entry's host, and
+    a failing entry adopts an announced address only if it presents the pin
+    (an entry with no pin yet trusts the announcement — its first contact).
+    The certificate lives in `/data/etc/nginx` and **survives a factory reset
+    and firmware updates** (`generate_ssl_key.sh` regenerates only missing or
+    corrupt files; the reset sequence in `board_ctrl` wipes the four `res`
+    trees and nothing else), so a changed certificate means a replaced
+    gateway or a re-imaged card — never "expected after a reset".
+  - `repairs.py` — the fix flow for `tls_certificate_changed`.
   - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
     `scene_unique_id`, `is_presence_quantity`), the option keys and the
@@ -28,9 +48,13 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - `tools/ws-capture/capture_ws.py` — read-only WS capture + analysis tool.
   Records frames **with timestamps** and walks the user through a scripted
   gesture set (`--script rocker` / `cover`), then `analyze` derives per-gesture
-  edge sequences, channel-echo detection and the timing bounds the button
-  blueprint's defaults rest on. This is how the two evidence-blocked backlog
-  items get unblocked; the old `disk_dump/ws-capture*/` dumps have no timing.
+  edge sequences, the burst shape (presses per gesture — the doubled-firmware
+  diagnostic), which channels fired inside one gesture (a single-key element's
+  alternating copies) and the timing bounds `const.py`'s
+  `BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` rest on. This is how the
+  two open evidence items (the hardware verification of the gesture rebuild
+  and the cover travel question) get settled; the old `disk_dump/ws-capture*/`
+  dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
   mapping the event platform's `click`/`hold_start` events to actions (plus
   an opt-in legacy double-click path for pre-2.2.0 device firmware). Imported
@@ -54,7 +78,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
 
 - Function-type → platform: `OnOff`/`DimmerLight`/`ColorLight` → light;
   `Socket` → switch + sensor; `Measurement` → sensor + binary_sensor;
-  `Position`/`PositionAndAngle` → cover; `Thermostat` → climate;
+  `Position`/`PositionAndAngle` → cover; `Thermostat` → climate + sensor (its
+  room temperature, so the reading has long-term statistics);
   `RockerSwitch` → event + switch (status LED; on the mesh that is vendor
   property `0x5013 KEY_STATUS`, which the gateway writes with a User Property
   *Status* `D1 27 05` to the button element). A `RockerSwitch` function is
@@ -109,9 +134,19 @@ JUNG HOME Gateway over its REST API and WebSocket.
   is reinstated as a hold (a copy is a ~0.4 s pulse). Tap vs hold is pulse
   width only; there is **no double-click detector** and none is possible over
   the API — the blueprint's `double_action` is a legacy opt-in for
-  pre-2.2.0 device firmware with suppression turned off. Key-element holds
-  through the gateway are still uncaptured (a "press while down" restarts the
-  measurement to cover the stuck-side shape the code predicts).
+  pre-2.2.0 device firmware with suppression turned off. A **hold on a
+  single-key element** can be copied to the *other* side (captured
+  2026-09-16, 1 of 4 holds: press, other-side press +1.4 s, the finger's
+  release on the copy's side, the first side never released): a press on the
+  other side of a device whose one side has been down 0.6–2.5 s
+  (`BUTTON_HOLD_COPY_AFTER`/`BUTTON_HOLD_COPY_WINDOW`) is dropped as that
+  copy and its release completes the hold on the side that is down — one
+  `hold_start`/`hold_end` pair, on the held side. The held side's own release
+  ends it just as well (the toggle is one field shared by every button, so an
+  unrelated key pressed mid-hold flips it back); the copy's marker then does
+  not outlive the hold — a genuine press on the copy's side clears it and a
+  late copy release is dropped whole. A "press while down" still restarts
+  the measurement for any shape that slips past.
 - **Every button element exposes BOTH `up_request` and `down_request`**, even
   a single-key one: the firmware's `JungHome_PushButton` model always creates
   PushedUp + PushedDown + StatusLed states (`trigger_request` exists only in
@@ -122,7 +157,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   gateway's group, the other modes act on the mesh directly) — but never
   exposes it: the function assembly
   (`createFunctionListByDevices`) maps only `device.states` into datapoints,
-  and KeyMode is a *property* state. (Its `manufacturer_property` category is
+  and KeyMode is a *property* state — exposed only by the deprecated
+  `GET /devices/?verbose=true` (bullet below). (Its `manufacturer_property` category is
   not the reason — PushedUp/PushedDown/StatusLed are `manufacturer_property`
   too, with explicit cases in `getDatapointTypeByState`; an earlier revision
   of this file said otherwise.) JUNG's own code carries a `// TODO: set
@@ -174,10 +210,12 @@ JUNG HOME Gateway over its REST API and WebSocket.
   one, else Generic Level on element+1.
 - **The WS handshake's `version` frame is the API version, not the firmware.**
   It carries `api-junghome`'s own package version (`"1.5.0"`, matching
-  `apidoc.json` `info.version`); the gateway's *software* version is a REST
-  read, `GET /config/parameter/version_release` (+ `version_build`, e.g.
-  `"2.1.3"` / `"2840"`, populated from the board controller's
-  `MSG_SW_VERSION_IND`). The two were conflated, so every device page showed
+  `apidoc.json` `info.version`); the gateway's *software* version is the
+  middleware's `version` topic (`version_release` + `version_build`, live
+  values `"2.1.3 Release"` / `"2840"`, populated from the board controller's
+  `MSG_SW_VERSION_IND`), read from the **unauthenticated** `GET /version/`
+  reply, which carries both next to `api_version` (one token-less request;
+  the two `config/parameter` reads it replaced returned the same values). The two were conflated, so every device page showed
   `1.5.0` as its `sw_version`. `coordinator.api_version` holds the former
   (diagnostics only); `gateway_version` holds the latter and is what reaches
   `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
@@ -193,6 +231,34 @@ JUNG HOME Gateway over its REST API and WebSocket.
   firmware's function assembly) — absence from `/functions/` means
   deleted/relabelled or a partial poll, which is why the pruner debounces
   `STALE_DEVICE_PRUNE_MISSES` polls before removing anything.
+- **`GET /devices/?verbose=true` (deprecated/experimental in the OpenAPI,
+  probed live 2026-09-16 on 2.1.3/2840, 49 devices, 187 KB) returns the raw
+  middleware device objects** — everything `/functions/` drops. Per state:
+  `statistics.reachable` / `last_seen` / `connection_quality` (per-device
+  reachability at last — 19 of 49 devices were unreachable at probe time),
+  `profile.index` (the datapoint suffix in hex: `input_power` idx 16 =
+  `-010`), `model.address` (element unicast). Per device `property`:
+  `total_device_energy_use` in **Wh** and `total_device_power_on_time` in h
+  on `SocketEnergy` (cumulative energy the README says is missing — it is a
+  property, never a state, so `/functions/` cannot carry it),
+  `software_revision` `[2, 2, 0, 2]` on every push button (device firmware
+  2.2.0.2 confirmed per device; `[2, 2, 0, 1]` on lights — a per-device
+  doubled-firmware detector for the duplicate-suppression default), `key_mode`
+  (6 = gateway on 19 of 20 buttons), `switch_operation_mode`,
+  `device_key_lock`. No cover in the network, so `move_operation_mode` is
+  still unverified. Raw sample: `disk_dump/devices-verbose-20260916.json`
+  (gitignored — labels). Reference in docs/gateway-rest-api.md. **Read by
+  the integration** (`models.parse_devices_verbose`,
+  `coordinator.async_fetch_device_properties`): the full list once after the
+  first refresh (and again only when a function appears that the last answer
+  did not list — an omitted function is not re-asked, a missing endpoint or
+  failed read is retried each interval), then
+  `GET /devices/{id}?verbose=true` (~8 KB) per energy device every
+  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s. Drives the `total_energy`
+  sensor (Wh, `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
+  per-device duplicate-suppression exemption
+  (`button_reports_each_tap_once`: revision known AND < 2.2.0). Reachability
+  is diagnostics-only — availability semantics are a settled decision.
 
 ## Gateway reference — read `docs/` first
 
@@ -223,7 +289,15 @@ instead of re-deriving:
   2026-09-15 audit a device id is `"id"` + `md5(node UUID + hex(location))[:15]`
   and a scene id is `"id"` + hex(scene number) — so an id changes whenever a
   node is re-provisioned (new UUID) or its location/element mapping is
-  re-enumerated, which is what those updates did. The gateway *does* expose
+  re-enumerated. **Measured across the app 2.1.0 → 2.2.0 device-firmware
+  update** (the June and August dumps of the same card, 2026-09-16): the
+  update itself changed nothing HA keys on — 26 of 26 surviving nodes kept
+  UUID and MAC, all 30 kept labels kept their datapoint suffix sets and
+  function types, and every id that did change belonged to a label the user
+  moved to another node in the app (7) or to swapped hardware (4 nodes out,
+  4 in). Six devices were renamed in that window — the one event the
+  label-keyed design turns into a new HA device (old one pruned, history and
+  customisations not carried over). The gateway *does* expose
   hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
   unicast / locations — tracker §3), but the label-keyed design stays.
   Don't reintroduce id-based identifiers. That export IS read at setup
@@ -232,8 +306,15 @@ instead of re-deriving:
   `serial_number` on every function of the node plus a `CONNECTION_BLUETOOTH`
   connection on the node's primary-element function ONLY — the registry also
   resolves devices by connection, so a node-wide connection would merge a
-  multi-gang push-button into one HA device. Never as an identifier. The
-  identities (UUID/MAC/unicast) are deliberately not redacted in diagnostics.
+  multi-gang push-button into one HA device. **The connection is written by
+  the coordinator after registration** (`link_node_identity` from
+  `async_added_to_hass`, `apply_node_identities` on identity resolution and
+  after a device removal), **never through `device_info`**, and only when no
+  other live device of the entry holds it: a connection in `device_info` made
+  a relabelled function's new slug resolve to its OLD device by connection
+  and merge (old entity live forever, pruner never fired — the b8
+  regression). Never as an identifier. The identities (UUID/MAC/unicast) are
+  deliberately not redacted in diagnostics.
 - **Entry identity vs. entity identity are decoupled.** Entries are keyed
   (`unique_id`) on the gateway hardware serial when known (mDNS TXT
   `serial=`, or REST `config/parameter/system_serial`), and legacy entries
@@ -334,14 +415,16 @@ instead of re-deriving:
   (self-signed gateway cert); never build SSL contexts on the event loop.
 - CI: `test.yml` (pytest + mypy, strict via `pyproject.toml`), `lint.yml` (ruff, pinned),
   `validate.yml` (hassfest + HACS), `floor.yml` (imports the integration
-  against the `hacs.json` minimum HA — a floor break means *raise the floor*,
-  not block the release), `release.yml` (tag-gated on all checks). Coverage
+  against the `hacs.json` minimum HA on every branch — a floor break means
+  *raise the floor*, not block the release, unless the missing name is
+  type-only, which goes under `TYPE_CHECKING` as `repairs.py` does),
+  `release.yml` (tag-gated on all checks). Coverage
   gate: 95 % branch (`.coveragerc`). Renovate owns pip (the
   pytest-homeassistant-custom-component stack moves as one group and is
   version-capped); Dependabot deliberately does not watch pip.
-- Tests: one file per platform plus flow/coordinator/init/blueprint/
-  translations/device-trigger/diagnostics files; new platform behaviour goes in that
-  platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
+- Tests: one file per platform plus flow/coordinator/websocket/init/blueprint/
+  translations/device-trigger/diagnostics/models/project-export/tls/const
+  files; new platform behaviour goes in that platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
   The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
   loaded by conftest as `DEVICES`; `bare_coordinator` is the shared bare
@@ -373,7 +456,8 @@ them without new evidence wastes a session.
   `reload_on_update=False` is passed to state intent only.
 - **Only unknown sensor labels stay untranslated.** The known quantities
   (`QUANTITY_DESCRIPTIONS` in `sensor.py`: power, energy, voltage, current,
-  frequency, temperature, illuminance, humidity — matched on unit AND label)
+  frequency, temperature, illuminance, present illuminance — the BWM's
+  ambient reading, its own key — and humidity, matched on unit AND label)
   are named via `entity.sensor.<key>` translation keys whose English text is
   the gateway's own label, so nothing changes for English installs; any other
   label is user-authored app data with nothing correct to translate it to and
@@ -392,8 +476,9 @@ them without new evidence wastes a session.
   would flap on every partial poll. Revisit only by sharing the debounce
   counter.
 - **A partial push cannot blank sibling `values` keys** — the merge is
-  per-key, not a list replacement. `ws_last_frame_by_type` is bounded by the
-  gateway's frame-type vocabulary.
+  per-key, not a list replacement. `ws_last_frame_by_type` keeps the known
+  frame types in full and caps unknown ones (`WS_FRAME_TYPES_MAX`, truncated
+  previews) — a peer minting types must not grow the diagnostics dump.
 - **`climate.set_temperature` ignoring `target_temp_low/high`** is correct
   for a single-setpoint regulator.
 - **ruff `target-version` stays `py313`** — bumping to py314 flips
@@ -493,7 +578,15 @@ shutdown) and the 95 % branch gate.
 **Pass 6 — hygiene.** Secrets stay out of git (`disk_dump/` gitignored;
 diagnostics redact hosts/tokens/serials, including inside free-form text).
 CI pins consistent (ruff version, HA floor). `manifest.json`/`hacs.json`
-coherent.
+coherent. **Run the suite on a real floor venv**, not just the import check:
+no `pytest-homeassistant-custom-component` release pins the floor, so install
+the one pinning the nearest older core (0.13.300 for 2025.12.4) and then
+`pip install --only-binary litellm homeassistant==<floor>`; the only expected
+floor-only failures are the eight `test_all_*_entities` snapshots
+(`aliases: list([None])` vs `set({})`, a core-owned serializer delta).
+Anything else is a finding — a name that exists only on newer cores
+(`RepairsFlowResult`, HA 2026.6) shipped through eight betas because
+`floor.yml` ran on `main` only and never on the integration branch.
 
 **Report.** Severity-ordered; each finding with evidence, failure scenario
 and proposed fix. Close with an explicit verdict: the list of open P0–P2s,
@@ -501,14 +594,22 @@ or "clean — nothing above P3 survived verification."
 
 ## Backlog (open, in rough value order)
 
-- **Audit tracker** — `docs/cross-repo-analysis.md` (2026-09-15) holds the
-  open bugs (wave 1 landed on `audit-2026-09-15`, incl. the P1 reauth reload),
-  improvements
-  and doc corrections from the cross-repo audit, plus the now-established
-  mechanism of the double-reporting rockers (gateway synthesises the
-  release; device fw 2.2.0.2 double-publishes; key elements alternate
-  sides). Prefer it over re-deriving those facts; the two bullets below
-  are superseded where they conflict with it.
+- **Audit tracker** — `docs/cross-repo-analysis.md` (2026-09-15) keeps the
+  facts the cross-repo audit settled (the mechanism of the double-reporting
+  rockers: gateway synthesises the release; device fw 2.2.0.2
+  double-publishes; key elements alternate sides — plus the gateway's mesh
+  role, opcodes, timers) and what is still open: the hardware verification
+  below, a scene-`value` join key, code sharing with the sibling project,
+  and the captures (§5) that would close the remaining questions. Every bug
+  and doc correction it raised has landed. Prefer it over re-deriving those
+  facts.
+- **Verbose devices — per-device availability.** The energy sensor and the
+  firmware-aware suppression exemption landed 2026-09-16; what the endpoint
+  still offers is per-state `statistics.reachable` (kept in
+  `device_properties` and diagnostics, not used). Using it for availability
+  means revisiting the settled decision above by sharing the pruner's
+  debounce — and the endpoint is deprecated, so availability must not depend
+  on it existing.
 - **Cover travel states** — less unblocked than it looked: a composed
   `level` datapoint carries a `level_move` value (−1/1/0) derived from
   current-vs-target (`PositionState.fromMeshMessage` computes mode
@@ -521,11 +622,13 @@ or "clean — nothing above P3 survived verification."
   cover` — note its script drives an API move whose `level` reports the
   *target* for ~4 s, so read the result with that in mind), to learn whether
   intermediate `level` pushes stream during travel.
-- **Button gestures — verify on hardware.** The rebuild landed (see the
-  "Button gestures are derived in `event.py`" bullet under protocol facts);
-  what remains is a live check on a rocker element *and* a single-key
-  element (all measurements so far are one rocker; a key element's hold
-  through the gateway is uncaptured and by the code leaves one side down),
-  and the upstream report — the fix at source is a one-line counter dedupe
-  in the gateway's `btmesh_property_service.js` (it ignores the `0x5012`
-  counter byte), or the device firmware's double publication.
+- **Button gestures — upstream report.** The rebuild is verified on hardware
+  (2026-09-16, three rocker elements and two single-key elements — the live
+  verification table in docs/gateway-websocket.md): rocker taps/holds/double
+  taps behave exactly as modelled, key-element taps alternate sides, and the
+  copied key-element hold was captured once in four and is now handled.
+  What remains is the upstream report — the fix at source is a one-line
+  counter dedupe in the gateway's `btmesh_property_service.js` (it ignores
+  the `0x5012` counter byte), or the device firmware's double publication —
+  and, optionally, more key-element hold samples to learn why three of four
+  carried no copy (the §5 mesh capture would settle it).

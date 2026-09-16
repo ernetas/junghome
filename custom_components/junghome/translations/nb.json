@@ -61,6 +61,10 @@
         "data_description": {
           "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50 eller junghome.local)."
         }
+      },
+      "reconfigure_certificate": {
+        "title": "Gatewayens sertifikat avviker",
+        "description": "Gatewayen på {host} presenterer et TLS-sertifikat som avviker fra det som er festet for denne oppføringen (festet {expected}, presentert {observed}). Dette er bare forventet hvis gatewayen er byttet ut, eller hvis lagringen dens er slettet eller installert på nytt; sertifikatet overlever en fabrikktilbakestilling og fastvareoppdateringer. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Gå tilbake og kontroller adressen. Så langt er det bare sendt et TLS-håndtrykk til den. Send inn for å stole på det nye sertifikatet og fortsette."
       }
     },
     "progress": {
@@ -127,18 +131,59 @@
       }
     },
     "event": {
-      "up": { "name": "Opp" },
-      "down": { "name": "Ned" },
-      "press": { "name": "Trykk" }
+      "up": {
+        "name": "Opp",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Trykket",
+              "depressed": "Sluppet",
+              "click": "Klikk",
+              "hold_start": "Hold startet",
+              "hold_end": "Hold avsluttet"
+            }
+          }
+        }
+      },
+      "down": {
+        "name": "Ned",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Trykket",
+              "depressed": "Sluppet",
+              "click": "Klikk",
+              "hold_start": "Hold startet",
+              "hold_end": "Hold avsluttet"
+            }
+          }
+        }
+      },
+      "press": {
+        "name": "Trykk",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "pressed": "Trykket",
+              "depressed": "Sluppet",
+              "click": "Klikk",
+              "hold_start": "Hold startet",
+              "hold_end": "Hold avsluttet"
+            }
+          }
+        }
+      }
     },
     "sensor": {
       "power": { "name": "Effekt" },
       "energy": { "name": "Energi" },
+      "total_energy": { "name": "Total energi" },
       "voltage": { "name": "Spenning" },
       "current": { "name": "Strøm" },
       "frequency": { "name": "Frekvens" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Belysningsstyrke" },
+      "present_illuminance": { "name": "Nåværende belysningsstyrke" },
       "humidity": { "name": "Luftfuktighet" }
     },
     "switch": {
@@ -151,6 +196,9 @@
     },
     "cannot_connect": {
       "message": "Feil ved kommunikasjon med Jung Home-gatewayen: {error}"
+    },
+    "certificate_changed": {
+      "message": "Enheten på {host} presenterer ikke TLS-sertifikatet som er festet for denne Jung Home-gatewayen, så tilgangstokenet ble ikke sendt. Hvis du har tilbakestilt eller byttet ut gatewayen, bekrefter du det nye sertifikatet under Innstillinger, Reparasjoner."
     },
     "cannot_send": {
       "message": "Kunne ikke nå Jung Home-gatewayen for å sende kommandoen; den kobler til på nytt. Prøv igjen om et øyeblikk."
@@ -175,6 +223,21 @@
     "websocket_push_failure": {
       "title": "Sanntidsoppdateringer fra Jung Home har stoppet",
       "description": "Home Assistant klarte ikke å koble til Jung Home-gatewayen på {host} {failures} ganger på rad. Enhetstilstander sendes ikke lenger umiddelbart og oppdateres nå bare ved den periodiske REST-pollingen. Kontroller at gatewayen er slått på og kan nås på nettverket ditt. Dette problemet forsvinner av seg selv når forbindelsen er gjenopprettet."
+    },
+    "tls_certificate_changed": {
+      "title": "Sertifikatet til Jung Home-gatewayen er endret",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Stol på gatewayens nye sertifikat",
+            "description": "Enheten som svarer på {host}, presenterer et TLS-sertifikat ({observed}) som avviker fra det Home Assistant festet ved første tilkobling til denne Jung Home-gatewayen ({expected}). Home Assistant har sluttet å snakke med den, ikke engang tilgangstokenet sendes, og gatewayens entiteter forblir utilgjengelige til dette er løst. Et endret sertifikat er bare forventet hvis gatewayen er byttet ut, eller hvis lagringen dens er slettet eller installert på nytt; sertifikatet overlever en fabrikktilbakestilling og fastvareoppdateringer. Hvis ingenting av dette har skjedd, kan en annen enhet svare på denne adressen: Ikke bekreft, kontroller nettverket ditt i stedet. Bekreft at Jung Home-gatewayen på {host} er byttet ut eller installert på nytt, og at sertifikatet den presenterer nå ({observed}), skal stoles på i stedet for det festede ({expected}). Home Assistant fester det nye sertifikatet, sender tilgangstokenet til det og kobler til på nytt."
+          }
+        },
+        "error": {
+          "cannot_connect": "Kunne ikke koble til gatewayen.",
+          "different_gateway": "Adressen svarer, men tilhører en annen Jung Home-gateway enn denne oppføringen. Bruk Konfigurer på nytt for å endre adressen i stedet."
+        }
+      }
     }
   }
 }

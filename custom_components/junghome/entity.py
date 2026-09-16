@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, device_slug, gateway_device_id
@@ -128,45 +128,71 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         key, by identifier tuple (``via_device``) on older ones. The hub is
         registered up front in ``async_setup_entry``, so both forms resolve.
 
-        The identity stays the label slug (``identifiers``), so existing
-        registrations merge unchanged. When the coordinator resolved the
-        function's hardware identity from the gateway's project export
-        (``coordinator.node_identities``), the node's Bluetooth address is
-        added as ``serial_number`` — informational, shown on the device page,
-        shared by every function of a multi-function node — and, on the
-        function at the node's primary element only, as a
-        ``CONNECTION_BLUETOOTH`` connection. Only there, because the registry
-        resolves devices by connection: the same connection on a 2-gang
-        button's rockers and loads would merge them all into one device. A
-        connection on the primary function is what lets the registry recognise
-        the same radio across a relabel (a deleted device's area and custom
-        name come back with it) and lets tooling join on the address. Mirrored
-        by ``coordinator._apply_node_identities`` for devices registered before
-        the identity was known.
+        The identity is the label slug (``identifiers``) and nothing else —
+        the registry resolves a device by identifier OR connection, so the
+        slug must be the only key ``async_get_or_create`` can match on. When
+        the coordinator resolved the function's hardware identity from the
+        gateway's project export (``coordinator.node_identities``), the node's
+        Bluetooth address is added as ``serial_number``: informational, shown
+        on the device page, shared by every function of a multi-function node,
+        never matched on. The ``CONNECTION_BLUETOOTH`` connection the primary
+        function's device also carries is deliberately NOT set here: a
+        relabelled function registers under a new slug while the old device
+        is still live, and a connection here made the registry resolve the
+        new slug to the old device by connection and merge the two (the old
+        entity then lived on forever and the pruner never fired). The
+        coordinator writes the connection instead, once the row exists and
+        only when no other live device of the entry holds it
+        (``link_node_identity`` from ``async_added_to_hass``, and
+        ``apply_node_identities`` when identities resolve or a device is
+        removed) — see ``_write_node_identity`` for the rule.
+
+        No literal fallbacks, and no ``None`` either: an unknown label, type
+        or version is left out, so the registry keeps whatever it already
+        holds for that row (a ``None`` would clear it — the gateway version
+        ``_apply_gateway_version`` wrote on an earlier run, say) and a new
+        device is named after the entry, as HA does for any nameless device —
+        rather than a made-up "Unknown Model" pinned as if the gateway had
+        said it.
         """
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, device_slug(self._device))},
-            "name": self._device.get("label", "Jung Device"),
             "manufacturer": "Jung",
-            "model": self._device.get("type", "Unknown Model"),
-            "sw_version": self._device.get("sw_version")
-            or self.coordinator.gateway_version
-            or "Unknown Version",
         }
+        if label := self._device.get("label"):
+            info["name"] = label
+        if model := self._device.get("type"):
+            info["model"] = model
+        if version := (
+            self._device.get("sw_version") or self.coordinator.gateway_version
+        ):
+            info["sw_version"] = version
         identity = self.coordinator.node_identity_for(self._device)
         if identity is not None and identity.mac is not None:
             info["serial_number"] = identity.mac
-            if identity.primary:
-                info["connections"] = {(CONNECTION_BLUETOOTH, identity.mac)}
+        # Whichever link key this core lacks is absent from its DeviceInfo
+        # TypedDict (``via_device_id`` before 2026.8, ``via_device`` from
+        # 2026.9), so both are set through a plain dict view to keep mypy
+        # happy on every supported version.
         hub_registry_id = self.coordinator.gateway_device_registry_id
         if VIA_DEVICE_ID_SUPPORTED and hub_registry_id is not None:
-            # The key is absent from this core's DeviceInfo when the check is
-            # False, so it is set through a plain dict view to keep mypy happy
-            # on every supported version.
             cast("dict[str, Any]", info)["via_device_id"] = hub_registry_id
         elif (entry := self.coordinator.config_entry) is not None:
-            info["via_device"] = (DOMAIN, gateway_device_id(entry))
+            cast("dict[str, Any]", info)["via_device"] = (
+                DOMAIN,
+                gateway_device_id(entry),
+            )
         return info
+
+    async def async_added_to_hass(self) -> None:
+        """Link the device to its radio now that its registry row exists.
+
+        See ``device_info``: the Bluetooth connection is written by the
+        coordinator, never registered through ``device_info``.
+        """
+        await super().async_added_to_hass()
+        if (device_entry := self.device_entry) is not None:
+            self.coordinator.link_node_identity(device_entry.id, self._device)
 
     def _current_device(self) -> Device | None:
         """Return this entity's device from the latest coordinator data."""

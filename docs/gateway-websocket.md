@@ -29,7 +29,7 @@ In order:
    gateway's software version.** It is `api-junghome`'s own package version
    (`packageJson.version`, matching `apidoc.json` `info.version`), so a gateway
    running firmware 2.1.3 build 2840 announces `"1.5.0"` here. The software
-   version is a REST read: `GET /config/parameter/version_release` (+
+   version is a REST read: the unauthenticated `GET /version/` reply (`version_release` (+
    `version_build`) — see [gateway-rest-api.md](gateway-rest-api.md).
 3. After ~1 s, the current state is pushed:
    - `{ "type": "functions", "data": [ ...all functions... ] }`
@@ -350,6 +350,37 @@ Three facts follow, and they set the design space for any gesture logic:
   would let it through). Anything shorter lets some duplicates through;
   earlier revisions of this doc suggested 0.15–0.25 s from a mis-segmented
   unlabelled capture — refuted by the labelled one.
+
+#### Live verification, 2026-09-16 (gateway 2.1.3/2840, device firmware 2.2.0.2)
+
+Three recordings with `tools/ws-capture/capture_ws.py --script none` on the
+reference network, one 2-gang rocker (two rocker elements, 4 sides) and one
+1-gang "rocker" that the gateway sees as **two single-key elements** (two
+function ids; each tap alternates its `up`/`down` datapoints). Raw files in
+`disk_dump/ws-capture-live-20260916-*/` (gitignored).
+
+| gesture | element type | n | shape on the wire |
+|---|---|---|---|
+| tap | rocker | 8 | **2 pairs, same side**, pulses 0.416–0.442 s, gap 0.175–0.784 s (one tap arrived as a single pair — copies do get lost) |
+| double tap | rocker | 1 | 2 pairs — identical to a single tap |
+| hold | rocker | 2 | **1 pulse**, 2.64 s and 3.25 s |
+| tap | single key | 4 | `up` pair then `down` pair (or the reverse), copy 0.11–0.85 s after the first release — the per-device window's case |
+| double tap | single key | 1 | 3 pairs (`down`, `up`, `down`), the fourth missing |
+| hold | single key | 4 | 3 × a single 1.5–2.1 s pulse on one side; **1 × press, other-side press +1.4 s, release on the copy's side at +2.55 s, first side never released** |
+| ~1 s press | single key | 1 | one 0.51 s pair: the device reported a click, no copy |
+| A then B within 0.45 s | rocker | 1 | pairs interleaved (`up`P `down`P `up`r `down`r) then one copy of the second tap — two clicks, correct |
+
+The copied hold is the one shape the gesture logic had predicted but never
+seen: the gateway toggles a key element's side on every reception, so the
+hold's second copy lands as a press on the *other* datapoint while the first
+is still down, and the finger's release (event 4, `prevButtonType`) then
+lands there too. `event.py` treats a press on the other side of a device
+whose one side has been down for 0.6–2.5 s as that copy and completes the
+hold with the copy's release (`BUTTON_HOLD_COPY_AFTER` /
+`BUTTON_HOLD_COPY_WINDOW`). Why three of four holds carried no copy is
+unknown (mesh loss, or the device re-publishing the *current* key state
+rather than the message — the simultaneous mesh capture in
+`docs/cross-repo-analysis.md` §5 would tell).
 
 **This is a regression, and the gateway's own logs prove it.** The gateway
 middleware logs every button state change, and the 2026-08-01 dump carries an

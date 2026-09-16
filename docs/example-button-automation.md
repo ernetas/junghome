@@ -174,8 +174,13 @@ It exposes:
 
 Either:
 
-- **Import from URL** — Home Assistant → *Settings → Automations & scenes →
-  Blueprints → Import blueprint*, and paste the raw file URL:
+- **Import with one click** (HACS installs only the integration, never
+  blueprints):
+
+  [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fernetas%2Fjunghome%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fjunghome%2Fbutton_gestures.yaml)
+
+- **Or import from URL** — Home Assistant → *Settings → Automations & scenes →
+  Blueprints → Import blueprint*, and paste the file URL:
   `https://github.com/ernetas/junghome/blob/main/blueprints/automation/junghome/button_gestures.yaml`
 
 - **Or copy the file** into your config at
@@ -238,9 +243,13 @@ With it off, every press/release pair is its own `click`.
 
 With the suppression off and buttons that report once per tap, the blueprint's
 **Detect double-clicks** input waits for a second `click` within the
-**Double-click window** (default 400 ms) before running the click action, and
-runs the double-click action instead if one arrives. This adds that window as
-latency to every single click, which is why it is a separate opt-in.
+**Double-click window** (default 1 s) before running the click action, and
+runs the double-click action instead if one arrives. The window is measured
+from click to click, and a click is reported at the gateway's synthesised
+release, about 0.4-0.5 s after the press — so the second click of a
+double-click lands 0.5-1 s after the first, and a window much under a second
+misses it. This adds that window as latency to every single click, which is
+why it is a separate opt-in.
 
 ### Measure your own buttons
 
@@ -269,6 +278,11 @@ double-clicks.
   options (it is by default).
 - **A quick second press on the same rocker is lost.** That is the 1.2 s
   window above. It only matters for presses less than 1.2 s apart.
+- **Pressing the other side while holding one is taken for the hold's copy.**
+  Single-key buttons report a hold's duplicate on their other datapoint, so a
+  press on the other side of a button that has been held for 0.6–2.5 s is
+  dropped and its release ends the hold. On a rocker that only matters if you
+  press the opposite side with a second finger while holding the first.
 - **Hold fires when I meant to click.** The threshold is 1 second: a press
   released later than that is a hold. There is no setting for it — measured
   clicks release within ~0.5 s regardless of how long the finger stays,
