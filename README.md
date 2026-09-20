@@ -8,6 +8,11 @@ Gateway entirely locally — live state and commands over a WebSocket, with a
 REST poll as backstop (and for scene recall). No cloud, no account; a gateway
 is required.
 
+> **Unofficial project.** Not affiliated with, authorized by, or endorsed by
+> Albrecht JUNG GmbH & Co. KG. "JUNG" and "JUNG HOME" are trademarks of their
+> owner, used here only to identify compatible hardware. See
+> [Disclaimer & legal](#disclaimer--legal).
+
 ## What works
 
 - **Lights** — on/off switch actuators (e.g. BT S1 B2 U) and dimmers
@@ -392,6 +397,33 @@ handshake presents it).
   identically, e.g. `Lamp 1` and `Lamp-1` — map to the same id and only the
   first one gets entities. Give each device a distinct label in the Jung Home
   app.
+
+## Disclaimer & legal
+
+This is an **independent, unofficial** project. It is **not** affiliated with,
+authorized, sponsored, or endorsed by Albrecht JUNG GmbH & Co. KG. "JUNG" and
+"JUNG HOME" are trademarks of their respective owner and are used here **only
+descriptively** (nominative use) to identify the devices and gateway this
+software interoperates with.
+
+- **Purpose — interoperability.** This integration talks to the JUNG HOME
+  Gateway's local API so that owners can operate **their own** devices from
+  Home Assistant. It is an independently created program that interoperates
+  with the gateway; it does not modify the gateway or its firmware.
+- **No vendor material is redistributed here.** This repository contains no
+  vendor firmware, no decompiled app or gateway software, and no vendor logo or
+  brand artwork. The integration's icon is served by Home Assistant's own
+  brands repository, not bundled here. Development inputs that contain vendor
+  software or private keys (such as a gateway disk dump) are kept locally and
+  are git-ignored — do not commit them.
+- **Use with your own gateway only.** Use this only with a JUNG HOME gateway
+  and devices that you own or are authorized to administer. You are responsible
+  for your use of it.
+- **No warranty.** Provided "as is" under the MIT License, without warranty of
+  any kind. **Use at your own risk.**
+
+See [DISCLAIMER.md](DISCLAIMER.md) for the full notice. This is not legal
+advice.
 
 ## Gateway internals (for contributors)
 
