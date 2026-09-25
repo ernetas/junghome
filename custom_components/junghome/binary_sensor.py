@@ -29,7 +29,7 @@ from .const import (
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity
+from .entity import JungHomeEntity, claim_new_entity, entry_unloading
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,6 +55,8 @@ async def async_setup_entry(
     @callback
     def _discover_binary_sensors() -> None:
         """Add entities for any presence sensors not yet created (handles late adds)."""
+        if entry_unloading(entry):
+            return
         new_entities: list[JungHomePresence] = []
         for device in coordinator.data or []:
             # Presence/occupancy is reported as a quantity datapoint (with an
@@ -76,7 +78,7 @@ async def async_setup_entry(
                         JungHomePresence(coordinator, device, datapoint, label)
                     )
         if new_entities:
-            async_add_entities(new_entities, update_before_add=True)
+            async_add_entities(new_entities)
 
     _discover_binary_sensors()
     entry.async_on_unload(coordinator.async_add_listener(_discover_binary_sensors))

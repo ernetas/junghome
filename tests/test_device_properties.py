@@ -9,6 +9,7 @@ once, so duplicate suppression is skipped for it — see ``test_event.py``), and
 per-state reachability (diagnostics). Shapes below mirror the 2026-09-16 probe.
 """
 
+import asyncio
 import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -320,6 +321,82 @@ async def test_refresh_re_reads_the_full_list_for_a_function_added_since(
             await _tick(hass, freezer)
             assert full.await_count == 1
             assert single.await_count == 1
+
+
+async def test_a_function_adopted_during_the_full_read_is_read_next_time(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The answer speaks for the functions live when it was asked, not after.
+
+    A function the app adds while the ~190 KB body is in flight is not in the
+    answer; counting it as asked would mean it is never read (a new metering
+    socket without its energy sensor until a restart).
+    """
+    initial = [_verbose(SOCKET), *_everything_but(SOCKET)]
+    async with _running(hass, initial) as entry:
+        coordinator = entry.runtime_data
+
+        def added(function_id: str) -> dict:
+            return {
+                **copy.deepcopy(PRISTINE_DEVICES[0]),
+                "id": function_id,
+                "label": function_id,
+            }
+
+        with_a = [*copy.deepcopy(PRISTINE_DEVICES), added("idnewA")]
+        with_ab = [*with_a, added("idnewB")]
+        listed = [
+            *initial,
+            _verbose("idnewA", energy_present=False, device_type="Other"),
+        ]
+
+        async def full_read(*_args: object) -> list[dict]:
+            if full.await_count == 1:  # B is added while the body is in flight
+                await asyncio.sleep(0)
+                coordinator._handle_websocket_message(
+                    {"type": "functions", "data": copy.deepcopy(with_ab)}
+                )
+                return listed
+            return [
+                *listed,
+                _verbose("idnewB", energy_present=False, device_type="Other"),
+            ]
+
+        full = AsyncMock(side_effect=full_read)
+        with (
+            patch.object(coordinator, "_fetch_devices_verbose_from_api", full),
+            patch.object(
+                coordinator,
+                "_fetch_device_verbose_from_api",
+                AsyncMock(return_value=_verbose(SOCKET)),
+            ),
+            patch.object(
+                coordinator,
+                "_fetch_devices_from_api",
+                AsyncMock(side_effect=lambda *_: copy.deepcopy(coordinator.data)),
+            ),
+        ):
+            coordinator._handle_websocket_message({"type": "functions", "data": with_a})
+            await hass.async_block_till_done()
+            await _tick(hass, freezer)
+            assert full.await_count == 1
+            assert "idnewB" not in coordinator.device_properties
+            await _tick(hass, freezer)
+            assert full.await_count == 2
+            assert "idnewB" in coordinator.device_properties
+
+
+async def test_an_empty_answer_keeps_the_properties(hass: HomeAssistant) -> None:
+    """An answered-but-empty list is not "no properties": nothing is wiped."""
+    async with _running(hass, [_verbose(SOCKET)]) as entry:
+        coordinator = entry.runtime_data
+        before = coordinator.device_properties
+        assert SOCKET in before
+        with patch.object(
+            coordinator, "_fetch_devices_verbose_from_api", AsyncMock(return_value=[])
+        ):
+            await coordinator.async_fetch_device_properties()
+        assert coordinator.device_properties == before
 
 
 async def test_a_function_the_list_omits_is_not_asked_for_every_interval(

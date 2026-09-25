@@ -396,7 +396,8 @@ handshake presents it).
   work](#how-updates-work)). Devices whose labels are identical — or that slug
   identically, e.g. `Lamp 1` and `Lamp-1` — map to the same id and only the
   first one gets entities. Give each device a distinct label in the Jung Home
-  app.
+  app. With more than one gateway, keep labels distinct across gateways too:
+  two gateways' devices with the same label collide the same way.
 
 ## Disclaimer & legal
 

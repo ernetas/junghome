@@ -1171,8 +1171,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
     @callback
     def _clear_fingerprint_mismatch(self) -> None:
-        """Withdraw the mismatch issue once the pinned gateway answers again."""
-        if not self._tls_mismatch_reported:
+        """Withdraw the mismatch issue once the pinned gateway answers again.
+
+        The registry, not this coordinator's flag, says whether there is one:
+        a mismatch on the first refresh raised it from a coordinator that the
+        SETUP_RETRY rebuild threw away, and the one that finally reaches the
+        pinned gateway never raised anything (the report side keys on the
+        registry for the same reason).
+        """
+        if (
+            not self._tls_mismatch_reported
+            and ir.async_get(self.hass).async_get_issue(DOMAIN, self._tls_issue_id)
+            is None
+        ):
             return
         self._tls_mismatch_reported = False
         _LOGGER.info(
@@ -1521,6 +1532,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         transport failure or an unusable body leaves the map as it was — an
         empty map at setup, the previous map on a re-read.
         """
+        # The functions this answer can speak for, taken BEFORE the read: one
+        # adopted while the (~190 KB) body is in flight is not in it, and
+        # counting it as asked would mean it is never read.
+        asked_for = frozenset(
+            device_id
+            for d in self.data or []
+            if isinstance(device_id := d.get("id"), str)
+        )
         try:
             raw = await self._fetch_devices_verbose_from_api(
                 self.config["host"], self.config["token"]
@@ -1533,11 +1552,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # The endpoint answered: whatever live function it left out, it will
         # leave out next time too, so the periodic refresh stops asking for
         # the full list until the membership changes (`_properties_listed_for`).
-        self._properties_listed_for = frozenset(
-            device_id
-            for d in self.data or []
-            if isinstance(device_id := d.get("id"), str)
-        )
+        self._properties_listed_for = asked_for
         parsed = parse_devices_verbose(raw)
         if not parsed or parsed == dict(self.device_properties):
             return

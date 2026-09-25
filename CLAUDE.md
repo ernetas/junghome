@@ -379,7 +379,12 @@ instead of re-deriving:
   a device's datapoint-type set changes — once the new set has been seen on
   two consecutive adoptions — so features are rebuilt (the
   tilt-lost-after-update regression). Gate capabilities on datapoint
-  *presence*, never on the function-type name.
+  *presence*, never on the function-type name. That reload (like the
+  id-churn one) starts *inside* an adoption and runs eagerly: every
+  `_discover_*` listener returns early while the entry is
+  `UNLOAD_IN_PROGRESS` (`entity.entry_unloading`), and the platforms add
+  without `update_before_add` — either gap put a device new in that list on
+  the dead coordinator (an orphan frozen at its first state).
 - **Push handling must not starve the poll.** The per-datapoint push path
   deliberately avoids `async_set_updated_data` (it re-arms the poll a full
   interval out; a chatty gateway would defer polling forever — the old

@@ -728,3 +728,44 @@ async def test_mismatch_is_logged_once_per_outage_not_per_coordinator(
     )
     fresh._report_fingerprint_mismatch(mismatch)
     assert _errors() == 2
+
+
+async def test_mismatch_issue_from_a_setup_retry_is_withdrawn_on_recovery(
+    hass: HomeAssistant,
+) -> None:
+    """The pinned gateway answers again after a SETUP_RETRY: the issue goes.
+
+    The coordinator that raised the issue was thrown away with the failed
+    setup; the retry's coordinator never raised anything, so withdrawal keys
+    on the registry, like the report side. Before, a transient impostor at
+    startup left an ERROR repair on a working entry for good.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="ser-1",
+        data={
+            CONF_HOST: "1.2.3.4",
+            CONF_TOKEN: TOKEN,
+            CONF_SERIAL: "ser-1",
+            CONF_TLS_FINGERPRINT: FAKE_FINGERPRINT,
+        },
+    )
+    entry.add_to_hass(hass)
+    issue_id = await _raise_issue(hass, entry)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        # What the retry timer does: set the entry up again.
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
