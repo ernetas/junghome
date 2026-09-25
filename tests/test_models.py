@@ -218,6 +218,8 @@ def test_function_anchor_matches_by_id_or_by_address_and_location() -> None:
     assert not anchor.matches("idzzz", None)
     assert anchor.matches("idzzz", NodeIdentity(uuid="U", location=1, mac="AA:BB"))
     assert not anchor.matches("idzzz", NodeIdentity(uuid="U", location=2, mac="AA:BB"))
+    # The same location on another node is another element.
+    assert not anchor.matches("idzzz", NodeIdentity(uuid="U", location=1, mac="CC:DD"))
     assert not anchor.matches("idzzz", NodeIdentity(uuid="U", location=1, mac=None))
     bare = FunctionAnchor(id="idabc")
     assert not bare.matches("idzzz", NodeIdentity(uuid="U", location=1, mac="AA:BB"))

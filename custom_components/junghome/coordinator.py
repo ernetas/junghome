@@ -31,6 +31,7 @@ from .const import (
     CONF_INVERTED_COVERS,
     CONF_POLL_INTERVAL,
     CONF_TLS_FINGERPRINT,
+    DATA_AREA_ASSIGNED,
     DEFAULT_POLL_INTERVAL_SECONDS,
     DOMAIN,
     EVENT_SCENE_RECALLED,
@@ -506,7 +507,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # store by `attach_function_anchors` before the first refresh; empty —
         # and rename following off — on a bare coordinator.
         self.function_anchors: dict[str, FunctionAnchor] = {}
+        # The renames the latest ``follow_renames`` pass followed, new slug ->
+        # old slug, for the listeners that keep their own slug-keyed state
+        # (the capability watcher's baselines) to carry it across.
+        self.followed_renames: dict[str, str] = {}
         self._anchor_store: Store[dict[str, Any]] | None = None
+        # A delayed save of the map is scheduled and has not written yet;
+        # ``stop()`` flushes it (see there).
+        self._anchor_save_pending = False
         # Gateway function id -> the hardware identity of the mesh element
         # behind it (node UUID, Bluetooth address, unicast, location), parsed
         # from `GET /project/junghome` at setup (`async_fetch_node_identities`)
@@ -847,14 +855,21 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if isinstance(d.get("id"), str) and device_slug(d) not in colliding
         }
         dev_reg = dr.async_get(self.hass)
+        followed: dict[str, str] = {}
         for slug, device in live.items():
             old_slug = self._renamed_from(slug, device, live, dev_reg, entry.entry_id)
-            if old_slug is not None:
-                self._migrate_renamed_function(old_slug, slug, device, entry.entry_id)
+            if old_slug is not None and self._migrate_renamed_function(
+                old_slug, slug, device, entry.entry_id
+            ):
+                followed[slug] = old_slug
+        self.followed_renames = followed
         # Every live function, plus the vanished ones whose device still
         # exists (the pruner's window, or one partial list) so a rename that
         # lands an adoption later still pairs.
-        fresh = {slug: self._anchor_for(device) for slug, device in live.items()}
+        fresh = {
+            slug: self._anchor_for(device, self.function_anchors.get(slug))
+            for slug, device in live.items()
+        }
         for slug, anchor in self.function_anchors.items():
             if slug in fresh:
                 continue
@@ -865,6 +880,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 fresh[slug] = anchor
         if fresh != self.function_anchors:
             self.function_anchors = fresh
+            self._anchor_save_pending = True
             self._anchor_store.async_delay_save(
                 self._anchor_document, FUNCTION_ANCHORS_SAVE_DELAY
             )
@@ -893,8 +909,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     ) -> bool:
         """Rewrite ``old_slug``'s device and entities to ``new_slug``, in place.
 
-        All-or-nothing: every entity is checked for a free target unique_id
-        before any is touched, so the device can never end up half-renamed.
+        All-or-nothing: every entity is checked for a free target unique_id and
+        the device's new identifier is claimed before any entity is touched,
+        so the device can never end up half-renamed.
         Option values keyed by unique_id (the inverted covers) follow too.
         """
         dev_reg = dr.async_get(self.hass)
@@ -921,6 +938,28 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 )
                 return False
             renames.append((entity, new_uid))
+        # The device first: before Home Assistant 2026.9 identifiers are unique
+        # registry-wide, so another gateway's entry may already hold the new
+        # slug. Rewriting the entities before finding that out would leave
+        # them keyed by a device that never followed — and the next adoption
+        # would try again and fail the poll.
+        identifiers = {
+            (DOMAIN, new_slug) if identifier == (DOMAIN, old_slug) else identifier
+            for identifier in old_device.identifiers
+        }
+        try:
+            dev_reg.async_update_device(
+                old_device.id, new_identifiers=identifiers, name=label
+            )
+        except dr.DeviceIdentifierCollisionError as err:
+            _LOGGER.warning(
+                "Jung Home: %s was renamed to %s in the app, but %s; treating it "
+                "as a new device",
+                old_device.name,
+                label,
+                err,
+            )
+            return False
         renamed_uids: dict[str, str] = {}
         for entity, new_uid in renames:
             ent_reg.async_update_entity(entity.entity_id, new_unique_id=new_uid)
@@ -929,14 +968,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if known is not None and entity.unique_id in known:
                 known.discard(entity.unique_id)
                 known.add(new_uid)
-        identifiers = {
-            (DOMAIN, new_slug) if identifier == (DOMAIN, old_slug) else identifier
-            for identifier in old_device.identifiers
-        }
-        dev_reg.async_update_device(
-            old_device.id, new_identifiers=identifiers, name=label
-        )
-        self._follow_rename_in_options(renamed_uids)
+        self._follow_rename_in_entry(old_slug, new_slug, renamed_uids)
         _LOGGER.info(
             "Jung Home: %s was renamed to %s in the app; its Home Assistant device "
             "and %d entities follow (entity ids unchanged)",
@@ -946,12 +978,37 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         )
         return True
 
+    def _follow_rename_in_entry(
+        self, old_slug: str, new_slug: str, renamed_uids: Mapping[str, str]
+    ) -> None:
+        """Re-point what the entry keys by slug or unique_id.
+
+        The area assigner's record of devices it already considered is keyed
+        by slug; left behind, a renamed device whose area the user cleared on
+        purpose would be placed again. The options carry the inverted covers.
+        """
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - follow_renames returned already
+            return
+        considered = entry.data.get(DATA_AREA_ASSIGNED)
+        if isinstance(considered, list) and old_slug in considered:
+            self.hass.config_entries.async_update_entry(
+                entry,
+                data={
+                    **entry.data,
+                    DATA_AREA_ASSIGNED: sorted({*considered, new_slug} - {old_slug}),
+                },
+            )
+        self._follow_rename_in_options(renamed_uids)
+
     def _follow_rename_in_options(self, renamed_uids: Mapping[str, str]) -> None:
         """Re-point the options keyed by unique_id (the inverted covers).
 
-        Writing the options makes the update listener reload the entry — the
-        one case rename following reloads, and the cover platform reads the
-        flags at setup so the flag must not be lost on the way.
+        The snapshot moves with the options, so the update listener sees no
+        options change and does not reload: a live cover keeps the flag it was
+        built with, and the next setup reads it under the new unique_id. A
+        stale snapshot would instead turn the next unrelated entry write into
+        a reload (and, live, reload in the middle of the adoption).
         """
         entry = self.config_entry
         if entry is None:  # pragma: no cover - follow_renames returned already
@@ -961,13 +1018,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             uid in renamed_uids for uid in flagged
         ):
             return
-        updated = [renamed_uids.get(uid, uid) for uid in flagged]
-        self.hass.config_entries.async_update_entry(
-            entry, options={**entry.options, CONF_INVERTED_COVERS: updated}
-        )
+        options = {
+            **entry.options,
+            CONF_INVERTED_COVERS: [renamed_uids.get(uid, uid) for uid in flagged],
+        }
+        self.options_snapshot = dict(options)
+        self.hass.config_entries.async_update_entry(entry, options=options)
 
-    def _anchor_for(self, device: Device) -> FunctionAnchor:
+    def _anchor_for(
+        self, device: Device, previous: FunctionAnchor | None
+    ) -> FunctionAnchor:
         identity = self.node_identity_for(device)
+        if identity is None and previous is not None and previous.id == device["id"]:
+            # No identity this time (the export read failed, or has not run
+            # yet), but the same element as before: keep the address and
+            # location it was anchored with. Dropping them would quietly turn
+            # off pairing a later rename combined with re-provisioning.
+            return previous
         return FunctionAnchor(
             id=str(device["id"]),
             mac=identity.mac if identity is not None else None,
@@ -976,6 +1043,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
     @callback
     def _anchor_document(self) -> dict[str, Any]:
+        self._anchor_save_pending = False
         return {
             "functions": {
                 slug: asdict(anchor) for slug, anchor in self.function_anchors.items()
@@ -2602,6 +2670,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if self.websocket is not None and not self.websocket.closed:
             await self.websocket.close()
         self.websocket = None
+        # Write a pending anchor save now rather than from a timer that
+        # outlives the entry: removing the entry deletes the store right after
+        # this unload, and the old timer (or the final-write listener) would
+        # then write it back — a store file no entry ever deletes again.
+        if self._anchor_save_pending and self._anchor_store is not None:
+            await self._anchor_store.async_save(self._anchor_document())
 
     async def send_websocket_message(self, message: dict[str, Any]) -> None:
         """Send a message via WebSocket."""

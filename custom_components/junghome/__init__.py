@@ -203,6 +203,14 @@ def _register_capability_reload(
                     ", ".join(sorted(labels)),
                     slug,
                 )
+        # A rename followed in this very adoption (``follow_renames`` runs
+        # before the listeners) keeps its entities, so it keeps its baseline:
+        # seeding the new slug from this list would swallow a capability
+        # change arriving in the same adoption. (A change already pending
+        # under the old slug starts its confirmation over: one adoption late.)
+        for new_slug, old_slug in coordinator.followed_renames.items():
+            if old_slug in capability_signatures:
+                capability_signatures[new_slug] = capability_signatures.pop(old_slug)
         changed = False
         candidates: dict[str, tuple[str | None, frozenset[str]]] = {}
         for device in coordinator.data:
