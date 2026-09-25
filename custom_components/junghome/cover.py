@@ -51,7 +51,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import CONF_INVERTED_COVERS, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity
+from .entity import JungHomeEntity, claim_new_entity, entry_unloading
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -118,6 +118,8 @@ async def async_setup_entry(
     @callback
     def _discover_covers() -> None:
         """Add entities for any covers not yet created (handles devices added later)."""
+        if entry_unloading(entry):
+            return
         new_entities: list[JungHomeCover] = []
         for device in coordinator.data or []:
             if device.get("type") not in ("Position", "PositionAndAngle"):
@@ -139,7 +141,7 @@ async def async_setup_entry(
                 JungHomeCover(coordinator, device, level_dp, inverted=uid in inverted)
             )
         if new_entities:
-            async_add_entities(new_entities, update_before_add=True)
+            async_add_entities(new_entities)
 
     _discover_covers()
     entry.async_on_unload(coordinator.async_add_listener(_discover_covers))

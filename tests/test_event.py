@@ -769,8 +769,19 @@ def test_hold_copy_target_window() -> None:
 # --- Firmware-aware suppression default (verbose device endpoint) ------------
 
 
-async def test_button_on_pre_doubling_firmware_is_not_suppressed(
-    hass: HomeAssistant, freezer: FrozenDateTimeFactory, bus_events
+@pytest.mark.parametrize(
+    ("revision", "clicks"),
+    [
+        ([2, 1, 4, 0], 2),  # pre-2.2.0: exempt, two pairs are two clicks
+        ([2, 2, 0, 2], 1),  # what every real button reports: the copy is dropped
+    ],
+)
+async def test_suppression_follows_the_button_firmware(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    bus_events,
+    revision: list[int],
+    clicks: int,
 ) -> None:
     """A button the gateway reports at firmware < 2.2.0 reports each tap once.
 
@@ -778,11 +789,7 @@ async def test_button_on_pre_doubling_firmware_is_not_suppressed(
     from it are two clicks (the old-firmware double-tap). A revision at or
     above 2.2.0, or none at all, keeps the copy dropped.
     """
-    from custom_components.junghome.coordinator import (  # noqa: PLC0415
-        JungHomeDataUpdateCoordinator,
-    )
-
-    old_firmware = [
+    firmware = [
         {
             "device_id": "idrock1",
             "device_type": "PushButton",
@@ -790,7 +797,7 @@ async def test_button_on_pre_doubling_firmware_is_not_suppressed(
             "property": {
                 "software_revision": {
                     "state_type": "software_revision",
-                    "value": [2, 1, 4, 0],
+                    "value": revision,
                 }
             },
         }
@@ -798,9 +805,11 @@ async def test_button_on_pre_doubling_firmware_is_not_suppressed(
     with patch.object(
         JungHomeDataUpdateCoordinator,
         "_fetch_devices_verbose_from_api",
-        AsyncMock(return_value=old_firmware),
+        AsyncMock(return_value=firmware),
     ):
         entry = await _setup_with_options(hass, {})
     await _Rocker(hass, freezer, entry.runtime_data).tap()
-    assert bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * 2
+    assert (
+        bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * clicks
+    )
     await hass.config_entries.async_unload(entry.entry_id)

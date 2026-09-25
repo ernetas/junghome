@@ -1891,14 +1891,11 @@ async def test_runtime_added_device_is_placed_on_the_next_dispatch(
 
     No walk the adoption itself triggers can place the new device, because its
     registry entry does not exist yet during any of them: the adoption
-    dispatch runs the assigner before the platforms' scheduled entity-add task,
-    and the refresh HA core requests while adding the entity
-    (``update_before_add`` → ``async_device_update`` →
-    ``async_request_refresh``) runs BEFORE the device is registered. The
-    assigner therefore leaves the generation unrecorded once, so the very next
-    dispatch — typically the new device's own first value pushes, seconds
-    away — retries the walk and places it, instead of waiting out the 60 s
-    poll.
+    dispatch runs the assigner before the platforms' scheduled entity-add
+    task registers the device. The assigner therefore leaves the generation
+    unrecorded once, so the very next dispatch — typically the new device's
+    own first value pushes, seconds away — retries the walk and places it,
+    instead of waiting out the 60 s poll.
     """
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -3188,9 +3185,8 @@ async def _poll(
 ) -> None:
     """Poll ``devices`` from the gateway ``times`` times, off the network.
 
-    Patched for the whole loop rather than adopted directly: a device that
-    appears in a poll is added with ``update_before_add``, which requests a
-    refresh of its own — that refresh must read the same list.
+    Patched for the whole loop rather than adopted directly, so any refresh
+    an adoption itself requests reads the same list.
     """
     with patch.object(
         coordinator,
@@ -4002,6 +3998,56 @@ async def test_inverted_cover_renamed_while_ha_was_down(
         await hass.async_block_till_done()
 
 
+async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
+    hass: HomeAssistant,
+) -> None:
+    """Two gateways with the same label share one device before HA 2026.9.
+
+    The pruner of the gateway that lost the function detaches its own entry
+    (and its entities); the other gateway's entities stay.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="5.6.7.8",
+        data={CONF_HOST: "5.6.7.8", CONF_TOKEN: "tok"},
+    )
+    other.add_to_hass(hass)
+    other_devices = [
+        {
+            "id": "idotherhall",
+            "type": "OnOff",
+            "label": "Hall Light",
+            "datapoints": [
+                {
+                    "id": "idotherhall-002",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                }
+            ],
+        }
+    ]
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(other_devices, None):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(other.entry_id)
+        await hass.async_block_till_done()
+    shared = _device(hass, "Hall Light")
+    assert shared.config_entries == {entry.entry_id, other.entry_id}
+    ent_reg = er.async_get(hass)
+    without = [d for d in _identified_devices() if d["id"] != HALL_LIGHT_ID]
+    await _poll(hass, entry.runtime_data, without, times=STALE_DEVICE_PRUNE_MISSES)
+
+    device = dr.async_get(hass).async_get(shared.id)
+    assert device is not None
+    assert device.config_entries == {other.entry_id}
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_001") is None
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_002")
+    for loaded in (entry, other):
+        await hass.config_entries.async_unload(loaded.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_a_swapped_node_replaces_the_bluetooth_connection(
     hass: HomeAssistant,
 ) -> None:
@@ -4283,9 +4329,10 @@ async def test_setup_survives_one_malformed_device_from_the_gateway(
         assert hass.states.get("binary_sensor.jung_home_gateway_connection") is not None
         assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert "Error while setting up junghome platform" not in caplog.text
-        # One WARNING per adoption (setup polls twice: the first refresh and
-        # the one `update_before_add` queues), each naming the count only.
+        # One WARNING per adoption, each naming the count only. Setup polls
+        # once: the platforms add from the adopted list, no refresh of their own.
         repairs = [r for r in caplog.records if "malformed item(s)" in r.getMessage()]
+        assert aioclient_mock.call_count == 1
         assert len(repairs) == aioclient_mock.call_count
         assert {r.getMessage() for r in repairs} == {repairs[0].getMessage()}
         assert "Fuzz" not in caplog.text
@@ -4438,5 +4485,102 @@ async def test_hub_keeps_its_version_when_the_setup_time_read_fails(
         hub = find_device(hass, gateway_device_id(entry))
         assert hub is not None
         assert hub.sw_version == "2.1.3 (2840)"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+# --- A reload started inside an adoption ------------------------------------
+#
+# The id-churn check and the capability watcher schedule a reload from inside
+# a device-list adoption, and it runs eagerly up to its first suspension: the
+# platforms are reset while their discovery listeners are still attached. A
+# device new in that same list must not be added to the dead platform.
+
+
+def _garden(value: str = "0") -> dict:
+    return {
+        "id": "idgarden",
+        "type": "OnOff",
+        "label": "Garden",
+        "datapoints": [
+            {
+                "id": "idgarden-001",
+                "type": "switch",
+                "values": [{"key": "switch", "value": value}],
+            }
+        ],
+    }
+
+
+def _live_light(hass: HomeAssistant, entity_id: str) -> JungHomeLight:
+    entity = hass.data[DATA_INSTANCES]["light"].get_entity(entity_id)
+    assert isinstance(entity, JungHomeLight)
+    return entity
+
+
+async def test_device_new_in_an_id_churn_adoption_joins_the_reloaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Id churn reloads; a device new in the same list lives on the new coordinator."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    devices = _identified_devices()
+    orphan = next(d for d in devices if d["id"] == "idorphan")
+    orphan["id"] = "idorphan2"
+    orphan["datapoints"][0]["id"] = "idorphan2-001"
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs([*devices, _garden("0")], _project_export()):
+            stack.enter_context(stub)
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        reloaded = entry.runtime_data
+        assert reloaded is not coordinator, "id churn reloads"
+        assert _live_light(hass, "light.garden").coordinator is reloaded
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs([*devices, _garden("1")], _project_export()):
+            stack.enter_context(stub)
+        await reloaded.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get("light.garden").state == "on"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_device_new_in_a_capability_reload_broadcast_joins_the_reloaded_entry(
+    hass: HomeAssistant,
+) -> None:
+    """A confirmed capability change and a new device in one `functions` broadcast."""
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    changed = _identified_devices()
+    light = next(d for d in changed if d["id"] == HALL_LIGHT_ID)
+    light["datapoints"].append(
+        {
+            "id": f"{HALL_LIGHT_ID}-002",
+            "type": "brightness",
+            "values": [{"key": "brightness", "value": "50"}],
+        }
+    )
+    with_garden = [*copy.deepcopy(changed), _garden()]
+
+    async def slow_fetch(*_args: object, **_kwargs: object) -> list[dict]:
+        await asyncio.sleep(0)  # a real HTTP round trip suspends
+        return copy.deepcopy(with_garden)
+
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(with_garden, _project_export()):
+            stack.enter_context(stub)
+        stack.enter_context(
+            patch.object(
+                JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", slow_fetch
+            )
+        )
+        coordinator._handle_functions_broadcast(copy.deepcopy(changed))  # 1st sighting
+        await hass.async_block_till_done()
+        coordinator._handle_functions_broadcast(with_garden)  # confirms, adds Garden
+        await hass.async_block_till_done()
+        reloaded = entry.runtime_data
+        assert reloaded is not coordinator, "the capability change reloads"
+        assert _live_light(hass, "light.garden").coordinator is reloaded
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()

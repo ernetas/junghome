@@ -1933,12 +1933,8 @@ async def test_functions_broadcast_with_a_malformed_device_is_still_adopted(
     caplog.set_level(logging.WARNING)
     coordinator = init_integration.runtime_data
     frame = {"type": "functions", "data": [*deepcopy(PRISTINE), malformed_device(name)]}
-    # Discovering the new device requests a refresh (`update_before_add`),
-    # which the mocked poll would answer with the fixture list, replacing the
-    # adopted one before it can be read; keep the adoption observable.
-    with patch.object(coordinator, "async_request_refresh", AsyncMock()):
-        coordinator._dispatch_text_frame(json.dumps(frame))
-        await hass.async_block_till_done()
+    coordinator._dispatch_text_frame(json.dumps(frame))
+    await hass.async_block_till_done()
 
     assert [d["id"] for d in coordinator.data] == [
         *(d["id"] for d in PRISTINE),

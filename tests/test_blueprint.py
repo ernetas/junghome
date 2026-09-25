@@ -355,9 +355,8 @@ async def _live_rocker(
     Old-firmware conditions: duplicate suppression off (one pair per tap is
     what such firmware sends, and the legacy double-click path requires it).
     Every action fires a `probe_action` bus event naming the branch. The
-    gateway mocks stay in place for the whole test: the clock is driven past
-    the refresh debouncer's 10 s cooldown, which releases the poll that
-    `update_before_add` queued at setup.
+    gateway mocks stay in place for the whole test: the test drives the clock
+    forward, and any poll that releases must still hit a mock.
     """
     _install_blueprint(hass)
     entry = MockConfigEntry(

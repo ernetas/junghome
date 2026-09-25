@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 # recalled scene's entity without importing this platform module.
 from .const import DOMAIN, scene_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
+from .entity import entry_unloading
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +84,8 @@ async def async_setup_entry(
         scenes have no backing device, so they are added and removed here as the
         gateway's ``scenes`` / ``scenes-deleted`` broadcasts change the list.
         """
+        if entry_unloading(entry):
+            return
         current: dict[str, str] = {}  # unique_id -> label
         for scene in coordinator.scenes or []:
             label = scene.get("label")
