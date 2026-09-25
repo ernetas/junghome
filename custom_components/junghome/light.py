@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import datapoint_bool, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity
+from .entity import JungHomeEntity, claim_new_entity, entry_unloading
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +48,8 @@ async def async_setup_entry(
     @callback
     def _discover_lights() -> None:
         """Add entities for any lights not yet created (handles devices added later)."""
+        if entry_unloading(config_entry):
+            return
         new_entities: list[JungHomeLight] = []
         for device in coordinator.data or []:
             if device.get("type") in ("OnOff", "DimmerLight", "ColorLight"):
@@ -60,7 +62,7 @@ async def async_setup_entry(
                             JungHomeLight(coordinator, device, datapoint)
                         )
         if new_entities:
-            async_add_entities(new_entities, update_before_add=True)
+            async_add_entities(new_entities)
 
     _discover_lights()
     config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))

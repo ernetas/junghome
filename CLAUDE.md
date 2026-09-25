@@ -333,9 +333,11 @@ instead of re-deriving:
   `.storage/junghome.<entry_id>.functions`) and treats a slug with no
   registry device whose element carries a vanished slug's anchor as a
   rename: the device identifier, every entity `unique_id` (prefix rewrite,
-  all-or-nothing after checking each target is free), the discovery `known`
-  sets and the `inverted_covers` option (which reloads the entry) are
-  rewritten in place; entity ids stay. The function id does not change on a
+  all-or-nothing after checking each target is free and claiming the new
+  identifier first — before HA 2026.9 another gateway's device may hold it),
+  the discovery `known` sets, the area assigner's once-only record and the
+  `inverted_covers` option (snapshot included, so no reload) are rewritten
+  in place; entity ids stay. The function id does not change on a
   rename (it is `md5(UUID + location)`), which is the id-based half; MAC +
   location pairs a rename combined with re-provisioning, but only at setup
   (live, the new id has no identity yet — it becomes a new device).
@@ -377,7 +379,12 @@ instead of re-deriving:
   a device's datapoint-type set changes — once the new set has been seen on
   two consecutive adoptions — so features are rebuilt (the
   tilt-lost-after-update regression). Gate capabilities on datapoint
-  *presence*, never on the function-type name.
+  *presence*, never on the function-type name. That reload (like the
+  id-churn one) starts *inside* an adoption and runs eagerly: every
+  `_discover_*` listener returns early while the entry is
+  `UNLOAD_IN_PROGRESS` (`entity.entry_unloading`), and the platforms add
+  without `update_before_add` — either gap put a device new in that list on
+  the dead coordinator (an orphan frozen at its first state).
 - **Push handling must not starve the poll.** The per-datapoint push path
   deliberately avoids `async_set_updated_data` (it re-arms the poll a full
   interval out; a chatty gateway would defer polling forever — the old

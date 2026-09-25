@@ -203,6 +203,14 @@ def _register_capability_reload(
                     ", ".join(sorted(labels)),
                     slug,
                 )
+        # A rename followed in this very adoption (``follow_renames`` runs
+        # before the listeners) keeps its entities, so it keeps its baseline:
+        # seeding the new slug from this list would swallow a capability
+        # change arriving in the same adoption. (A change already pending
+        # under the old slug starts its confirmation over: one adoption late.)
+        for new_slug, old_slug in coordinator.followed_renames.items():
+            if old_slug in capability_signatures:
+                capability_signatures[new_slug] = capability_signatures.pop(old_slug)
         changed = False
         candidates: dict[str, tuple[str | None, frozenset[str]]] = {}
         for device in coordinator.data:
@@ -304,7 +312,7 @@ def _make_stale_device_pruner(
                 ", ".join(sorted(slugs)),
                 STALE_DEVICE_PRUNE_MISSES,
             )
-            _remove_device(dev_reg, coordinator, device_entry.id)
+            _remove_device(dev_reg, coordinator, device_entry, entry.entry_id)
             pruned = True
         if pruned:
             # A pruned device may have held its node's Bluetooth connection —
@@ -319,7 +327,8 @@ def _make_stale_device_pruner(
 def _remove_device(
     dev_reg: dr.DeviceRegistry,
     coordinator: JungHomeDataUpdateCoordinator,
-    device_id: str,
+    device_entry: dr.DeviceEntry,
+    entry_id: str,
 ) -> None:
     """Remove one of this entry's devices, forgetting its ids first.
 
@@ -327,12 +336,22 @@ def _remove_device(
     dropped from the platforms' discovery sets BEFORE it is removed, so if the
     gateway reports it again the platforms treat it as new and re-create its
     entities (otherwise the stale ``known`` ids would suppress the re-add
-    until an entry reload). ``async_remove_device`` rather than detaching the
-    entry: a device of this integration belongs to its entry alone, and the
-    detach form is deprecated from HA 2026.9 (a device has one entry there).
+    until an entry reload). ``async_remove_device``, not detaching the entry:
+    the detach form is deprecated from HA 2026.9, where a device has one entry.
+
+    Except for a device another gateway's entry shares. Before 2026.9 device
+    identifiers are registry-wide, so two gateways each with a function of the
+    same label (the documented "labels must be distinct across gateways"
+    limitation) register ONE device; removing it would take the other
+    gateway's entities with it, and its discovery would never re-add them.
+    Only this entry is detached from such a device (and its entities with it).
+    A branch 2026.9 cannot reach.
     """
-    coordinator.forget_device_unique_ids(device_id)
-    dev_reg.async_remove_device(device_id)
+    coordinator.forget_device_unique_ids(device_entry.id)
+    if device_entry.config_entries - {entry_id}:
+        dev_reg.async_update_device(device_entry.id, remove_config_entry_id=entry_id)
+        return
+    dev_reg.async_remove_device(device_entry.id)
 
 
 def _make_area_assigner(
@@ -352,10 +371,8 @@ def _make_area_assigner(
     last_generation: int | None = None
     # Adoptions granted their one follow-up walk (see the retry note at the
     # end of `_assign_areas`): a device that arrives *in* an adoption has no
-    # registry entry during any walk the adoption itself can trigger — not
-    # this listener's (discovery has only *scheduled* entity creation), and
-    # not the one from the refresh HA core requests while adding the entity
-    # either (`update_before_add` runs that BEFORE registering the device) —
+    # registry entry during any walk the adoption itself can trigger —
+    # discovery has only *scheduled* entity creation when this listener runs —
     # so without a retry the placement would wait out the next scheduled poll.
     retried_generation: int | None = None
 
@@ -510,8 +527,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
     # than lazily (via the connectivity sensor) guarantees it already exists when
     # those devices reference it, and gives entities its registry id for the
     # ``via_device_id`` link (HA 2026.8+; the ``via_device`` tuple is deprecated
-    # in 2026.9 and its deprecation report raised under ``update_before_add``
-    # — issue #207).
+    # in 2026.9, and its deprecation report raised under the
+    # ``update_before_add`` the platforms used then — issue #207).
     hub_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         **gateway_device_info(entry, coordinator.gateway_version),
@@ -786,7 +803,9 @@ async def async_remove_config_entry_device(
     if slugs & live:
         return False
     if coordinator is not None:
-        _remove_device(dr.async_get(hass), coordinator, device_entry.id)
+        _remove_device(
+            dr.async_get(hass), coordinator, device_entry, config_entry.entry_id
+        )
         coordinator.apply_node_identities()
     return True
 

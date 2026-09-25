@@ -63,7 +63,7 @@ from .const import (
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity
+from .entity import JungHomeEntity, claim_new_entity, entry_unloading
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -176,6 +176,8 @@ async def async_setup_entry(
     @callback
     def _discover_events() -> None:
         """Add entities for any events not yet created (handles devices added later)."""
+        if entry_unloading(entry):
+            return
         new_entities = []
         for device in coordinator.data or []:
             if device.get("type") == "RockerSwitch":
@@ -203,7 +205,7 @@ async def async_setup_entry(
                             JungHomeEventEntity(coordinator, device, datapoint, tracker)
                         )
         if new_entities:
-            async_add_entities(new_entities, update_before_add=True)
+            async_add_entities(new_entities)
 
     _discover_events()
     entry.async_on_unload(coordinator.async_add_listener(_discover_events))
