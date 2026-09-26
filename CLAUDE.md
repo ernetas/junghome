@@ -18,7 +18,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
     enrichments read after the first refresh: node identities from the
     project export (`node_identities`) and device properties from the
     deprecated verbose device endpoint (`device_properties`: energy counters
-    re-read every 5 min, firmware revisions, reachability). And rename
+    re-read every 5 min — the gateway itself refreshes them hourly — firmware
+    revisions, reachability). And rename
     following (`follow_renames`, on every device-list adoption before the
     listeners run): `function_anchors` (slug → `models.FunctionAnchor`:
     function id, node MAC, element location), persisted in the entry's

@@ -488,7 +488,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # capability watcher in __init__.py) compare this instead of counting
         # raw dispatches: pushes, scenes broadcasts and the WS-drop
         # notification all call async_update_listeners too, and counting those
-        # shrank the pruner's 10-poll window during a WS flap or a
+        # shrank the pruner's 10-adoption window during a WS flap or a
         # scene-editing session while a device was transiently missing from
         # one poll — and re-running the assigner/watcher's O(devices) walks on
         # every push was steady waste on a chatty gateway.
