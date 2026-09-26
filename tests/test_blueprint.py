@@ -25,7 +25,7 @@ from homeassistant.components.automation.config import (
 )
 from homeassistant.components.blueprint.models import Blueprint, BlueprintInputs
 from homeassistant.const import CONF_HOST, CONF_TOKEN
-from homeassistant.core import HomeAssistant, State
+from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers.template import Template
 from homeassistant.setup import async_setup_component
 from homeassistant.util.yaml import load_yaml_dict
@@ -379,9 +379,16 @@ async def _live_rocker(
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         fired: list[str] = []
-        hass.bus.async_listen(
-            "probe_action", lambda event: fired.append(event.data["kind"])
-        )
+
+        # A @callback runs in the event loop as the event fires. A plain
+        # function is run in the executor, so whether it has recorded the
+        # action within `settle()`'s loop turns was down to thread scheduling —
+        # a slow CI runner lost that race.
+        @callback
+        def _record(event: Event) -> None:
+            fired.append(event.data["kind"])
+
+        hass.bus.async_listen("probe_action", _record)
 
         def _action(kind: str) -> list[dict]:
             return [{"event": "probe_action", "event_data": {"kind": kind}}]
