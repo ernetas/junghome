@@ -167,8 +167,8 @@ def test_gateway_configuration_url_is_the_gateway_web_page():
     cannot make one must yield None rather than fail setup.
     """
     assert gateway_configuration_url("192.168.1.50") == "https://192.168.1.50/"
-    assert gateway_configuration_url(" junghome-0022d1059602.local ") == (
-        "https://junghome-0022d1059602.local/"
+    assert gateway_configuration_url(" junghome-02005ec0ffee.local ") == (
+        "https://junghome-02005ec0ffee.local/"
     )
     assert gateway_configuration_url("fe80::1") == "https://[fe80::1]/"
     assert gateway_configuration_url("[fe80::1]") == "https://[fe80::1]/"
