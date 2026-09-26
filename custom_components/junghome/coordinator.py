@@ -2563,7 +2563,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 "refresh (a device may have just been added)",
                 datapoint_id,
             )
-            self.hass.async_create_task(self.async_request_refresh())
+            if self.config_entry is not None:
+                # Tied to the entry, so an unload cancels it rather than
+                # letting it adopt a list after the coordinator has stopped.
+                self.config_entry.async_create_background_task(
+                    self.hass,
+                    self.async_request_refresh(),
+                    name="junghome_unmatched_push_refresh",
+                )
         else:
             _LOGGER.debug("No matching datapoint found for id %s", datapoint_id)
 

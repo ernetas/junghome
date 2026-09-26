@@ -3869,6 +3869,68 @@ async def test_a_refresh_outliving_the_removal_leaves_no_store(
     assert _anchors_key(entry) not in hass_storage
 
 
+def _with_a_new_lamp() -> list[dict]:
+    """The device list with a function the app has just added."""
+    return [
+        *_identified_devices(),
+        {
+            "id": "idnewlamp",
+            "type": "OnOff",
+            "label": "New Lamp",
+            "datapoints": [
+                {
+                    "id": "idnewlamp-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "1"}],
+                }
+            ],
+        },
+    ]
+
+
+async def test_unmatched_push_refresh_is_cancelled_with_the_entry(
+    hass: HomeAssistant,
+) -> None:
+    """The discovery refresh an unknown push requests is an entry task.
+
+    A plain hass task outlived the unload and adopted its list into the
+    stopped coordinator.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    coordinator._debounced_refresh.async_cancel()  # no cooldown: runs at once
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_fetch(host: str, token: str) -> list[dict]:
+        started.set()
+        try:
+            await gate.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return _with_a_new_lamp()
+
+    coordinator._fetch_devices_from_api = slow_fetch
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idnewlamp-001",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+        }
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    await hass.config_entries.async_unload(entry.entry_id)
+    was_cancelled = cancelled.is_set()
+    gate.set()  # let an escaped refresh finish instead of hanging teardown
+    await hass.async_block_till_done()
+    assert was_cancelled
+
+
+
 def _awning(label: str = "Patio Awning", function_id: str = "idawning") -> dict:
     """A position-only cover (an awning once the user flags it inverted)."""
     return {
