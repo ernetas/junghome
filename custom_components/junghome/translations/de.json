@@ -183,6 +183,12 @@
       "frequency": { "name": "Frequenz" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Beleuchtungsstärke" },
+      "input_power": { "name": "Eingangsleistung des Geräts" },
+      "load_power": { "name": "Wirkleistung (Lastseite)" },
+      "output_current": { "name": "Ausgangsstrom" },
+      "input_current": { "name": "Eingangsstrom" },
+      "output_voltage": { "name": "Ausgangsspannung" },
+      "ambient_temperature": { "name": "Umgebungstemperatur" },
       "present_illuminance": { "name": "Aktuelle Beleuchtungsstärke" },
       "humidity": { "name": "Luftfeuchtigkeit" }
     },

@@ -183,6 +183,12 @@
       "frequency": { "name": "Częstotliwość" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Natężenie oświetlenia" },
+      "input_power": { "name": "Moc wejściowa urządzenia" },
+      "load_power": { "name": "Moc czynna (strona obciążenia)" },
+      "output_current": { "name": "Prąd wyjściowy" },
+      "input_current": { "name": "Prąd wejściowy" },
+      "output_voltage": { "name": "Napięcie wyjściowe" },
+      "ambient_temperature": { "name": "Temperatura otoczenia" },
       "present_illuminance": { "name": "Bieżące natężenie oświetlenia" },
       "humidity": { "name": "Wilgotność" }
     },

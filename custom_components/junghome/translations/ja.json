@@ -183,6 +183,12 @@
       "frequency": { "name": "周波数" },
       "temperature": { "name": "温度" },
       "illuminance": { "name": "照度" },
+      "input_power": { "name": "機器の入力電力" },
+      "load_power": { "name": "有効電力（負荷側）" },
+      "output_current": { "name": "出力電流" },
+      "input_current": { "name": "入力電流" },
+      "output_voltage": { "name": "出力電圧" },
+      "ambient_temperature": { "name": "周囲温度" },
       "present_illuminance": { "name": "現在の照度" },
       "humidity": { "name": "湿度" }
     },

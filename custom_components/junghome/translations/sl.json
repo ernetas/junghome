@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvenca" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Osvetljenost" },
+      "input_power": { "name": "Vhodna moč naprave" },
+      "load_power": { "name": "Delovna moč (stran bremena)" },
+      "output_current": { "name": "Izhodni tok" },
+      "input_current": { "name": "Vhodni tok" },
+      "output_voltage": { "name": "Izhodna napetost" },
+      "ambient_temperature": { "name": "Temperatura okolice" },
       "present_illuminance": { "name": "Trenutna osvetljenost" },
       "humidity": { "name": "Vlažnost" }
     },

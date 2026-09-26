@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekans" },
       "temperature": { "name": "Sıcaklık" },
       "illuminance": { "name": "Aydınlık" },
+      "input_power": { "name": "Cihaz giriş gücü" },
+      "load_power": { "name": "Aktif güç (yük tarafı)" },
+      "output_current": { "name": "Çıkış akımı" },
+      "input_current": { "name": "Giriş akımı" },
+      "output_voltage": { "name": "Çıkış gerilimi" },
+      "ambient_temperature": { "name": "Ortam sıcaklığı" },
       "present_illuminance": { "name": "Mevcut aydınlık düzeyi" },
       "humidity": { "name": "Nem" }
     },

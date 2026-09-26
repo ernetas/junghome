@@ -183,6 +183,12 @@
       "frequency": { "name": "Taajuus" },
       "temperature": { "name": "Lämpötila" },
       "illuminance": { "name": "Valaistusvoimakkuus" },
+      "input_power": { "name": "Laitteen ottoteho" },
+      "load_power": { "name": "Pätöteho (kuorman puoli)" },
+      "output_current": { "name": "Lähtövirta" },
+      "input_current": { "name": "Tulovirta" },
+      "output_voltage": { "name": "Lähtöjännite" },
+      "ambient_temperature": { "name": "Ympäristön lämpötila" },
       "present_illuminance": { "name": "Nykyinen valaistusvoimakkuus" },
       "humidity": { "name": "Kosteus" }
     },

@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvencia" },
       "temperature": { "name": "Hőmérséklet" },
       "illuminance": { "name": "Megvilágítás" },
+      "input_power": { "name": "Az eszköz bemeneti teljesítménye" },
+      "load_power": { "name": "Hatásos teljesítmény (terhelésoldal)" },
+      "output_current": { "name": "Kimeneti áramerősség" },
+      "input_current": { "name": "Bemeneti áramerősség" },
+      "output_voltage": { "name": "Kimeneti feszültség" },
+      "ambient_temperature": { "name": "Környezeti hőmérséklet" },
       "present_illuminance": { "name": "Aktuális megvilágítás" },
       "humidity": { "name": "Páratartalom" }
     },

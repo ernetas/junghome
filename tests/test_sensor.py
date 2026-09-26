@@ -26,7 +26,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import DOMAIN, is_presence_quantity
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.sensor import (
     JungHomeQuantity,
@@ -38,9 +38,8 @@ from tests.conftest import _fake_run_websocket, bare_coordinator
 async def test_sensor_native_value_non_numeric_returns_none(
     hass: HomeAssistant, init_integration
 ) -> None:
-    """A non-numeric value on a unitless MEASUREMENT sensor yields native_value None."""
+    """A non-numeric value on a numeric sensor yields native_value None."""
     coordinator = init_integration.runtime_data
-    # sensor.boiler_status is the unknown-unit ("?") MEASUREMENT sensor.
     coordinator._handle_websocket_message(
         {
             "type": "datapoint",
@@ -52,7 +51,7 @@ async def test_sensor_native_value_non_numeric_returns_none(
     )
     await hass.async_block_till_done()
     # float("not-a-number") -> ValueError -> native_value None -> "unknown".
-    assert hass.states.get("sensor.boiler_status").state == "unknown"
+    assert hass.states.get("sensor.boiler_active_power_loadside").state == "unknown"
 
 
 async def test_sensor_value_extractor_defensive(hass: HomeAssistant) -> None:
@@ -83,7 +82,7 @@ async def test_measurement_sensor_created(
     hass: HomeAssistant, init_integration
 ) -> None:
     """A Measurement function's quantity surfaces as a sensor (lux -> illuminance)."""
-    state = hass.states.get("sensor.hallway_sensor_illuminance")
+    state = hass.states.get("sensor.hallway_sensor_present_illuminance")
     assert state is not None
     assert state.state == "120.0"
     assert state.attributes["unit_of_measurement"] == "lx"
@@ -98,9 +97,10 @@ async def test_thermostat_room_temperature_is_a_sensor(
     The climate entity shows it as ``current_temperature`` too, but a climate
     attribute has no long-term statistics, so the reading's history died at
     the recorder's purge horizon (issue #189). Same datapoint, same value,
-    named by the ``temperature`` translation; the climate entity is untouched.
+    named by the ``ambient_temperature`` translation; the climate entity is
+    untouched.
     """
-    state = hass.states.get("sensor.living_room_temperature")
+    state = hass.states.get("sensor.living_room_present_ambient_temperature")
     assert state is not None
     assert state.state == "20.0"
     assert state.attributes["unit_of_measurement"] == "°C"
@@ -229,11 +229,32 @@ async def test_presence_labelled_quantity_still_goes_to_binary_sensor(
 
 _MEAS = SensorStateClass.MEASUREMENT
 _TOTAL = SensorStateClass.TOTAL_INCREASING
+_ELECTRICAL_DIAGNOSTICS = (
+    SensorDeviceClass.VOLTAGE,
+    SensorDeviceClass.CURRENT,
+    SensorDeviceClass.FREQUENCY,
+)
 
 
 @pytest.mark.parametrize(
     ("label", "unit", "translation_key", "device_class", "ha_unit"),
     [
+        # Every (label, unit) pair the current firmware can put on a numeric
+        # quantity datapoint, spelled exactly as it does: the SIG name of the
+        # sensor state's property id (trailing space and all) and the state's
+        # own unit (models/device_sensor_states/*State.js). A metering socket:
+        ("Present Device Input Power ", "W", "input_power", SensorDeviceClass.POWER, UnitOfPower.WATT),
+        ("Active Power Loadside ", "W", "load_power", SensorDeviceClass.POWER, UnitOfPower.WATT),
+        ("Present Output Current ", "A", "output_current", SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE),
+        # (these two are `visible: false`, so /functions/ omits them today)
+        ("Present Input Current ", "A", "input_current", SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE),
+        ("Present Output Voltage ", "V", "output_voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT),
+        # A thermostat's room temperature and a presence detector's ambient
+        # light ("Presence Detected " is binary_sensor's — see below).
+        ("Present Ambient Temperature ", "°C", "ambient_temperature", SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS),
+        ("Present Illuminance ", "lux", "present_illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
+        # Generic labels no known firmware emits, kept matching for anyone
+        # they ever named (and as the unit base for an unknown label).
         ("Power ", "W", "power", SensorDeviceClass.POWER, UnitOfPower.WATT),
         ("power", " kW ", "power", SensorDeviceClass.POWER, UnitOfPower.KILO_WATT),
         ("Energy", "kWh", "energy", SensorDeviceClass.ENERGY, UnitOfEnergy.KILO_WATT_HOUR),
@@ -241,13 +262,8 @@ _TOTAL = SensorStateClass.TOTAL_INCREASING
         ("Voltage", "V", "voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT),
         ("Current", "A", "current", SensorDeviceClass.CURRENT, UnitOfElectricCurrent.AMPERE),
         ("Frequency", "Hz", "frequency", SensorDeviceClass.FREQUENCY, UnitOfFrequency.HERTZ),
-        ("Temperature ", "°C", "temperature", SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS),
         ("Temperature", "C", "temperature", SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS),
-        ("Illuminance ", "lux", "illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
         ("Illuminance", "lx", "illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
-        # The BWM detector's ambient reading: its own key, so the English
-        # name stays the gateway's label and other locales translate it.
-        ("Present Illuminance ", "lux", "present_illuminance", SensorDeviceClass.ILLUMINANCE, LIGHT_LUX),
         ("Humidity", "%", "humidity", SensorDeviceClass.HUMIDITY, PERCENTAGE),
     ],
 )  # fmt: skip
@@ -275,15 +291,41 @@ def test_known_quantity_gets_a_translated_description(
     assert description.state_class is (_TOTAL if translation_key == "energy" else _MEAS)
     assert description.suggested_display_precision is not None
     assert description.entity_registry_enabled_default is (
-        translation_key not in ("voltage", "current", "frequency")
+        device_class not in _ELECTRICAL_DIAGNOSTICS
     )
+
+
+def test_firmware_labels_have_distinct_translation_keys() -> None:
+    """Two readings of one socket never share a (translated) name."""
+    socket = (
+        ("Present Device Input Power ", "W"),
+        ("Active Power Loadside ", "W"),
+        ("Present Output Current ", "A"),
+        ("Present Input Current ", "A"),
+        ("Present Output Voltage ", "V"),
+    )
+    keys = set()
+    for label, unit in socket:
+        description = quantity_description(label, unit)
+        assert description is not None
+        keys.add(description.translation_key)
+    assert len(keys) == len(socket)
+
+
+def test_presence_detected_is_not_a_numeric_quantity() -> None:
+    """The eighth firmware pair — the detector's 0/1 flag — is binary_sensor's."""
+    assert is_presence_quantity("Presence Detected ", "")
+    assert quantity_description("Presence Detected ", "") is None
 
 
 @pytest.mark.parametrize(
     ("label", "unit", "device_class", "ha_unit"),
     [
-        # A known unit under a label that is not the quantity's: classes from
-        # the unit, the raw label as the name (today's behaviour).
+        # What the gateway sends for a property id missing from its SIG
+        # table (`DatapointType.Unknown`): classes from the unit, the raw
+        # label as the name.
+        ("unknown", "W", SensorDeviceClass.POWER, UnitOfPower.WATT),
+        # A known unit under a label that is not the quantity's: likewise.
         ("Heating Power", "W", SensorDeviceClass.POWER, UnitOfPower.WATT),
         # ... and never disabled by default, even for a diagnostic unit.
         ("Battery Voltage", "V", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT),
@@ -309,6 +351,20 @@ def test_unknown_label_on_a_known_unit_keeps_the_raw_label(
 def test_unknown_unit_has_no_description(unit: str | None) -> None:
     """An unknown or absent unit is the caller's unitless fallback."""
     assert quantity_description("Status", unit) is None
+
+
+async def test_unknown_unit_warns_once_per_entry(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unmapped unit becomes a unitless sensor and is logged once, not per entity."""
+    coordinator = bare_coordinator(hass)
+    device = {"id": "s", "type": "Socket", "label": "S", "datapoints": []}
+    for index in range(2):
+        dp = {"id": f"s-{index}", "values": [{"key": "quantity", "value": "7"}]}
+        quantity = JungHomeQuantity(coordinator, device, dp, f"Count {index}", "?")
+        assert quantity.entity_description.native_unit_of_measurement is None
+        assert quantity.native_value == 7.0
+    assert caplog.text.count("Unmapped Jung Home quantity unit '?'") == 1
 
 
 def _socket_device(*quantities: tuple[str, str, str]) -> dict:
@@ -337,31 +393,43 @@ async def test_known_quantity_is_named_by_translation(
 ) -> None:
     """A known quantity is named through `entity.sensor.<key>.name`.
 
-    In German the gateway's "Power " becomes "Leistung", while the unique_id
-    is exactly what it was when the raw label was the name — the identity
-    must not move with the naming. (The entity_id of a *new* registration
-    follows Home Assistant's own rule — native-language object ids for the
-    locales it lists — and an existing registration's entity_id is sticky
-    either way, so it is deliberately not pinned here.) A W-unit quantity
-    under any other label keeps that label as its name.
+    In German the socket's "Present Device Input Power " becomes
+    "Eingangsleistung des Geräts" and its "Active Power Loadside " — the
+    second W reading on the same device — "Wirkleistung (Lastseite)", while
+    each unique_id is exactly what it was when the raw label was the name —
+    the identity must not move with the naming. (The entity_id of a *new*
+    registration follows Home Assistant's own rule — native-language object
+    ids for the locales it lists — and an existing registration's entity_id
+    is sticky either way, so it is deliberately not pinned here.) A W-unit
+    quantity under any other label keeps that label as its name.
     """
     hass.config.language = "de"
     await init_platform(
         Platform.SENSOR,
-        [_socket_device(("Power ", "W", "5"), ("Heating Power", "W", "3"))],
+        [
+            _socket_device(
+                ("Present Device Input Power ", "W", "5"),
+                ("Heating Power", "W", "3"),
+                ("Active Power Loadside ", "W", "4"),
+            )
+        ],
     )
 
-    entity_id = entity_registry.async_get_entity_id(
-        Platform.SENSOR, DOMAIN, "boiler_010_power"
-    )
-    assert entity_id is not None
-    power = hass.states.get(entity_id)
-    assert power is not None
-    assert power.attributes["friendly_name"] == "Boiler Leistung"
-    assert power.attributes["device_class"] == "power"
-    entry = entity_registry.async_get(entity_id)
-    assert entry is not None
-    assert entry.translation_key == "power"
+    for unique_id, name, key in (
+        ("boiler_010_present_device_input_power", "Eingangsleistung des Geräts", "input_power"),
+        ("boiler_012_active_power_loadside", "Wirkleistung (Lastseite)", "load_power"),
+    ):  # fmt: skip
+        entity_id = entity_registry.async_get_entity_id(
+            Platform.SENSOR, DOMAIN, unique_id
+        )
+        assert entity_id is not None, unique_id
+        power = hass.states.get(entity_id)
+        assert power is not None
+        assert power.attributes["friendly_name"] == f"Boiler {name}"
+        assert power.attributes["device_class"] == "power"
+        entry = entity_registry.async_get(entity_id)
+        assert entry is not None
+        assert entry.translation_key == key
 
     heating = hass.states.get("sensor.boiler_heating_power")
     assert heating is not None
@@ -376,38 +444,41 @@ async def test_known_quantity_is_named_by_translation(
 async def test_electrical_diagnostics_disabled_only_for_new_registrations(
     hass: HomeAssistant, entity_registry: er.EntityRegistry, init_platform
 ) -> None:
-    """Voltage/current/frequency start disabled — unless already registered.
+    """Voltage/current start disabled — unless already registered.
 
     `entity_registry_enabled_default=False` only applies the first time an
-    entity is registered. An install that already has the voltage sensor
-    (registered before the descriptions existed, enabled) must keep it
-    enabled and reporting; the current and frequency sensors it never had
-    are registered disabled, with no state.
+    entity is registered. Every install that predates the firmware labels
+    already has the socket's output-current sensor, registered enabled (the
+    label then matched no description): it must stay enabled and reporting.
+    Readings it never had are registered disabled, with no state.
     """
     entity_registry.async_get_or_create(
         Platform.SENSOR,
         DOMAIN,
-        "boiler_011_voltage",
-        suggested_object_id="boiler_voltage",
+        "boiler_011_present_output_current",
+        suggested_object_id="boiler_present_output_current",
     )
     entry = await init_platform(
         Platform.SENSOR,
         [
             _socket_device(
-                ("Power ", "W", "5"),
-                ("Voltage", "V", "230"),
-                ("Current", "A", "0.5"),
-                ("Frequency", "Hz", "50"),
+                ("Present Device Input Power ", "W", "5"),
+                ("Present Output Current ", "A", "0.5"),
+                ("Present Output Voltage ", "V", "230"),
+                ("Present Input Current ", "A", "0.6"),
             )
         ],
     )
 
-    assert hass.states.get("sensor.boiler_power").state == "5.0"
-    voltage = entity_registry.async_get("sensor.boiler_voltage")
-    assert voltage is not None
-    assert voltage.disabled_by is None
-    assert hass.states.get("sensor.boiler_voltage").state == "230.0"
-    for object_id in ("boiler_current", "boiler_frequency"):
+    assert hass.states.get("sensor.boiler_present_device_input_power").state == "5.0"
+    current = entity_registry.async_get("sensor.boiler_present_output_current")
+    assert current is not None
+    assert current.disabled_by is None
+    assert hass.states.get("sensor.boiler_present_output_current").state == "0.5"
+    for object_id in (
+        "boiler_present_output_voltage",
+        "boiler_present_input_current",
+    ):
         registered = entity_registry.async_get(f"sensor.{object_id}")
         assert registered is not None, object_id
         assert registered.config_entry_id == entry.entry_id

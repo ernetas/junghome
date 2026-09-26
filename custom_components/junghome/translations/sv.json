@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvens" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Belysningsstyrka" },
+      "input_power": { "name": "Enhetens ineffekt" },
+      "load_power": { "name": "Aktiv effekt (lastsida)" },
+      "output_current": { "name": "Utström" },
+      "input_current": { "name": "Inström" },
+      "output_voltage": { "name": "Utspänning" },
+      "ambient_temperature": { "name": "Omgivningstemperatur" },
       "present_illuminance": { "name": "Aktuell belysningsstyrka" },
       "humidity": { "name": "Luftfuktighet" }
     },

@@ -460,7 +460,10 @@ async def test_event_unavailable_while_websocket_down(
     assert coordinator.last_update_success is True
     assert hass.states.get("event.button_a_up").state == "unavailable"
     # A pure state reader on the same REST signal is unaffected.
-    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        != "unavailable"
+    )
 
     # Reconnect (the real connect path refreshes, which re-dispatches).
     coordinator.ws_connected = True

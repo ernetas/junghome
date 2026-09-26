@@ -21,6 +21,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -211,7 +212,11 @@ async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
 async def test_setup_reads_properties_and_creates_the_energy_sensor(
     hass: HomeAssistant,
 ) -> None:
-    """A socket with the counter gets a TOTAL_INCREASING Wh sensor; a light does not."""
+    """A socket with the counter gets a TOTAL_INCREASING sensor; a light does not.
+
+    The counter is Wh natively; a new registration displays it in kWh (the
+    suggested unit, stored in the entity registry at registration).
+    """
     async with _running(
         hass, [_verbose(SOCKET), _verbose(LIGHT, energy_present=False)]
     ) as entry:
@@ -219,8 +224,8 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
         assert coordinator.device_properties[SOCKET].energy_wh == 209655.0
         state = hass.states.get("sensor.boiler_total_energy")
         assert state is not None
-        assert state.state == "209655.0"
-        assert state.attributes["unit_of_measurement"] == "Wh"
+        assert state.state == "209.655"
+        assert state.attributes["unit_of_measurement"] == "kWh"
         assert state.attributes["device_class"] == "energy"
         assert state.attributes["state_class"] == "total_increasing"
         assert hass.states.get("sensor.hall_light_total_energy") is None
@@ -231,6 +236,33 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
             "software_revision": (2, 2, 0, 1),
             "reachable": True,
         }
+
+
+async def test_counter_registered_before_the_kwh_suggestion_keeps_wh(
+    hass: HomeAssistant, entity_registry: er.EntityRegistry
+) -> None:
+    """The kWh suggestion reaches new registrations only.
+
+    Home Assistant stores a suggested unit when it registers the entity; a
+    counter an install registered while it had none stays in Wh (no
+    ``sensor.private`` option is written for it), so no dashboard or
+    statistic changes unit under the user.
+    """
+    entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "boiler_total_energy",
+        suggested_object_id="boiler_total_energy",
+        unit_of_measurement="Wh",
+    )
+    async with _running(hass, [_verbose(SOCKET)]):
+        state = hass.states.get("sensor.boiler_total_energy")
+        assert state is not None
+        assert state.state == "209655.0"
+        assert state.attributes["unit_of_measurement"] == "Wh"
+        registered = entity_registry.async_get("sensor.boiler_total_energy")
+        assert registered is not None
+        assert "sensor.private" not in registered.options
 
 
 async def test_counter_not_yet_polled_reads_unknown(hass: HomeAssistant) -> None:
@@ -259,7 +291,7 @@ async def test_periodic_refresh_re_reads_each_counter_on_its_own_endpoint(
             assert single.await_count == 1
             assert single.await_args.args[2] == SOCKET
             assert full.await_count == 0
-            assert hass.states.get("sensor.boiler_total_energy").state == "209700.0"
+            assert hass.states.get("sensor.boiler_total_energy").state == "209.7"
             last_updated = hass.states.get("sensor.boiler_total_energy").last_updated
 
             # Same value again: read, nothing dispatched.
@@ -276,7 +308,7 @@ async def test_periodic_refresh_re_reads_each_counter_on_its_own_endpoint(
             single.side_effect = None
             single.return_value = None
             await _tick(hass, freezer)
-            assert hass.states.get("sensor.boiler_total_energy").state == "209700.0"
+            assert hass.states.get("sensor.boiler_total_energy").state == "209.7"
             assert single.await_count == 4
     # Unloaded: the timer is gone.
     with patch.object(coordinator, "_fetch_device_verbose_from_api", single):

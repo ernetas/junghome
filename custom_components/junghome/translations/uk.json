@@ -183,6 +183,12 @@
       "frequency": { "name": "Частота" },
       "temperature": { "name": "Температура" },
       "illuminance": { "name": "Освітленість" },
+      "input_power": { "name": "Вхідна потужність пристрою" },
+      "load_power": { "name": "Активна потужність (сторона навантаження)" },
+      "output_current": { "name": "Вихідний струм" },
+      "input_current": { "name": "Вхідний струм" },
+      "output_voltage": { "name": "Вихідна напруга" },
+      "ambient_temperature": { "name": "Температура навколишнього середовища" },
       "present_illuminance": { "name": "Поточна освітленість" },
       "humidity": { "name": "Вологість" }
     },

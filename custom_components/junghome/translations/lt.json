@@ -183,6 +183,12 @@
       "frequency": { "name": "Dažnis" },
       "temperature": { "name": "Temperatūra" },
       "illuminance": { "name": "Apšvieta" },
+      "input_power": { "name": "Įrenginio įėjimo galia" },
+      "load_power": { "name": "Aktyvioji galia (apkrovos pusėje)" },
+      "output_current": { "name": "Išėjimo srovė" },
+      "input_current": { "name": "Įėjimo srovė" },
+      "output_voltage": { "name": "Išėjimo įtampa" },
+      "ambient_temperature": { "name": "Aplinkos temperatūra" },
       "present_illuminance": { "name": "Dabartinis apšvietimas" },
       "humidity": { "name": "Drėgmė" }
     },

@@ -183,6 +183,12 @@
       "frequency": { "name": "Frecvență" },
       "temperature": { "name": "Temperatură" },
       "illuminance": { "name": "Iluminare" },
+      "input_power": { "name": "Puterea de intrare a dispozitivului" },
+      "load_power": { "name": "Putere activă (partea sarcinii)" },
+      "output_current": { "name": "Curent de ieșire" },
+      "input_current": { "name": "Curent de intrare" },
+      "output_voltage": { "name": "Tensiune de ieșire" },
+      "ambient_temperature": { "name": "Temperatură ambiantă" },
       "present_illuminance": { "name": "Iluminare actuală" },
       "humidity": { "name": "Umiditate" }
     },

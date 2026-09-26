@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvencia" },
       "temperature": { "name": "Teplota" },
       "illuminance": { "name": "Osvetlenie" },
+      "input_power": { "name": "Príkon zariadenia" },
+      "load_power": { "name": "Činný výkon (strana záťaže)" },
+      "output_current": { "name": "Výstupný prúd" },
+      "input_current": { "name": "Vstupný prúd" },
+      "output_voltage": { "name": "Výstupné napätie" },
+      "ambient_temperature": { "name": "Okolitá teplota" },
       "present_illuminance": { "name": "Aktuálne osvetlenie" },
       "humidity": { "name": "Vlhkosť" }
     },
