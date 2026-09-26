@@ -508,10 +508,12 @@ app, another HA instance); the error goes only to the older one's socket.
   a command with the gateway's text (`command_rejected`) only when exactly
   one set for that datapoint is outstanding. Two or more is ambiguous and
   falls back to the timeout, with one exception: a 409 `Conflict with newer
-  request` while two or more of ours are outstanding means one of our own
-  older sets was replaced, so the older ones return quietly and the newest
-  reports its own outcome. (If another client superseded our *newest* set,
-  that one times out and an older in-progress one returns early — its
+  request` while two or more of ours are outstanding means our set sent
+  just before the newest was the *waiting* one the mutex replaced (the one
+  publishing never is), so that one returns quietly and its slot is
+  retired, the newest reports its own outcome, and an older, publishing set
+  reports through its own reply. (If another client superseded our *newest*
+  set, that one times out and the one before it returns early — its
   confirmation is still merged when it arrives.) A 409 on our only set for
   the datapoint — another client overrode it — is a rejection like any
   other.

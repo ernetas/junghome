@@ -856,11 +856,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if entry is None or self._anchor_store is None:
             return  # a bare coordinator: nothing persisted, nothing to follow
         if self._closing:
-            # A refresh that outlived ``stop()`` (an untracked push-triggered
-            # one, the debouncer's cooldown timer) must not touch the registry
+            # A refresh that outlived ``stop()`` must not touch the registry
             # or schedule a save past the unload's flush — on entry removal
-            # that re-created the store file after it was deleted. The next
-            # setup follows from the flushed map.
+            # that re-created the store file after it was deleted. Two remain
+            # possible: a requested refresh the debouncer deferred to its
+            # cooldown timer runs as a plain ``hass.async_create_task``
+            # (helpers/debounce.py) that no unload cancels, and the scheduled
+            # poll's entry task is cancelled only after the unload returns, so
+            # it can adopt while ``stop()`` awaits. The next setup follows
+            # from the flushed map.
             return
         colliding = duplicate_slugs(devices)
         live = {
@@ -2320,13 +2324,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
         One ambiguous shape is resolved: the publish mutex rejects a queued
         set when a newer one for the same datapoint arrives (``mutex.js``
-        ``MutexID.lock``, surfaced as 409 "Conflict with newer request"). With
-        two or more of our sets outstanding for that datapoint, one of ours
-        was replaced — normally by our own later set (a dragged slider) — so
-        the older sets end quietly as successes: the newest carries the user's
-        intent and reports its own outcome. One slot is retired for the frame
-        (the oldest; the count is what the guard reads), the other older sets
-        stay counted until their own reply arrives.
+        ``MutexID.lock``, surfaced as 409 "Conflict with newer request"). The
+        lock is gateway-wide but queues at most one request per datapoint, and
+        a newer request rejects exactly that WAITING one — never the set that
+        already holds the lock and is publishing. So with two or more of our
+        sets outstanding for the datapoint, the one replaced is the one we
+        sent just before our newest (``candidates[-2]``; slots are kept in
+        send order): an older one either got the lock or was itself replaced
+        when that one queued. That set ends quietly as a success — the newest
+        carries the user's intent and reports its own outcome — and its slot
+        is retired, since this frame was its outcome. Any older set (the one
+        publishing) stays counted and reports through its own reply. Should a
+        second 409 land after a later set was already sent, the two frames
+        retire the two superseded slots between them, in whichever order.
         """
         match = _SET_ERROR_RE.fullmatch(text)
         if match is None:
@@ -2348,9 +2358,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 candidates[0], detail or text.removeprefix("error:").strip()
             )
         elif len(candidates) > 1 and detail == _SET_SUPERSEDED_DETAIL:
-            del self._outstanding_sets[candidates[0]]
-            for message_id in candidates[:-1]:
-                self._resolve_pending_reply(message_id, {})
+            superseded = candidates[-2]
+            del self._outstanding_sets[superseded]
+            self._resolve_pending_reply(superseded, {})
 
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.

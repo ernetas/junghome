@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import time
+from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -27,8 +28,11 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_component import DATA_INSTANCES
+from homeassistant.helpers.update_coordinator import REQUEST_REFRESH_DEFAULT_COOLDOWN
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_time_changed,
     flush_store,
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
@@ -3921,42 +3925,44 @@ async def test_a_refresh_outliving_the_removal_leaves_no_store(
 ) -> None:
     """A refresh still fetching when the entry is removed must not save afterwards.
 
-    The refresh a new device's first push requests is not an entry task, so
-    removal does not cancel it; its list always changes the anchors (a new
-    device), and saving from the stopped coordinator re-created the store.
+    The refresh a new device's first push requests is an entry task, but it
+    only asks the request debouncer: inside the cooldown of an earlier request
+    the refresh runs later from the debouncer's timer, as a plain
+    ``hass.async_create_task`` (helpers/debounce.py ``_on_debounce``) that
+    neither the unload nor the coordinator's shutdown cancels once it runs.
+    Its list always changes the anchors (a new device), and saving from the
+    stopped coordinator re-created the store after the removal deleted it —
+    ``follow_renames`` returns while closing.
     """
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
     await flush_store(coordinator._anchor_store)
-    coordinator._debounced_refresh.async_cancel()
     gate = asyncio.Event()
     started = asyncio.Event()
-    with_new = [
-        *_identified_devices(),
-        {
-            "id": "idnewlamp",
-            "type": "OnOff",
-            "label": "New Lamp",
-            "datapoints": [
-                {
-                    "id": "idnewlamp-001",
-                    "type": "switch",
-                    "values": [{"key": "switch", "value": "1"}],
-                }
-            ],
-        },
-    ]
 
     async def slow_fetch(*_args: object) -> list[dict]:
         started.set()
         await gate.wait()
-        return with_new
+        return _with_a_new_lamp()
 
+    with patch.object(
+        coordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(return_value=_identified_devices()),
+    ):
+        # Any requested refresh: it runs at once and starts the cooldown.
+        await coordinator.async_request_refresh()
     with patch.object(coordinator, "_fetch_devices_from_api", slow_fetch):
-        # A new device's first push, before any poll knows it.
+        # A new device's first push, inside that cooldown: deferred to the
+        # debouncer's timer, so the entry task that asked ends at once.
         coordinator._handle_datapoint_push(
             {"type": "datapoint"},
             {"id": "idnewlamp-001", "values": [{"key": "switch", "value": "1"}]},
+        )
+        await hass.async_block_till_done()
+        assert not started.is_set()
+        async_fire_time_changed(
+            hass, dt_util.utcnow() + timedelta(seconds=REQUEST_REFRESH_DEFAULT_COOLDOWN)
         )
         await asyncio.wait_for(started.wait(), 1)
         with contextlib.ExitStack() as stack:
@@ -3966,6 +3972,8 @@ async def test_a_refresh_outliving_the_removal_leaves_no_store(
         assert _anchors_key(entry) not in hass_storage
         gate.set()
         await hass.async_block_till_done()
+    # The timer's refresh did run to the end: it adopted the new device's list.
+    assert any(d["id"] == "idnewlamp" for d in coordinator.data)
     await flush_store(coordinator._anchor_store)
     assert _anchors_key(entry) not in hass_storage
 

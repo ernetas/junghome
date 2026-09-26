@@ -196,8 +196,11 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
     coordinator.data = []  # the device is not known yet
     fetch_started = asyncio.Event()
     release_fetch = asyncio.Event()
+    fetches = 0
 
     async def _slow_fetch(host: str, token: str) -> list[dict]:
+        nonlocal fetches
+        fetches += 1
         fetch_started.set()
         await release_fetch.wait()
         return [_switch_device("0")]
@@ -211,6 +214,9 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
                 "data": {"id": "dp-1", "values": [{"key": "switch", "value": "1"}]},
             }
         )
+        # The requested refresh (an eagerly started entry task) has already
+        # joined the shared overlay while the first fetch is in flight.
+        assert coordinator._polls_in_flight == 2
         release_fetch.set()
         result = await poll
 
@@ -219,6 +225,7 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
     # so its timer doesn't linger into teardown. The second refresh is the
     # last poll out, so it closes the shared overlay.
     await hass.async_block_till_done()
+    assert fetches == 2
     assert coordinator._poll_push_overlay is None
     assert coordinator._polls_in_flight == 0
     await coordinator.async_shutdown()
@@ -668,6 +675,8 @@ async def test_correlated_error_frame_rejects_the_pending_command(
     assert exc_info.value.translation_key == "command_rejected"
     assert exc_info.value.translation_placeholders == {"error": reason}
     assert coordinator._pending_replies == {}
+    # The frame was the set's outcome, so its slot goes with it.
+    assert coordinator._outstanding_sets == {}
     assert f"Jung Home gateway reported an error: {text}" in caplog.text
 
 
@@ -899,6 +908,108 @@ async def test_superseded_set_without_a_newer_one_of_ours_is_rejected(
     assert exc_info.value.translation_placeholders == {
         "error": "Conflict with newer request"
     }
+
+
+async def test_superseded_set_is_the_waiting_one_not_the_publishing_one(
+    hass: HomeAssistant,
+) -> None:
+    """Three sets on one datapoint: the 409 is about the middle one.
+
+    mutex.js ``MutexID.lock`` queues at most one request per datapoint and a
+    newer one rejects that WAITING request — never the one already holding
+    the lock. With A publishing, B waiting and C arriving, B gets the 409 at
+    once while A's reply comes later (it waits for the mesh). So B ends
+    quietly, A still reports through its own reply, and once A's and C's
+    replies are in no slot is left — a stale one blocked attribution of the
+    next genuine rejection on that datapoint for COMMAND_OUTCOME_WINDOW
+    (retiring the oldest slot did exactly that; the gateway log shows the
+    shape: three patches of one datapoint in a second, one 409).
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    c = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    await asyncio.wait_for(b, timeout=1)  # superseded: no exception
+    assert not a.done()
+    assert not c.done()
+    assert list(coordinator._outstanding_sets) == [sent_ids[0], sent_ids[2]]
+
+    _confirm(coordinator, _DP_A, sent_ids[0])  # A's own reply, after the 409
+    _confirm(coordinator, _DP_A, sent_ids[2])
+    await asyncio.gather(a, c)
+    assert coordinator._outstanding_sets == {}
+
+    # Attribution is clean again: the next rejection fails its set at once.
+    d = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(d, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    await coordinator.async_shutdown()
+
+
+async def test_two_409s_landing_late_retire_both_superseded_sets(
+    hass: HomeAssistant,
+) -> None:
+    """Both frames arrive after our newest set went out: still no stale slot.
+
+    A waits (the gateway-wide lock is busy elsewhere), B replaces A, C
+    replaces B. If both 409s land only after C was sent, the first retires B
+    (then just before our newest) and the second A — the right two slots
+    between them, both sets ending quietly, C left to its own reply.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    c = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    for _ in range(2):
+        coordinator._dispatch_text_frame(
+            json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+        )
+    await asyncio.wait_for(asyncio.gather(a, b), timeout=1)
+    assert list(coordinator._outstanding_sets) == [sent_ids[2]]
+    assert not c.done()
+    _confirm(coordinator, _DP_A, sent_ids[2])
+    await c
+    assert coordinator._outstanding_sets == {}
+    await coordinator.async_shutdown()
+
+
+async def test_correlated_error_retires_its_set_for_attribution(
+    hass: HomeAssistant,
+) -> None:
+    """An `error:` frame WITH our message_id is that set's outcome.
+
+    Its slot must go, or the next uncorrelated rejection on the datapoint
+    would see two outstanding sets and be left to the timeout.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    first = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(
+            {"type": "message", "data": "error: rejected", "message_id": sent_ids[0]}
+        )
+    )
+    with pytest.raises(HomeAssistantError):
+        await asyncio.wait_for(first, timeout=1)
+    assert coordinator._outstanding_sets == {}
+
+    second = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(second, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    await coordinator.async_shutdown()
 
 
 @pytest.mark.parametrize(
