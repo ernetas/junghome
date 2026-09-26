@@ -514,6 +514,19 @@ to 409 (`ip_event_handler.js:217-219`), so the older command's client gets
 and is confirmed normally. The newer request can come from any client (the
 app, another HA instance); the error goes only to the older one's socket.
 
+*Measured live* (2026-09-26, 2.1.3/2840, one tunable-white DALI light,
+`color_temperature` re-set to its current value): a lone set is confirmed
+in 42–115 ms, so on a node that answers promptly the lock is held about
+that long per publish (a slow or unreachable node's hold is unmeasured).
+A 409 therefore needs three sets for one datapoint inside that window.
+Bursts of A, B at +d, C at +d+20 ms drew a 409 at d = 0 (2 of 2) and
+d = 50 ms (1 of 2), never at d ≥ 100 ms (0 of 16); every time on **B**,
+the waiting set, while A and C were confirmed normally. The frame is
+`{"type": "message", "data": "error: could not set datapoint (<id>) value,
+JungFunctionService: Error during publish request: Conflict with newer
+request"}` — no `message_id` — and it landed ~165 ms after A was sent:
+after A's confirmation, before C's.
+
 ## Notes for the integration
 
 - State updates arrive as `datapoint` broadcasts; the coordinator matches them to
