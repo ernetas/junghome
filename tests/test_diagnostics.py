@@ -1,7 +1,8 @@
 """Diagnostics tests for Jung Home: what a downloadable report must not carry.
 
 The entry-level and per-function-device diagnostics tests live in
-``tests/test_init.py``; this file holds the hub (gateway) device cases.
+``tests/test_init.py``; this file holds the hub (gateway) device cases and
+the gateway's health log.
 """
 
 import json
@@ -137,6 +138,125 @@ async def test_entry_diagnostics_scrub_the_host_out_of_the_title(
     dump = json.dumps(diag, default=str)
     assert HOST not in dump
     assert SERIAL not in dump
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_entry_diagnostics_carry_the_health_log_without_personal_data(
+    hass: HomeAssistant,
+) -> None:
+    """The health log is in the report, minus the account and client names.
+
+    Two of the gateway's fixed texts quote personal data (the myJUNG account
+    the gateway was registered to, the name of each API client granted
+    access) and any text can quote the host; device labels stay, as they do
+    everywhere else in the report. ``health_conditions`` names what was raised
+    as a repair issue — the unreachable-device list never is.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=HOST, data={CONF_HOST: HOST, CONF_TOKEN: "tok"}
+    )
+    entry.add_to_hass(hass)
+    log = [
+        {
+            "level": "INFO",
+            "time": "2026-09-26T08:03:00.000Z",
+            "description": "Gateway registered to myJUNG Cloud",
+            "details": "You have registered your Gateway to the myJUNG Account "
+            "jane.doe@example.com",
+        },
+        {
+            "level": "INFO",
+            "time": "2026-09-26T08:02:00.000Z",
+            "description": "New User Permission",
+            "details": 'New User or System with the name "Jane\'s phone" has been '
+            "granted access to your JUNG HOME Gateway. \n            If this "
+            'was not you, please review your "access permissions" and revoke '
+            "access if necessary.",
+        },
+        {
+            "level": "WARN",
+            "time": "2026-09-26T08:01:00.000Z",
+            "description": "JUNG HOME Devices are unreachable",
+            "details": "1 devices cannot be reached: Hall Light. Try again.",
+        },
+        {
+            "level": "ERROR",
+            "time": "2026-09-26T08:00:00.000Z",
+            "description": "out of sequence numbers",
+            "details": f"gateway {HOST} may lost its abillity",
+        },
+    ]
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_health_status_from_api",
+            AsyncMock(return_value=log),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    dump = json.dumps(diag, default=str)
+    for secret in (HOST, "jane.doe@example.com", "Jane's phone"):
+        assert secret not in dump, secret
+    health = diag["health_status"]
+    assert [item["description"] for item in health] == [
+        item["description"] for item in log
+    ]
+    assert health[0]["details"] == (
+        "You have registered your Gateway to the myJUNG Account **REDACTED**"
+    )
+    assert health[1]["details"].startswith(
+        'New User or System with the name "**REDACTED**" has been granted'
+    )
+    assert health[2]["details"] == log[2]["details"]
+    assert health[3] == {
+        "level": "ERROR",
+        "time": "2026-09-26T08:00:00.000Z",
+        "description": "out of sequence numbers",
+        "details": "gateway **REDACTED** may lost its abillity",
+    }
+    assert diag["health_conditions"] == ["gateway_out_of_sequence_numbers"]
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_entry_diagnostics_before_any_health_read(
+    hass: HomeAssistant,
+) -> None:
+    """A gateway whose log was never readable reports None, not an empty log."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=HOST, data={CONF_HOST: HOST, CONF_TOKEN: "tok"}
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["health_status"] is None
+    assert diag["health_conditions"] == []
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

@@ -238,6 +238,30 @@
           "different_gateway": "Die Adresse antwortet, gehört aber zu einem anderen Jung Home Gateway als diesem Eintrag. Verwende stattdessen Neu konfigurieren, um die Adresse zu ändern."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home Geräte mit kollidierenden Namen",
+      "description": "Einige Geräte am Jung Home Gateway unter {host} haben Namen, die Home Assistant nicht unterscheiden kann, weil sie sich nur in Groß-/Kleinschreibung, Leerzeichen oder Satzzeichen unterscheiden:\n\n{labels}\n\nNur ein Gerät jeder Gruppe erhält Entitäten in Home Assistant. Benenne die anderen in der Jung Home App um. Dieses Problem verschwindet von selbst, sobald die Namen eindeutig sind."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Bluetooth-Fehler am Jung Home Gateway",
+      "description": "Das Jung Home Gateway unter {host} meldet, dass sein Bluetooth-Chip nicht gestartet ist, daher kann es deine Jung Home Geräte nicht erreichen. Starte das Gateway neu, indem du es kurz von der Stromversorgung trennst. Besteht das Problem weiter, setze das Gateway zurück und füge es in der Jung Home App erneut deinem Projekt hinzu. Dieses Problem verschwindet, sobald das Gateway ohne den Fehler neu gestartet ist."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Dem Jung Home Gateway sind die Sequenznummern ausgegangen",
+      "description": "Das Jung Home Gateway unter {host} meldet, dass ihm die Bluetooth-Mesh-Sequenznummern ausgegangen sind; es kann deinen Jung Home Geräten daher möglicherweise keine Befehle mehr senden. Reagieren Geräte nicht mehr, setze das Gateway zurück und füge es in der Jung Home App erneut deinem Projekt hinzu. Dieses Problem verschwindet, sobald das Gateway ohne den Fehler neu gestartet ist."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Die Uhr des Jung Home Gateways ist nicht synchronisiert",
+      "description": "Das Jung Home Gateway unter {host} konnte seine Uhr seit mehr als 24 Stunden nicht mit einem Zeitserver synchronisieren. Prüfe, ob das Gateway Internetzugang hat. Dieses Problem verschwindet von selbst, sobald die Uhr wieder synchronisiert ist."
+    },
+    "gateway_project_missing": {
+      "title": "Das Jung Home Gateway hat kein Projekt",
+      "description": "Das Jung Home Gateway unter {host} meldet, dass es das Projekt aus der Jung Home App nicht erhalten hat, daher kennt es deine Geräte nicht. Öffne die Jung Home App im selben lokalen Netzwerk wie das Gateway, damit sie das Projekt erneut hochladen kann. Dieses Problem verschwindet, sobald das Gateway ein neues Projekt erhalten hat."
+    },
+    "gateway_project_incomplete": {
+      "title": "Das Projekt des Jung Home Gateways ist unvollständig",
+      "description": "Das Jung Home Gateway unter {host} meldet, dass seinem Projekt Geräteangaben fehlen; Gerätenamen, Räume und Szenen können daher fehlen oder falsch sein. Synchronisiere das Projekt manuell in der Jung Home App. Dieses Problem verschwindet, sobald das Gateway ein neues Projekt erhalten hat."
     }
   }
 }

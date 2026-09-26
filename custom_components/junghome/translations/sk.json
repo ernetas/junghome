@@ -238,6 +238,30 @@
           "different_gateway": "Adresa odpovedá, ale patrí inej bráne Jung Home než tomuto záznamu. Na zmenu adresy použite Prekonfigurovať."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Zariadenia Jung Home s kolidujúcimi názvami",
+      "description": "Niektoré zariadenia na bráne Jung Home na adrese {host} majú názvy, ktoré Home Assistant nedokáže rozlíšiť, pretože sa líšia len veľkosťou písmen, medzerami alebo interpunkciou:\n\n{labels}\n\nV Home Assistante dostane entity len jedno zariadenie z každej skupiny. Premenujte ostatné v aplikácii Jung Home. Tento problém zmizne sám, hneď ako budú názvy odlišné."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Porucha Bluetooth brány Jung Home",
+      "description": "Brána Jung Home na adrese {host} hlási, že sa nespustil jej čip Bluetooth, takže nemôže komunikovať s vašimi zariadeniami Jung Home. Reštartujte bránu krátkym odpojením napájania. Ak problém pretrváva, resetujte bránu a znova ju pridajte do projektu v aplikácii Jung Home. Tento problém zmizne, hneď ako sa brána reštartuje bez tejto chyby."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Bráne Jung Home došli sekvenčné čísla",
+      "description": "Brána Jung Home na adrese {host} hlási, že jej došli sekvenčné čísla Bluetooth Mesh, takže už možno nedokáže odosielať príkazy vašim zariadeniam Jung Home. Ak zariadenia prestanú reagovať, resetujte bránu a znova ju pridajte do projektu v aplikácii Jung Home. Tento problém zmizne, hneď ako sa brána reštartuje bez tejto chyby."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Hodiny brány Jung Home nie sú synchronizované",
+      "description": "Brána Jung Home na adrese {host} nedokázala viac ako 24 hodín synchronizovať svoje hodiny s časovým serverom. Skontrolujte, či má brána prístup na internet. Tento problém zmizne sám, hneď ako budú hodiny znova synchronizované."
+    },
+    "gateway_project_missing": {
+      "title": "Brána Jung Home nemá žiadny projekt",
+      "description": "Brána Jung Home na adrese {host} hlási, že nedostala projekt z aplikácie Jung Home, takže nepozná vaše zariadenia. Otvorte aplikáciu Jung Home v tej istej lokálnej sieti, v ktorej je brána, aby mohla projekt znova nahrať. Tento problém zmizne, hneď ako brána dostane nový projekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Projekt brány Jung Home je neúplný",
+      "description": "Brána Jung Home na adrese {host} hlási, že v jej projekte chýbajú údaje o zariadeniach, takže názvy zariadení, miestnosti a scény môžu chýbať alebo byť nesprávne. Synchronizujte projekt ručne v aplikácii Jung Home. Tento problém zmizne, hneď ako brána dostane nový projekt."
     }
   }
 }

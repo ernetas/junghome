@@ -238,6 +238,30 @@
           "different_gateway": "L'adreça respon, però pertany a una passarel·la Jung Home diferent d'aquesta entrada. Fes servir Reconfigura per canviar l'adreça."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Dispositius Jung Home amb noms en conflicte",
+      "description": "Alguns dispositius de la passarel·la Jung Home a {host} tenen noms que Home Assistant no pot distingir, perquè només es diferencien en majúscules, espais o puntuació:\n\n{labels}\n\nNomés un dispositiu de cada grup obté entitats a Home Assistant. Canvia el nom dels altres a l'aplicació Jung Home. Aquest problema desapareix automàticament quan els noms siguin diferents."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Error de Bluetooth a la passarel·la Jung Home",
+      "description": "La passarel·la Jung Home a {host} informa que el seu xip Bluetooth no s'ha iniciat, de manera que no pot comunicar-se amb els teus dispositius Jung Home. Reinicia la passarel·la desconnectant-la breument de l'alimentació. Si el problema persisteix, restableix la passarel·la i torna-la a afegir al teu projecte a l'aplicació Jung Home. Aquest problema desapareix quan la passarel·la s'ha reiniciat sense l'error."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "La passarel·la Jung Home s'ha quedat sense números de seqüència",
+      "description": "La passarel·la Jung Home a {host} informa que s'ha quedat sense números de seqüència de Bluetooth Mesh, de manera que és possible que ja no pugui enviar ordres als teus dispositius Jung Home. Si els dispositius deixen de respondre, restableix la passarel·la i torna-la a afegir al teu projecte a l'aplicació Jung Home. Aquest problema desapareix quan la passarel·la s'ha reiniciat sense l'error."
+    },
+    "gateway_time_sync_failure": {
+      "title": "El rellotge de la passarel·la Jung Home no està sincronitzat",
+      "description": "La passarel·la Jung Home a {host} no ha pogut sincronitzar el rellotge amb un servidor horari durant més de 24 hores. Comprova que la passarel·la tingui accés a Internet. Aquest problema desapareix automàticament quan el rellotge torni a estar sincronitzat."
+    },
+    "gateway_project_missing": {
+      "title": "La passarel·la Jung Home no té cap projecte",
+      "description": "La passarel·la Jung Home a {host} informa que no ha rebut el projecte de l'aplicació Jung Home, de manera que no coneix els teus dispositius. Obre l'aplicació Jung Home a la mateixa xarxa local que la passarel·la perquè pugui tornar a pujar el projecte. Aquest problema desapareix quan la passarel·la ha rebut un projecte nou."
+    },
+    "gateway_project_incomplete": {
+      "title": "El projecte de la passarel·la Jung Home està incomplet",
+      "description": "La passarel·la Jung Home a {host} informa que al seu projecte li falten dades dels dispositius, de manera que els noms dels dispositius, les habitacions i les escenes poden faltar o ser incorrectes. Sincronitza el projecte manualment a l'aplicació Jung Home. Aquest problema desapareix quan la passarel·la ha rebut un projecte nou."
     }
   }
 }

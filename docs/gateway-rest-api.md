@@ -50,6 +50,81 @@ can be stale; no cover exists in the reference network, so
 `move_operation_mode` (the awning hint) is still unobserved. Labels are in it
 — keep captures out of issues.
 
+## `GET /healthstatus/` — the gateway's health log
+
+Derived from the v2.1.3 (2840) implementation (`disk_dump/jung-20260801/sdb2/opt`;
+no live capture yet). Behind `auth()` with no role (`api-server/dist/server.js:128`),
+so any registered token reads it; a missing/unknown token gets `401`, never
+`403`. The controller (`controllers/10_healthstatus-controller.js`) returns the
+list the middleware last published over its IPC `gateway_errors` topic,
+replaced wholesale on each publish (`services/jung-healthstatus-service.js`).
+The WebSocket push of it is commented out (`websocket-server-service.js`
+`_on_error_event`: "DO not send Healthstatus over websocket"), so it can only be
+polled.
+
+```json
+[
+  {"level": "INFO", "time": "2026-09-26T08:03:12.345Z",
+   "description": "Your JUNG HOME Gateway is up and running",
+   "details": "You now have access to all the features without additional waiting time"},
+  {"level": "ERROR", "time": "2026-09-26T08:01:40.002Z",
+   "description": "out of sequence numbers",
+   "details": "Your JUNG HOME Gateway may lost its abillity to communicate to the Bluetooth Mesh Network. In Case you face problems you may reset your Gateway."}
+]
+```
+
+- **An append-only log since the middleware started, newest first**
+  (`middleware/dist/services/health_status_service.js`: every `debug` / `info`
+  / `warn` / `error` call pushes an entry and republishes `[...list].reverse()`).
+  Nothing removes an entry: a condition "clears" only on a gateway restart
+  (empty list) or when a later entry supersedes it. It is also not
+  deduplicated — a repeating trigger logs again each time.
+- `level` is `DEBUG` / `INFO` / `WARN` / `ERROR`. `time` is
+  `Date.toISOString()` — **ISO-8601 UTC**, not the "European String" the
+  api-server DTO comment and the `/apidoc` `HealthStatusList` schema promise.
+  `details` is a string (the caller's text, or the fixed default "No further
+  detailed description available. You may be able to resolve or clear an
+  existing error by restarting your JUNG HOME gateway."), except that the two
+  startup failures in `startup.js:151,181` pass a caught error through, which
+  can arrive as a JSON object (`{}`) — the schema's `string` is a promise.
+- Besides the explicit calls, every `state_db` flag with `info_level`
+  `error`/`warn` logs an entry each time it is set `true`
+  (`configuration_service.js:196-207`), described by its key with the
+  **first** underscore replaced (`String.replace("_", " ")`): `time error`,
+  `btmesh error`, `project not_uploaded`, `btmesh device_not_available`,
+  `cloud error`, …, with the flag's `state_db` description as `details`.
+
+The messages the current build can emit (`middleware/dist`):
+
+| level | description | source | meaning |
+|---|---|---|---|
+| ERROR | `JUNG HOME Gateway Bluetooth Chip start failure` | `services/ncp_service.js:68` | mesh node init failed at chip boot |
+| ERROR | `was not able to start bluetooth adapter, details: ` | `startup.js:151` | the Bluetooth adapter did not start |
+| ERROR | `was not able to start gateway correctly, details: ` | `startup.js:181` | startup did not complete |
+| ERROR | `out of sequence numbers` | `services/ncp_service.js:192` | chip answered `503 BT_MESH_LIMIT_REACHED`: the gateway can no longer send on the mesh |
+| ERROR | `JUNG HOME Gateway Time Sync Error` | `handler/sys_event_handler.js:154` | a failed sync more than 24 h after the last good one (`details`: "Last successful sync was N hours ago") |
+| WARN | `JUNG HOME Project missing` | `services/project_file_service.js:156` | no project 5 min after provisioning (`btmesh.no_projectfile_timeout` 300000 ms) |
+| WARN | `JUNG HOME project is incomplete` | `services/project_file_service.js:202` | the stored project has no JUNG HOME `meta` (names, rooms, scenes); checked at middleware start |
+| WARN | `JUNG HOME project has no devices` | `services/devices_service.js:64` | provisioned, but the project has no devices |
+| WARN | `JUNG HOME Devices are unreachable` / INFO `All JUNG HOME Devices are reachable` | `services/devices_service.js:174,178` | `isDeviceOnline` over all devices, logged when the count changes; `details` lists the **labels**. Reads working push buttons as unreachable (see the verbose section) |
+| WARN | `JUNG HOME Devices have poor signal quality` / INFO `… signal quality improved` | `services/devices_service.js:186,191` | any state's `connection_quality` < 10; `details` lists labels |
+| WARN | `no info about linked devices` | `services/devices_service.js:346` | the project's metadata has no connection group for the gateway (its text: push buttons may not be exposed correctly) |
+| WARN / ERROR | `<topic> <rest_of_key>` flag entries | `services/configuration_service.js:203,207` | see above; `time error` fires on **every** failed NTP sync |
+| INFO | `New Bluetooth Mesh Project` | `handler/ip_event_handler.js:528,585` | a project import succeeded (after the project flags were reset) |
+| INFO | provisioning / factory reset / cloud / `New User Permission` / `Your JUNG HOME Gateway is up and running` | `bt_event_handler.js`, `sys_event_handler.js:187`, `cloud_connection_service.js`, `api_access_service.js`, `startup.js:220` | informational; the cloud one quotes the **myJUNG user name**, `New User Permission` the **client name** |
+| DEBUG | `Update History`, `Ethernet Speed Configuration: …`, `high cpu load`, `SN error read from flash`, `IV Update …`, `project upload failed`, `Provisioning of Gateway failed` | `startup.js`, `cpu_load_service.js`, `ncp_service.js`, `ip_event_handler.js` | diagnostics |
+
+The integration polls it (`coordinator.async_fetch_health_status`, `health.py`)
+once after the first refresh and every 15 minutes, best-effort (any non-200 —
+401 included — or transport error changes nothing), and raises one repair
+issue per condition: Bluetooth failure (the first two rows), out of sequence
+numbers, time sync (withdrawn as soon as `GET /config/parameter/time_error`
+reads `false` — the log has no "recovered" entry), project missing (`JUNG HOME
+Project missing` or `project not_uploaded`) and project incomplete (both
+withdrawn by a newer `New Bluetooth Mesh Project`). The others — the
+unreachable list above all — go to diagnostics only, with the myJUNG user
+and client names masked.
+
 ## Discovering the full spec
 
 The complete OpenAPI 3.0 document is served **unauthenticated** at:
@@ -108,7 +183,7 @@ the gateway's network-key password.
 | GET  | `/apidoc` | Full OpenAPI spec (no auth). |
 | POST | `/register` | Request a token via app approval (no auth). |
 | POST | `/register/by-password` | Request a token via password (no auth). |
-| GET  | `/healthstatus/` | Gateway/mesh health. |
+| GET  | `/healthstatus/` | The gateway's health log since the middleware started, newest first — see the section above. |
 | GET  | `/functions/` | All functions (devices as the app/integration sees them). |
 | GET  | `/functions/{function_id}` | One function. |
 | GET  | `/functions/{function_id}/datapoints` | A function's datapoints. |

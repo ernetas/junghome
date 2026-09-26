@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceEntry
 
     from .coordinator import JungHomeConfigEntry
+    from .health import HealthEntry
     from .models import Device
 
 # The gateway token is a bearer credential; never include it in a downloadable
@@ -92,6 +93,41 @@ def _secrets(entry: JungHomeConfigEntry) -> list[str]:
     return sorted(
         (v for v in values if len(v) >= _MIN_SCRUBBABLE), key=lambda v: (-len(v), v)
     )
+
+
+# The gateway's health log quotes two kinds of personal data inside its fixed
+# texts, where no key exists to redact by: the myJUNG user name the gateway
+# was registered to (`cloud_connection_service.js:92`, appended to the text
+# unquoted, so everything after it goes) and the name of each API client
+# granted access
+# (`api_access_service.js:82,95`). Device labels (the unreachable/weak-signal
+# lists) stay, as everywhere else in the report.
+_HEALTH_PERSONAL_DATA = (
+    (re.compile(r"(myJUNG Account ).+", re.DOTALL), r"\1**REDACTED**"),
+    (re.compile(r'(with the name ")[^"]*(")'), r"\1**REDACTED**\2"),
+)
+
+
+def _health_log(
+    entries: tuple[HealthEntry, ...] | None, secrets: list[str]
+) -> list[dict[str, str | None]] | None:
+    """Return the health log as read (newest first), personal data masked."""
+    if entries is None:
+        return None
+    result: list[dict[str, str | None]] = []
+    for entry in entries:
+        details = entry.details
+        for pattern, replacement in _HEALTH_PERSONAL_DATA:
+            details = pattern.sub(replacement, details)
+        result.append(
+            {
+                "level": entry.level,
+                "time": entry.time,
+                "description": _scrub(entry.description, secrets),
+                "details": _scrub(details, secrets),
+            }
+        )
+    return result
 
 
 def _scrub(text: str | None, secrets: list[str]) -> str | None:
@@ -200,6 +236,13 @@ async def async_get_config_entry_diagnostics(
             function_id: asdict(props)
             for function_id, props in coordinator.device_properties.items()
         },
+        # The gateway's own health log (`GET /healthstatus/`, health.py) as
+        # last read — None until a read succeeded — and the conditions in it
+        # that are raised as repair issues. The log also carries what is
+        # deliberately not an issue, e.g. the middleware's unreachable-device
+        # list (push buttons read unreachable while working).
+        "health_status": _health_log(coordinator.health.entries, secrets),
+        "health_conditions": sorted(coordinator.health.conditions),
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...
         "recent_websocket_frames": [

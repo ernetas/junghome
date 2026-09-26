@@ -22,11 +22,13 @@ from .const import (
     gateway_device_info,
 )
 from .coordinator import (
+    ISSUE_DUPLICATE_LABELS,
     ISSUE_PUSH_FAILURE,
     ISSUE_TLS_MISMATCH,
     JungHomeConfigEntry,
     JungHomeDataUpdateCoordinator,
     device_by_identifier,
+    entry_derived_issue_ids,
     function_anchors_store,
 )
 from .models import Device
@@ -90,6 +92,40 @@ _MIGRATION_ERRORS = (
     ValueError,
     HomeAssistantError,
 )
+
+
+def _sync_label_collision_issue(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    collisions: dict[str, list[str]],
+) -> None:
+    """Raise, update or withdraw the entry's colliding-labels repair issue.
+
+    Two labels that slug identically share one device identity and the second
+    device gets no entities (`duplicate_slugs`) — invisible in the UI apart
+    from a log line, so it is a repair issue too. One issue per entry lists
+    every group; it goes away on the first adoption without a collision.
+    """
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    if not collisions:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    groups = sorted(
+        ", ".join(f'"{label}"' for label in sorted(labels))
+        for labels in collisions.values()
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_DUPLICATE_LABELS,
+        translation_placeholders={
+            "host": str(entry.data.get("host")),
+            "labels": "\n".join(f"- {group}" for group in groups),
+        },
+    )
 
 
 def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
@@ -191,6 +227,7 @@ def _register_capability_reload(
         # devices does it describe?), so drop any stale entry and skip it. If the
         # user renames one, the slug stops colliding and re-seeds cleanly.
         collisions = duplicate_slugs(coordinator.data)
+        _sync_label_collision_issue(hass, entry, collisions)
         for slug, labels in collisions.items():
             capability_signatures.pop(slug, None)
             if slug not in warned_collisions:
@@ -828,6 +865,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     for issue_id in (
         f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
         f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+        *entry_derived_issue_ids(entry.entry_id),
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
     await function_anchors_store(hass, entry.entry_id).async_remove()

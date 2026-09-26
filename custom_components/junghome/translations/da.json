@@ -238,6 +238,30 @@
           "different_gateway": "Adressen svarer, men tilhører en anden Jung Home-gateway end denne post. Brug Omkonfigurer for at ændre adressen i stedet."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home-enheder med navne i konflikt",
+      "description": "Nogle enheder på Jung Home-gatewayen på {host} har navne, som Home Assistant ikke kan skelne fra hinanden, fordi de kun adskiller sig ved store/små bogstaver, mellemrum eller tegnsætning:\n\n{labels}\n\nKun én enhed i hver gruppe får entiteter i Home Assistant. Omdøb de andre i Jung Home-appen. Dette problem forsvinder af sig selv, når navnene er forskellige."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Bluetooth-fejl på Jung Home-gatewayen",
+      "description": "Jung Home-gatewayen på {host} melder, at dens Bluetooth-chip ikke startede, så den kan ikke nå dine Jung Home-enheder. Genstart gatewayen ved at tage strømmen fra den et øjeblik. Hvis problemet fortsætter, skal du nulstille gatewayen og tilføje den til dit projekt igen i Jung Home-appen. Dette problem forsvinder, når gatewayen er genstartet uden fejlen."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home-gatewayen er løbet tør for sekvensnumre",
+      "description": "Jung Home-gatewayen på {host} melder, at den er løbet tør for Bluetooth Mesh-sekvensnumre, så den kan muligvis ikke længere sende kommandoer til dine Jung Home-enheder. Hvis enhederne holder op med at reagere, skal du nulstille gatewayen og tilføje den til dit projekt igen i Jung Home-appen. Dette problem forsvinder, når gatewayen er genstartet uden fejlen."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Jung Home-gatewayens ur er ikke synkroniseret",
+      "description": "Jung Home-gatewayen på {host} har ikke kunnet synkronisere sit ur med en tidsserver i mere end 24 timer. Kontrollér, at gatewayen har internetadgang. Dette problem forsvinder af sig selv, når uret er synkroniseret igen."
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home-gatewayen har intet projekt",
+      "description": "Jung Home-gatewayen på {host} melder, at den ikke har modtaget projektet fra Jung Home-appen, så den kender ikke dine enheder. Åbn Jung Home-appen på det samme lokale netværk som gatewayen, så den kan uploade projektet igen. Dette problem forsvinder, når gatewayen har modtaget et nyt projekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Jung Home-gatewayens projekt er ufuldstændigt",
+      "description": "Jung Home-gatewayen på {host} melder, at dens projekt mangler enhedsoplysninger, så enhedsnavne, rum og scener kan mangle eller være forkerte. Synkronisér projektet manuelt i Jung Home-appen. Dette problem forsvinder, når gatewayen har modtaget et nyt projekt."
     }
   }
 }

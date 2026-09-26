@@ -42,6 +42,17 @@ from .const import (
     duplicate_slugs,
     scene_unique_id,
 )
+from .health import (
+    HEALTH_CONDITIONS,
+    HEALTH_STATUS_REFRESH_INTERVAL,
+    ISSUE_TIME_SYNC,
+    TIME_ERROR_PARAMETER,
+    HealthCondition,
+    HealthState,
+    active_health_conditions,
+    health_issue_ids,
+    parse_health_status,
+)
 from .models import (
     DOUBLED_BUTTON_FIRMWARE,
     Device,
@@ -122,6 +133,12 @@ ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # flow in repairs.py re-learns the fingerprint, but only once the user has
 # confirmed the gateway was reset or replaced — never silently.
 ISSUE_TLS_MISMATCH = "tls_certificate_changed"
+# Repair-issue translation key for "two or more gateway labels resolve to the
+# same device slug, so only one of them gets entities" (`duplicate_slugs`).
+# Raised and withdrawn by the capability watcher in __init__.py, which already
+# computes the collisions on every device-list adoption; not fixable here —
+# only a rename in the JUNG HOME app resolves it.
+ISSUE_DUPLICATE_LABELS = "duplicate_device_labels"
 
 # Minimum spacing, in seconds, between two reads of the gateway's project
 # export (`GET /project/junghome`) after the one at setup. The export is read
@@ -326,6 +343,15 @@ def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
     if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
         return None
     return low_k, high_k
+
+
+def entry_derived_issue_ids(entry_id: str) -> list[str]:
+    """Return the ids of the entry's repair issues re-derived from gateway state.
+
+    The health issues (one per ``health.HEALTH_CONDITIONS``) and the
+    colliding-label issue; ``stop()`` and entry removal withdraw them all.
+    """
+    return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
 
 
 # Registry lookups scoped to one config entry, on every supported core.
@@ -547,6 +573,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._properties_listed_for: frozenset[str] | None = None
         self._properties_unsub: CALLBACK_TYPE | None = None
         self._properties_refresh_running = False
+        # The gateway's health log (`GET /healthstatus/`, health.py) as last
+        # read — diagnostics, and the source of the health repair issues
+        # (`async_fetch_health_status`). Read once after the first refresh,
+        # then every HEALTH_STATUS_REFRESH_INTERVAL (armed by `start`).
+        self.health = HealthState(config_entry.entry_id)
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
         # device pruner clears a removed device's ids from them (see
@@ -1397,6 +1428,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # before the platforms register anything.
         self.follow_renames(self.data or [])
         await self.async_fetch_device_properties()
+        await self.async_fetch_health_status()
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
         """Read the gateway's project export (``GET /project/junghome``).
@@ -1606,6 +1638,121 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if changed:
             self.device_properties = MappingProxyType(updated)
             self.async_update_listeners()
+
+    async def _fetch_health_status_from_api(self, host: str, token: str) -> Any:
+        """Read ``GET /healthstatus/``; None for any non-200.
+
+        The route takes the same token as ``/functions/`` (``auth()`` with no
+        role — health.py); a token it rejects answers 401, which the REST poll
+        turns into reauth on its own, so here it is only "not readable".
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        url = f"https://{host}/api/junghome/healthstatus/"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                _LOGGER.debug(
+                    "Gateway health status not readable (HTTP %s)", response.status
+                )
+                return None
+            return await response.json()
+
+    async def _fetch_config_parameter_from_api(
+        self, host: str, token: str, parameter: str
+    ) -> Any:
+        """Read one ``GET /config/parameter/{parameter}`` value; None for a non-200."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        safe = quote(parameter, safe="")
+        url = f"https://{host}/api/junghome/config/parameter/{safe}"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                return None
+            return await response.json()
+
+    async def async_fetch_health_status(self) -> None:
+        """Read the gateway's health log and raise or withdraw its repair issues.
+
+        One issue per condition in ``health.HEALTH_CONDITIONS`` the log shows;
+        every other condition's issue is withdrawn. The log only ever grows
+        until the gateway restarts, so a condition with no clearing message
+        (a Bluetooth chip failure, out of sequence numbers) stays raised until
+        then — which is also what the gateway's own text tells the user to do.
+        The time-sync condition is the exception: it is withdrawn as soon as
+        the gateway reports its clock synchronised again (``time_error``).
+
+        Best-effort: a transport failure, a non-200 (401 included) or an
+        unusable body changes nothing — issues from an earlier read stay until
+        a read proves otherwise.
+        """
+        host, token = self.config["host"], self.config["token"]
+        try:
+            raw = await self._fetch_health_status_from_api(host, token)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the gateway health status: %s", err)
+            return
+        entries = parse_health_status(raw)
+        if entries is None:
+            return
+        active = active_health_conditions(entries)
+        if ISSUE_TIME_SYNC in active and await self._time_sync_recovered(host, token):
+            del active[ISSUE_TIME_SYNC]
+        if self._closing:
+            return  # unloaded while the read was in flight; stop() withdrew all
+        self.health.entries = entries
+        self.health.conditions = frozenset(active)
+        self._apply_health_issues(active)
+
+    async def _time_sync_recovered(self, host: str, token: str) -> bool:
+        """Whether the gateway reports its clock synchronised again.
+
+        Only a definite ``false`` counts: an unreadable parameter keeps the
+        issue the log raised.
+        """
+        try:
+            value = await self._fetch_config_parameter_from_api(
+                host, token, TIME_ERROR_PARAMETER
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the gateway time status: %s", err)
+            return False
+        return value is False
+
+    def _apply_health_issues(self, active: Mapping[str, HealthCondition]) -> None:
+        """Create the issue of every active condition, delete every other one."""
+        for condition in HEALTH_CONDITIONS:
+            issue_id = self.health.issue_id(condition.key)
+            if condition.key not in active:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            # Idempotent: an unchanged issue is neither saved nor re-announced.
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=condition.severity,
+                translation_key=condition.key,
+                translation_placeholders={"host": str(self.config["host"])},
+            )
+
+    async def _async_refresh_health_status(self, _now: datetime) -> None:
+        """Periodic health-log re-read; runs are not stacked."""
+        if self.health.refresh_running:
+            return
+        self.health.refresh_running = True
+        try:
+            await self.async_fetch_health_status()
+        finally:
+            self.health.refresh_running = False
 
     def device_properties_for(self, device: Device) -> DeviceProperties | None:
         """Return the verbose endpoint's properties for a function, if read."""
@@ -2653,6 +2800,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             self._async_refresh_device_properties,
             timedelta(seconds=DEVICE_PROPERTIES_REFRESH_INTERVAL),
         )
+        self.health.unsub = async_track_time_interval(
+            self.hass,
+            self._async_refresh_health_status,
+            timedelta(seconds=HEALTH_STATUS_REFRESH_INTERVAL),
+        )
 
     async def stop(self) -> None:
         """Stop the coordinator and close the WebSocket connection."""
@@ -2667,6 +2819,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # own, or a reconfigure onto a confirmed new certificate) rebuilds the
         # coordinator, which re-raises it on the next poll if it still holds.
         ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
+        # The health and colliding-label issues: both are re-derived on the
+        # next setup (its first health read, its watcher's seed pass), so an
+        # entry that is disabled or removed takes them with it.
+        for issue_id in entry_derived_issue_ids(self.health.entry_id):
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:
@@ -2677,6 +2834,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if self._properties_unsub is not None:
             self._properties_unsub()
             self._properties_unsub = None
+        if self.health.unsub is not None:
+            self.health.unsub()
+            self.health.unsub = None
         if (task := self._node_identity_task) is not None and not task.done():
             # Entry unload cancels its background tasks itself; a full HA
             # shutdown reaches here without an unload, so cancel explicitly.
