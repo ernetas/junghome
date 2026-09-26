@@ -536,9 +536,11 @@ instead of re-deriving:
   pinned on a newer set. Anything ambiguous (two outstanding, unparseable,
   unknown id) still surfaces as the timeout. The one resolved ambiguity: a
   409 `Conflict with newer request` (the publish mutex replaced a *waiting*
-  set with a newer one for the same datapoint, `mutex.js:55-60`) while two
-  or more of ours are outstanding ends the older ones quietly — the user's
-  own later command superseded them. Never attribute by *timing* ("whichever
+  set with a newer one for the same datapoint, `mutex.js:55-60`; the one
+  publishing is never replaced) while two or more of ours are outstanding
+  ends the one sent just before our newest quietly and retires its slot —
+  the user's own later command superseded it; an older, publishing set
+  still reports through its own reply. Never attribute by *timing* ("whichever
   command is in flight") — with concurrent commands from different entities
   that misattributes someone else's failure. The reply (and the error) only
   ever arrives on the session that sent the command (`socket.send`, not a
