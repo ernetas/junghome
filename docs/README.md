@@ -9,6 +9,10 @@ integration.
   partition layout (four partitions), the on-board services, the Bluetooth-Mesh
   stack, the gateway's own role on the mesh (an ordinary node `0x00DC`, not a
   provisioner), and self-hosting without the gateway.
+- **[gateway-system-analysis.md](gateway-system-analysis.md)** — the current
+  (v2.1.3, build 2840) root-partition image in detail: the multi-process
+  Node.js stack under `board_ctrl`, its build projects and versions, and the
+  services' configuration.
 - **[gateway-rest-api.md](gateway-rest-api.md)** — REST API: auth, the
   unauthenticated `/apidoc` spec endpoint, **client registration** (token), and
   the full endpoint list.
@@ -26,9 +30,10 @@ integration.
 - **[cross-repo-analysis.md](cross-repo-analysis.md)** — 2026-09-15 audit
   against the Bluetooth-direct sibling project and the firmware dump: the
   established mechanism of the double-reporting rockers, other settled
-  gateway facts, and what is still open (a hardware verification of the
-  gesture rebuild, a few improvements, and the captures that would close the
-  remaining questions). Every bug and doc correction it raised has landed.
+  gateway facts, and what is still open (a few improvements and the
+  captures that would close the remaining questions; the hardware
+  verification of the gesture rebuild it asked for was done on 2026-09-16).
+  Every bug and doc correction it raised has landed.
 - **[upstream-report-button-double-reporting.md](upstream-report-button-double-reporting.md)** —
   draft report to JUNG on the doubled push-button events (device firmware
   2.2.0.x publishes twice, the gateway ignores the `0x5012` counter), with
@@ -36,6 +41,11 @@ integration.
 - **[matter-bridge.md](matter-bridge.md)** — getting JUNG devices into Matter
   (the gateway's built-in Matter is inactive; bridge from Home Assistant
   instead).
+- **[example-button-automation.md](example-button-automation.md)** —
+  user-facing guide to button automations: the `click` / `hold_start` /
+  `hold_end` events, device triggers and the shipped blueprint.
+- **[publishing.md](publishing.md)** — how releases are cut and how the
+  integration is distributed (HACS default store).
 - **[../tools/ws-capture/](../tools/ws-capture/README.md)** — read-only
   WebSocket capture + analysis tool: timestamps every frame, walks a scripted
   gesture session, and reports the per-gesture timings and burst shapes the
@@ -44,7 +54,8 @@ integration.
 Quick facts:
 
 - Base URL: `https://<gateway>/api/junghome` (TLS, self-signed). `<gateway>` may
-  be the IP or `junghome.local`.
+  be the IP or the announced mDNS name `junghome-<mac>.local` (`junghome.local`
+  is only the certificate's CN and resolves only where local DNS serves it).
 - Auth: `token` header (HS256 JWT). All endpoints need it except `version`,
   `register`, `register/by-password`, `apidoc`.
 - Full live spec: `GET https://<gateway>/api/junghome/apidoc` (no auth).

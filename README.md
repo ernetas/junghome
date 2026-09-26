@@ -284,9 +284,10 @@ entity IDs — Home Assistant will flag them as unavailable until you edit them.
 ## Troubleshooting
 
 **The gateway isn't discovered / `junghome.local` doesn't resolve.**
-mDNS doesn't cross VLANs or most VPNs. Add the integration manually with
-**Add Integration → Jung Home** and type the gateway's IP (e.g.
-`192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
+`junghome.local` is not a name the gateway announces (it announces
+`junghome-<mac>.local`), and mDNS doesn't cross VLANs or most VPNs. Add the
+integration manually with **Add Integration → Jung Home** and type the
+gateway's IP (e.g. `192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
 
 **Setup times out waiting for approval.**
 The gateway only holds the request open for about three minutes. Open the Jung

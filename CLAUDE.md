@@ -69,9 +69,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   edge sequences, the burst shape (presses per gesture — the doubled-firmware
   diagnostic), which channels fired inside one gesture (a single-key element's
   alternating copies) and the timing bounds `const.py`'s
-  `BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` rest on. This is how the
-  two open evidence items (the hardware verification of the gesture rebuild
-  and the cover travel question) get settled; the old `disk_dump/ws-capture*/`
+  `BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` rest on. It settled the
+  hardware verification of the gesture rebuild (2026-09-16) and is how the
+  cover travel question gets settled; the old `disk_dump/ws-capture*/`
   dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
   mapping the event platform's `click`/`hold_start` events to actions (plus

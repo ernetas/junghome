@@ -1,7 +1,8 @@
 # JUNG HOME Gateway — REST API
 
 Base: `https://<gateway>/api/junghome` (TLS, self-signed cert). `<gateway>` can
-be the IP or `junghome.local`. API version 1.5.0.
+be the IP or the mDNS name the gateway announces, `junghome-<mac>.local`
+(`junghome.local` is only the certificate's CN). API version 1.5.0.
 
 ## Authentication
 
