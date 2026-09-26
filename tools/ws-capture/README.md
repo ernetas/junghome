@@ -58,8 +58,8 @@ and echoes matching edges live so you can see the gateway reacting:
 --- step 2/6: single-a ---
     Press and release the button ONCE, quickly. Repeat 3 times,
     pausing ~2 s between presses.
-  [  12.418s] id7ddb371a88bbd01-00c up_request: up_request=1
-  [  12.533s] id7ddb371a88bbd01-00c up_request: up_request=0
+  [  12.418s] id1c2d3e4f5a6b7c8-00c up_request: up_request=1
+  [  12.533s] id1c2d3e4f5a6b7c8-00c up_request: up_request=0
     ...press Enter when done:
 ```
 

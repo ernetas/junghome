@@ -235,11 +235,11 @@ automation:
       - platform: event
         event_type: junghome_scene_recalled
         event_data:
-          label: "Išjungti WC"
+          label: "Küche aus"
     action:
       - service: notify.notify
         data:
-          message: "WC scene was triggered"
+          message: "Kitchen-off scene was triggered"
 ```
 
 The event data is `{ scene_id, label, entry_id, entity_id }` (`entity_id` is

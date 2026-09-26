@@ -71,7 +71,7 @@ A pushed `datapoint` frame carries the updated datapoint object, e.g.:
 ```jsonc
 { "type": "datapoint",
   "data": {
-    "id": "id5f09764942a70ce-001",
+    "id": "id0a1b2c3d4e5f607-001",
     "type": "switch",
     "values": [ { "key": "switch", "value": "1" } ]
   } }
@@ -88,8 +88,8 @@ scene object (note: singular `scene` with an object, distinct from the plural
 { "type": "scene",
   "data": {
     "id": "id0001",
-    "label": "Išjungti WC",
-    "related_functions": [ "id9dc9e42e3bbb3da", "idef507c9c9a01d16" ],
+    "label": "Küche aus",
+    "related_functions": [ "id2d3e4f5a6b7c9d0", "id3e4f5a6b7c8d9e1" ],
     "value": "0001"
   } }
 ```
@@ -118,7 +118,7 @@ matching reply.
 ```jsonc
 { "type": "datapoint",
   "data": {
-    "id": "id5f09764942a70ce-001",
+    "id": "id0a1b2c3d4e5f607-001",
     "values": [ { "key": "switch", "value": "1" } ]
   },
   "message_id": "abc"            // optional
@@ -487,7 +487,7 @@ Every datapoint set is answered by exactly one frame on its session: the
 | `Command with id '<hex>' timed out!` | — | the api-server's own bound on the middleware call (`adapter/mesh-middleware-connection.js` `_sendRequest`, `middleware.command_timeout_ms` = 6000) — any set the middleware has not answered by then, e.g. an unreachable node (each attempt waits out the 3 s mesh response timeout, then 3 s before the next) | at 6 s |
 
 So a full rejection reads e.g. `error: could not set datapoint
-(id5f09764942a70ce-001) value, JungFunctionService: Error during publish
+(id0a1b2c3d4e5f607-001) value, JungFunctionService: Error during publish
 request: Device is locked`. (Errors that are not about a set carry no id:
 `invalid message format, could not find id` / `could not find type` /
 `message type is unknown`, the `not implemented yet` rejections, and a JSON

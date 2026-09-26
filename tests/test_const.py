@@ -20,7 +20,7 @@ from custom_components.junghome.const import (
 
 
 def test_datapoint_suffix_returns_trailing_element_index():
-    assert datapoint_suffix("id5f09764942a70ce-001") == "001"
+    assert datapoint_suffix("id0a1b2c3d4e5f607-001") == "001"
     assert datapoint_suffix("idabc-00e") == "00e"
 
 
