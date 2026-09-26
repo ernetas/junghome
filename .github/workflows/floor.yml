@@ -104,11 +104,18 @@ jobs:
 
       - name: Run the test suite against the floor
         # The eight per-platform `test_all_*_entities` snapshot tests are
-        # deselected: at the floor they differ only by a core-owned serializer
-        # delta (the registry entry's `aliases` renders as `list([None])` on
-        # newer cores, `set({})` at 2025.12.x), which the snapshots pinned on
-        # the current core cannot match and nothing in the integration
-        # causes. Everything else must pass here.
+        # deselected: the snapshots pinned on the current core cannot match
+        # the floor's core-owned output, and nothing in the integration
+        # causes the difference. Regenerated at 2025.12.4 they differ in
+        # exactly these (syrupy reports only the first, `aliases`): the
+        # registry entry's `aliases` (`list([None])` on newer cores,
+        # `set({})` at the floor) and its `object_id_base` (absent at the
+        # floor); state attribute keys (enum reprs such as
+        # `<EntityStateAttribute.DEVICE_CLASS: 'device_class'>` on newer
+        # cores, plain strings at the floor); the cover's `is_closed`
+        # attribute (absent at the floor); and the light's deprecated
+        # `min_mireds`/`max_mireds`/`color_temp` (present at the floor).
+        # Everything else must pass here.
         run: |
           python3 -m pytest -q \
             --deselect tests/test_binary_sensor.py::test_all_binary_sensor_entities \

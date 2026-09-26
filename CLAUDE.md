@@ -559,8 +559,8 @@ instead of re-deriving:
   and runs the full suite against the `hacs.json` minimum HA on every
   branch, with `FLOOR_PHCC` = the phcc release pinning the nearest older
   core — bump it with the floor; the eight `test_all_*_entities` snapshots
-  are deselected there, their only floor delta being core's `aliases`
-  serializer; a floor break means *raise the floor*, not block the release,
+  are deselected there, their floor deltas all core-owned (Pass 6 lists
+  them); a floor break means *raise the floor*, not block the release,
   unless the missing name is type-only, which goes under `TYPE_CHECKING` as
   `repairs.py` does), `canary.yml` (weekly/manual, non-gating: the full
   suite against the newest stable HA that has a matching phcc — an early
@@ -768,9 +768,14 @@ coherent. **Run the suite on a real floor venv**, not just the import check:
 no `pytest-homeassistant-custom-component` release pins the floor, so install
 the one pinning the nearest older core (0.13.300 for 2025.12.4) and then
 `pip install --only-binary litellm homeassistant==<floor>`; the only expected
-floor-only failures are the eight `test_all_*_entities` snapshots
-(`aliases: list([None])` vs `set({})`, a core-owned serializer delta).
-Anything else is a finding — a name that exists only on newer cores
+floor-only failures are the eight `test_all_*_entities` snapshots, with
+core-owned deltas only — regenerated at 2025.12.4: registry `aliases`
+(`list([None])` vs `set({})`) and `object_id_base` (absent), state
+attribute keys as plain strings instead of `<…Attribute.X: 'k'>` enum
+reprs, no cover `is_closed`, and the light's `min_mireds`/`max_mireds`/
+`color_temp`. syrupy stops at the first failing key (`aliases`), so check
+a floor-only change by regenerating them in a scratch copy
+(`--snapshot-update`) and diffing. Anything else is a finding — a name that exists only on newer cores
 (`RepairsFlowResult`, HA 2026.6) shipped through eight betas because
 `floor.yml` ran on `main` only and never on the integration branch.
 
