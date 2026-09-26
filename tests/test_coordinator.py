@@ -866,21 +866,45 @@ async def test_concurrent_commands_do_not_cross_resolve(hass: HomeAssistant) -> 
     await task_a
 
 
-async def test_scenes_broadcast_full_new_deleted(hass: HomeAssistant) -> None:
-    """scenes / scenes-new / scenes-deleted maintain the cached scene list."""
+async def test_scenes_broadcast_full_list_then_id_deltas(hass: HomeAssistant) -> None:
+    """The full ``scenes`` list is adopted; the id-string deltas are not consumed.
+
+    Wire order per change (`websocket-server-service.js:356-359`): the full
+    list first, then ``scenes-new`` / ``scenes-deleted`` carrying only the
+    added / removed ids as strings (`jung-scenes-service.js:165-170`).
+    """
     coordinator = _coordinator(hass)
-    coordinator._handle_scenes_broadcast(
-        "scenes", [{"id": "id1", "label": "A"}, {"id": "id2", "label": "B"}]
+    coordinator._handle_websocket_message(
+        {
+            "type": "scenes",
+            "data": [
+                {"id": "id0001", "label": "A", "value": "0001"},
+                {"id": "id0002", "label": "B", "value": "0002"},
+            ],
+        }
     )
-    assert {s["id"] for s in coordinator.scenes} == {"id1", "id2"}
+    assert [s["id"] for s in coordinator.scenes] == ["id0001", "id0002"]
 
-    coordinator._handle_scenes_broadcast("scenes-new", [{"id": "id3", "label": "C"}])
-    assert {s["id"] for s in coordinator.scenes} == {"id1", "id2", "id3"}
+    # A scene added in the app.
+    added = [
+        {"id": "id0001", "label": "A", "value": "0001"},
+        {"id": "id0002", "label": "B", "value": "0002"},
+        {"id": "id0003", "label": "C", "value": "0003"},
+    ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": added})
+    coordinator._handle_websocket_message({"type": "scenes-new", "data": ["id0003"]})
+    assert coordinator.scenes == added
 
-    coordinator._handle_scenes_broadcast(
-        "scenes-deleted", [{"id": "id1", "label": "A"}]
+    # A scene deleted in the app.
+    remaining = [
+        {"id": "id0002", "label": "B", "value": "0002"},
+        {"id": "id0003", "label": "C", "value": "0003"},
+    ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": remaining})
+    coordinator._handle_websocket_message(
+        {"type": "scenes-deleted", "data": ["id0001"]}
     )
-    assert {s["id"] for s in coordinator.scenes} == {"id2", "id3"}
+    assert coordinator.scenes == remaining
 
 
 class _FakeResponse:
@@ -993,33 +1017,29 @@ async def test_unexpected_error_in_frame_handler_is_contained(
     )
 
 
-async def test_scenes_new_dedupes_by_label_keeping_newest(
+async def test_scenes_new_delta_keeps_the_full_list_order(
     hass: HomeAssistant,
 ) -> None:
-    """A scenes-new delta re-keying a label to a new id drops the old entry.
+    """A ``scenes-new`` delta must not reshuffle the adopted full list.
 
-    Scene identity is the label; after a firmware update regenerates ids, the
-    old and new entries would otherwise sit side by side and activation could
-    resolve the dead id. Unlabeled scenes are kept (diagnostics only).
+    Two scenes may share a label; recall (`activate_scene`) and the scene
+    platform both resolve the FIRST label match in the full list. The delta
+    handler used to "dedupe by label, newest wins", which on any delta kept
+    the LAST duplicate and dropped the first — the scene recall resolves —
+    without the delta (a list of id strings) contributing anything.
     """
     coordinator = _coordinator(hass)
-    coordinator.scenes = [
-        {"id": "old-id", "label": "Movie Night"},
-        {"id": "keep-id", "label": "Dinner"},
+    full = [
+        {"id": "id0001", "label": "Movie Night", "value": "0001"},
+        {"id": "id0002", "label": "Dinner", "value": "0002"},
+        {"id": "id0003", "label": "Movie Night", "value": "0003"},
+        {"id": "id0004", "value": "0004"},
     ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": full})
     coordinator._handle_websocket_message(
-        {
-            "type": "scenes-new",
-            "data": [
-                {"id": "new-id", "label": "Movie Night"},
-                {"id": "no-label"},
-            ],
-        }
+        {"type": "scenes-new", "data": ["id0003", "id0004"]}
     )
-    by_label = {s.get("label"): s.get("id") for s in coordinator.scenes}
-    assert by_label["Movie Night"] == "new-id"
-    assert by_label["Dinner"] == "keep-id"
-    assert {"id": "no-label"} in coordinator.scenes
+    assert coordinator.scenes == full
 
 
 async def test_scene_recall_without_id_is_ignored(hass: HomeAssistant) -> None:

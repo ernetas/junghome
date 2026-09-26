@@ -425,9 +425,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # stamped on every device as `sw_version`, which reported "1.5.0" for a
         # gateway running firmware 2.1.3.
         self.api_version: str | None = None
-        # Scene list, populated from the WebSocket `scenes` broadcasts (full list
-        # on connect, `scenes-new` / `scenes-deleted` deltas on change). The scene
-        # platform discovers from this; recall goes over REST because the
+        # Scene list, populated from the WebSocket `scenes` broadcasts (the full
+        # list, on connect and on every change; the `scenes-new` /
+        # `scenes-deleted` id deltas that follow a change are ignored). The
+        # scene platform discovers from this; recall goes over REST because the
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
         # Last `groups` broadcast (per-room capability metadata, e.g. which groups
@@ -2384,8 +2385,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # missing datapoint_id for a frame that was never malformed.
             _LOGGER.debug("Received %s frame (ignored): %s", msg_type, message)
         elif isinstance(data, list):
-            if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
-                self._handle_scenes_broadcast(msg_type, data)
+            if msg_type == "scenes":
+                self._handle_scenes_broadcast(data)
             elif msg_type == "groups":
                 # Full groups list (on connect and on change). Carries per-room
                 # capability metadata (area names, colour-temperature ranges) and
@@ -2394,6 +2395,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             elif msg_type == "functions":
                 self._handle_functions_broadcast(data)
             else:
+                # Includes every `*-new` / `*-deleted` delta (`scenes-`,
+                # `groups-`, `devices-`): their data is a list of id STRINGS,
+                # not objects (`jung-scenes-service.js:165-170`,
+                # `jung-group-service.js:166-170`,
+                # `jung-device-service.js:287-291`), and the scene and group
+                # deltas are only ever sent right after the full list they were
+                # diffed from (`websocket-server-service.js:356-359`, `:392-396`)
+                # — which is already adopted above. The device deltas describe
+                # the lower-level device list; membership comes from
+                # `functions`.
                 _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
         else:
             _LOGGER.warning(
@@ -2535,42 +2546,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.async_set_updated_data(devices)
         self._schedule_node_identity_refetch(devices)
 
-    def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:
-        """Update the cached scene list from a WebSocket scenes broadcast.
+    def _handle_scenes_broadcast(self, data: list[Any]) -> None:
+        """Replace the cached scene list from a WebSocket ``scenes`` broadcast.
 
-        The gateway pushes the full ``scenes`` list on connect and on change, and
-        ``scenes-new`` / ``scenes-deleted`` deltas when scenes are added/removed
-        in the app. The scene platform discovers from ``self.scenes`` and is
-        notified via ``async_update_listeners`` so new scenes appear without a
-        reload. (The WebSocket ``scene`` *command* is unimplemented on the
-        gateway, so recall still goes over REST — see ``activate_scene``.)
+        The gateway pushes the full ``scenes`` list on connect and on every
+        change. The scene platform discovers from ``self.scenes`` and is
+        notified via ``async_update_listeners`` so new scenes appear (and
+        deleted ones go) without a reload. The ``scenes-new`` /
+        ``scenes-deleted`` frames that follow a change carry only the added /
+        removed ids, diffed from the list this has just adopted, so they are
+        not consumed (see ``_handle_websocket_message``). (The WebSocket
+        ``scene`` *command* is unimplemented on the gateway, so recall still
+        goes over REST — see ``activate_scene``.)
         """
-        items = cast("list[Scene]", [s for s in data if isinstance(s, dict)])
-        if msg_type == "scenes":
-            self.scenes = items
-        elif msg_type == "scenes-new":
-            by_id = {s.get("id"): s for s in self.scenes}
-            for scene in items:
-                by_id[scene.get("id")] = scene
-            # De-duplicate by label, newest wins. Scene identity is the label
-            # (a scene's id is `id` + hex(mesh scene number), a number the app
-            # may reassign — see `models.Scene`), so a delta that assigned a
-            # scene a new id would otherwise leave the old and new entries side
-            # by side — and activation resolves the FIRST label match, which
-            # could be the dead id. Scenes without a label can't back an entity
-            # but are kept for diagnostics.
-            by_label: dict[str, Scene] = {}
-            unlabeled: list[Scene] = []
-            for scene in by_id.values():
-                label = scene.get("label")
-                if label:
-                    by_label[label] = scene
-                else:
-                    unlabeled.append(scene)
-            self.scenes = [*by_label.values(), *unlabeled]
-        else:  # scenes-deleted
-            removed = {s.get("id") for s in items}
-            self.scenes = [s for s in self.scenes if s.get("id") not in removed]
+        self.scenes = cast("list[Scene]", [s for s in data if isinstance(s, dict)])
         self.async_update_listeners()
 
     def _handle_scene_recall(self, data: dict[str, Any]) -> None:

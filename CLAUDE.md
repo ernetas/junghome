@@ -226,8 +226,11 @@ JUNG HOME Gateway over its REST API and WebSocket.
   (diagnostics only); `gateway_version` holds the latter and is what reaches
   `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
 - Scenes arrive over the WS `scenes` broadcasts (plus a setup-time REST fetch)
-  and recall over REST `POST /scenes/{id}` — the WS `scene` *command* is
-  unimplemented on the gateway. Scene identity is the **label**; recalls
+  — the full list, on connect and on change; the `scenes-new` /
+  `scenes-deleted` frames that follow a change carry only id strings and are
+  not consumed (as for every `*-new`/`*-deleted` frame) — and recall over
+  REST `POST /scenes/{id}` — the WS `scene` *command* is unimplemented on
+  the gateway. Scene identity is the **label**; recalls
   re-resolve the id at call time. (The scene `id` is in fact derived —
   `"id"` + hex(mesh scene number), `id0001` ↔ `value` `"0001"` — so it is
   stabler than the device ids; the label-keyed design stays for existing
