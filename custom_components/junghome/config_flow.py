@@ -186,9 +186,10 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
         A flagged cover missing from the current poll may only be offline, so
         keep it (labelled by its uid) if its entity still exists — saving must
         not silently clear it. But a uid with no live cover *and* no registered
-        entity is orphaned: its device was removed or relabelled, which changes
-        the label-derived unique_id, so the platform registered a fresh cover
-        and the stale one was pruned. The old code resurrected such orphans as
+        entity is orphaned: its device was removed, or relabelled in a way
+        rename following could not pair (a followed rename re-points the flag
+        itself), so the platform registered a fresh cover and the stale one was
+        pruned. The old code resurrected such orphans as
         a permanent, un-removable raw-slug row here; drop them so the list
         matches the covers that actually exist. Used by both the form build
         and the no-covers save path, so the two can never disagree about which

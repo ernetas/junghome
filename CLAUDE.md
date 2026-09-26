@@ -342,8 +342,11 @@ instead of re-deriving:
   location pairs a rename combined with re-provisioning, but only at setup
   (live, the new id has no identity yet — it becomes a new device).
   Deliberately not followed: a label moved to another element (name reuse,
-  swaps — entities follow the name), colliding slugs, and a target
-  `unique_id` already taken (warned, left as a new device). The old contract
+  swaps — entities follow the name), colliding slugs, a target `unique_id`
+  or identifier already taken, and a device another gateway's entry shares
+  (before HA 2026.9 — its entities are that gateway's) — each warned, left as
+  a new device. The cover platform reads the inverted flags on every
+  discovery pass, since a followed rename moves them without a reload. The old contract
   ("a relabel is a new device") survives only for those; the manual delete
   and the pruner cover them. Tests: the "Rename following" section of
   `tests/test_init.py`.

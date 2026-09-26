@@ -407,10 +407,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None when the owning device carries no id, which entities treat as
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
-        # Gateway firmware version, reported by the WebSocket "version" frame.
-        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
-        # over REST (`async_fetch_gateway_version`). This is what a device page
-        # should show as `sw_version`.
+        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", read from
+        # REST `GET /version/` (`async_fetch_gateway_version`) — not the
+        # WebSocket "version" frame, which carries the API version. This is
+        # what a device page shows as `sw_version`.
         self.gateway_version: str | None = None
         # Device-registry id of the synthetic gateway (hub) device, set by
         # ``async_setup_entry`` right after it registers the hub and before any
@@ -848,6 +848,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         entry = self.config_entry
         if entry is None or self._anchor_store is None:
             return  # a bare coordinator: nothing persisted, nothing to follow
+        if self._closing:
+            # A refresh that outlived ``stop()`` (an untracked push-triggered
+            # one, the debouncer's cooldown timer) must not touch the registry
+            # or schedule a save past the unload's flush — on entry removal
+            # that re-created the store file after it was deleted. The next
+            # setup follows from the flushed map.
+            return
         colliding = duplicate_slugs(devices)
         live = {
             device_slug(d): d
@@ -920,13 +927,29 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if old_device is None:
             return False
         label = str(device.get("label"))
+        if old_device.config_entries - {entry_id}:
+            # Before Home Assistant 2026.9 identifiers are registry-wide, so
+            # another gateway's function with the same label shares this
+            # device; its entities and the identifier are that gateway's too.
+            _LOGGER.warning(
+                "Jung Home: %s was renamed to %s in the app, but its Home "
+                "Assistant device is shared with another gateway's function of "
+                "the same label; treating it as a new device",
+                old_device.name,
+                label,
+            )
+            return False
         prefix = f"{old_slug}_"
         renames: list[tuple[er.RegistryEntry, str]] = []
         for entity in er.async_entries_for_device(
             ent_reg, old_device.id, include_disabled_entities=True
         ):
-            if entity.platform != DOMAIN or not entity.unique_id.startswith(prefix):
-                continue  # not ours, or not keyed by the slug: left alone
+            if (
+                entity.platform != DOMAIN
+                or entity.config_entry_id != entry_id
+                or not entity.unique_id.startswith(prefix)
+            ):
+                continue  # not this entry's, or not keyed by the slug: left alone
             new_uid = f"{new_slug}_{entity.unique_id[len(prefix) :]}"
             if ent_reg.async_get_entity_id(entity.domain, DOMAIN, new_uid) is not None:
                 _LOGGER.warning(
@@ -2605,10 +2628,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """Push the firmware version onto our devices in the registry.
 
         An entity's ``device_info`` is only read when it is first added, which
-        may happen before the WebSocket ``version`` frame arrives. Update the
-        registry directly so the device page shows the version without needing a
-        reload. Combined with the ``device_info`` fallback this covers either
-        ordering (entities created before or after the frame).
+        may happen before ``GET /version/`` has answered (setup reads it before
+        the platforms, but a failed read is retried on a later session). Update
+        the registry directly so the device page shows the version without
+        needing a reload. Combined with the ``device_info`` fallback this covers
+        either ordering (entities created before or after the read).
 
         The value written per device mirrors ``JungHomeEntity.device_info``
         exactly: a device that reports its **own** ``sw_version`` keeps it, and

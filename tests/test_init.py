@@ -11,6 +11,7 @@ from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
+import attr
 import pytest
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.config_entries import ConfigEntryState
@@ -3455,7 +3456,7 @@ async def test_rename_keeps_foreign_identifiers(hass: HomeAssistant) -> None:
     coordinator = entry.runtime_data
     old = _device(hass, "Hall Light")
     dr.async_get(hass).async_update_device(
-        old.id, merge_identifiers={("other_domain", "radio-1")}
+        old.id, new_identifiers=old.identifiers | {("other_domain", "radio-1")}
     )
     relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
     await _poll(hass, coordinator, relabelled)
@@ -3635,6 +3636,16 @@ async def test_rename_is_not_followed_onto_a_taken_unique_id(
     await hass.async_block_till_done()
 
 
+# Before HA 2026.9 device identifiers are unique registry-wide, so two
+# gateways' functions of the same label share ONE device; 2026.9 scopes them
+# per config entry (a device has exactly one) and these cases cannot arise.
+registry_wide_identifiers = pytest.mark.skipif(
+    "config_entry_id" in attr.fields_dict(dr.DeviceEntry),
+    reason="device identifiers are per config entry from HA 2026.9",
+)
+
+
+@registry_wide_identifiers
 async def test_rename_onto_another_gateways_label_is_not_followed(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3833,6 +3844,60 @@ async def test_entry_removed_before_the_delayed_save_leaves_no_store(
     assert _anchors_key(entry) not in hass_storage
 
 
+async def test_a_refresh_outliving_the_removal_leaves_no_store(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """A refresh still fetching when the entry is removed must not save afterwards.
+
+    The refresh a new device's first push requests is not an entry task, so
+    removal does not cancel it; its list always changes the anchors (a new
+    device), and saving from the stopped coordinator re-created the store.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    await flush_store(coordinator._anchor_store)
+    coordinator._debounced_refresh.async_cancel()
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    with_new = [
+        *_identified_devices(),
+        {
+            "id": "idnewlamp",
+            "type": "OnOff",
+            "label": "New Lamp",
+            "datapoints": [
+                {
+                    "id": "idnewlamp-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "1"}],
+                }
+            ],
+        },
+    ]
+
+    async def slow_fetch(*_args: object) -> list[dict]:
+        started.set()
+        await gate.wait()
+        return with_new
+
+    with patch.object(coordinator, "_fetch_devices_from_api", slow_fetch):
+        # A new device's first push, before any poll knows it.
+        coordinator._handle_datapoint_push(
+            {"type": "datapoint"},
+            {"id": "idnewlamp-001", "values": [{"key": "switch", "value": "1"}]},
+        )
+        await asyncio.wait_for(started.wait(), 1)
+        with contextlib.ExitStack() as stack:
+            for stub in _gateway_stubs(None, _project_export()):
+                stack.enter_context(stub)
+            await hass.config_entries.async_remove(entry.entry_id)
+        assert _anchors_key(entry) not in hass_storage
+        gate.set()
+        await hass.async_block_till_done()
+    await flush_store(coordinator._anchor_store)
+    assert _anchors_key(entry) not in hass_storage
+
+
 def _awning(label: str = "Patio Awning", function_id: str = "idawning") -> dict:
     """A position-only cover (an awning once the user flags it inverted)."""
     return {
@@ -3998,14 +4063,26 @@ async def test_inverted_cover_renamed_while_ha_was_down(
         await hass.async_block_till_done()
 
 
-async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
-    hass: HomeAssistant,
-) -> None:
-    """Two gateways with the same label share one device before HA 2026.9.
+_OTHER_GATEWAY_HALL_LIGHT = [
+    {
+        "id": "idotherhall",
+        "type": "OnOff",
+        "label": "Hall Light",
+        "datapoints": [
+            {
+                "id": "idotherhall-002",
+                "type": "switch",
+                "values": [{"key": "switch", "value": "0"}],
+            }
+        ],
+    }
+]
 
-    The pruner of the gateway that lost the function detaches its own entry
-    (and its entities); the other gateway's entities stay.
-    """
+
+async def _two_gateways_sharing_hall_light(
+    hass: HomeAssistant,
+) -> tuple[MockConfigEntry, MockConfigEntry]:
+    """Two gateways, each with a "Hall Light": ONE device before HA 2026.9."""
     entry = await _setup_with_export(hass, _project_export())
     other = MockConfigEntry(
         domain=DOMAIN,
@@ -4013,27 +4090,28 @@ async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
         data={CONF_HOST: "5.6.7.8", CONF_TOKEN: "tok"},
     )
     other.add_to_hass(hass)
-    other_devices = [
-        {
-            "id": "idotherhall",
-            "type": "OnOff",
-            "label": "Hall Light",
-            "datapoints": [
-                {
-                    "id": "idotherhall-002",
-                    "type": "switch",
-                    "values": [{"key": "switch", "value": "0"}],
-                }
-            ],
-        }
-    ]
     with contextlib.ExitStack() as stack:
-        for stub in _gateway_stubs(other_devices, None):
+        for stub in _gateway_stubs(copy.deepcopy(_OTHER_GATEWAY_HALL_LIGHT), None):
             stack.enter_context(stub)
         await hass.config_entries.async_setup(other.entry_id)
         await hass.async_block_till_done()
+    assert _device(hass, "Hall Light").config_entries == {
+        entry.entry_id,
+        other.entry_id,
+    }
+    return entry, other
+
+
+@registry_wide_identifiers
+async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
+    hass: HomeAssistant,
+) -> None:
+    """The pruner of the gateway that lost the function detaches only itself.
+
+    Its own entities go with it; the other gateway's entities stay.
+    """
+    entry, other = await _two_gateways_sharing_hall_light(hass)
     shared = _device(hass, "Hall Light")
-    assert shared.config_entries == {entry.entry_id, other.entry_id}
     ent_reg = er.async_get(hass)
     without = [d for d in _identified_devices() if d["id"] != HALL_LIGHT_ID]
     await _poll(hass, entry.runtime_data, without, times=STALE_DEVICE_PRUNE_MISSES)
@@ -4045,6 +4123,93 @@ async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
     assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_002")
     for loaded in (entry, other):
         await hass.config_entries.async_unload(loaded.entry_id)
+    await hass.async_block_till_done()
+
+
+@registry_wide_identifiers
+async def test_rename_of_a_device_another_gateway_shares_is_not_followed(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Following it would re-key the other gateway's entities and identifier.
+
+    The other gateway still calls its function "Hall Light"; once this
+    gateway's pruner detached itself, that gateway's light was gone until a
+    reload. Not followed, the renamed function is a new device here.
+    """
+    entry, other = await _two_gateways_sharing_hall_light(hass)
+    ent_reg = er.async_get(hass)
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _poll(hass, entry.runtime_data, relabelled, times=2)
+    assert "shared with another gateway" in caplog.text
+    other_light = ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_002")
+    assert other_light is not None
+    other_device = dr.async_get(hass).async_get(
+        ent_reg.async_get(other_light).device_id
+    )
+    assert (DOMAIN, "hall_light") in other_device.identifiers
+    await _poll(
+        hass,
+        other.runtime_data,
+        _OTHER_GATEWAY_HALL_LIGHT,
+        times=STALE_DEVICE_PRUNE_MISSES + 2,
+    )
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_002")
+    for loaded in (entry, other):
+        await hass.config_entries.async_unload(loaded.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_new_cover_given_a_renamed_awnings_old_label_is_not_inverted(
+    hass: HomeAssistant,
+) -> None:
+    """The flag followed the rename; the label it left behind is not flagged."""
+    devices = [*_identified_devices(), _awning()]
+    entry = _prepared_entry(hass, options={CONF_INVERTED_COVERS: ["patio_awning_001"]})
+    renamed = _relabelled(devices, "idawning", "Terrace Awning")
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    await _poll(hass, entry.runtime_data, renamed)
+    with_new = [*renamed, _awning("Patio Awning", "idnewshutter")]
+    await _poll(hass, entry.runtime_data, with_new)
+    entity_id = er.async_get(hass).async_get_entity_id(
+        Platform.COVER, DOMAIN, "patio_awning_001"
+    )
+    assert entity_id is not None
+    assert hass.states.get(entity_id).attributes["device_class"] == "shutter"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_a_renamed_awning_pruned_and_reported_again_stays_inverted(
+    hass: HomeAssistant,
+) -> None:
+    """Re-created under its new unique_id, the cover reads the flag it now has."""
+    devices = [*_identified_devices(), _awning()]
+    entry = _prepared_entry(hass, options={CONF_INVERTED_COVERS: ["patio_awning_001"]})
+    renamed = _relabelled(devices, "idawning", "Terrace Awning")
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    await _poll(hass, entry.runtime_data, renamed)
+    without = [d for d in renamed if d["id"] != "idawning"]
+    await _poll(hass, entry.runtime_data, without, times=STALE_DEVICE_PRUNE_MISSES)
+    ent_reg = er.async_get(hass)
+    assert (
+        ent_reg.async_get_entity_id(Platform.COVER, DOMAIN, "terrace_awning_001")
+        is None
+    )
+    await _poll(hass, entry.runtime_data, renamed)
+    entity_id = ent_reg.async_get_entity_id(
+        Platform.COVER, DOMAIN, "terrace_awning_001"
+    )
+    assert entity_id is not None
+    assert hass.states.get(entity_id).attributes["device_class"] == "awning"
+    await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
 
@@ -4080,7 +4245,8 @@ async def test_a_swapped_node_keeps_other_kinds_of_connection(
     light = _device(hass, "Hall Light")
     dr.async_get(hass).async_update_device(
         light.id,
-        merge_connections={(dr.CONNECTION_NETWORK_MAC, "02:00:00:00:00:01")},
+        new_connections=light.connections
+        | {(dr.CONNECTION_NETWORK_MAC, "02:00:00:00:00:01")},
     )
     coordinator.node_identities = MappingProxyType(
         {
@@ -4584,3 +4750,48 @@ async def test_device_new_in_a_capability_reload_broadcast_joins_the_reloaded_en
         assert _live_light(hass, "light.garden").coordinator is reloaded
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_no_platform_discovers_while_the_entry_unloads(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Every platform's discovery listener stands down during an unload.
+
+    Each would otherwise re-claim every unique_id its ``known`` set lost (the
+    scenes platform: add the new scene) on the dispatch below. The fixture
+    has no presence detector, so one joins the list for the binary sensors.
+    """
+    entry = init_integration
+    coordinator = entry.runtime_data
+    domains = set(coordinator._known_unique_ids)
+    assert {"light", "switch", "sensor", "cover", "climate", "event"} <= domains
+    for known in coordinator._known_unique_ids.values():
+        known.clear()
+    coordinator.data = [
+        *coordinator.data,
+        {
+            "id": "idbwm1",
+            "type": "Measurement",
+            "label": "Hallway Motion",
+            "datapoints": [
+                {
+                    "id": "idbwm1-001",
+                    "type": "quantity",
+                    "values": [
+                        {"key": "quantity", "value": "1"},
+                        {"key": "quantity_label", "value": "Presence Detected"},
+                        {"key": "quantity_unit", "value": ""},
+                    ],
+                }
+            ],
+        },
+    ]
+    coordinator.scenes = [{"id": "idnew", "label": "Late Scene"}]
+    entry._async_set_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS, None)
+    try:
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert all(not known for known in coordinator._known_unique_ids.values())
+        assert hass.states.get("scene.late_scene") is None
+    finally:
+        entry._async_set_state(hass, ConfigEntryState.LOADED, None)

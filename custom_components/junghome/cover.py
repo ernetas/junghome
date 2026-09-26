@@ -110,16 +110,20 @@ async def async_setup_entry(
     """Set up Jung Home covers from a config entry."""
     coordinator = entry.runtime_data
     known = coordinator.known_unique_ids(Platform.COVER)
-    # Covers the user has flagged as inverted (e.g. awnings); their position maps
-    # through unchanged instead of being inverted. Read once here — an options
-    # change reloads the entry (see __init__.async_reload_entry), re-running setup.
-    inverted = set(entry.options.get(CONF_INVERTED_COVERS, []))
 
     @callback
     def _discover_covers() -> None:
         """Add entities for any covers not yet created (handles devices added later)."""
         if entry_unloading(entry):
             return
+        # Covers the user has flagged as inverted (e.g. awnings); their position
+        # maps through unchanged instead of being inverted. Read per pass, not
+        # once at setup: a followed rename re-points the option WITHOUT a
+        # reload (the live cover keeps the flag it was built with), so a cover
+        # added later — the renamed one re-added after a prune, or a new one
+        # given the old label — must see the current set. A change made in the
+        # options flow still reloads the entry.
+        inverted = set(entry.options.get(CONF_INVERTED_COVERS, []))
         new_entities: list[JungHomeCover] = []
         for device in coordinator.data or []:
             if device.get("type") not in ("Position", "PositionAndAngle"):
