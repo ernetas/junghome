@@ -333,10 +333,12 @@ service-wide `_prevButtonType`, so the two copies of one click land on
 0/1) the event byte carries the side, so both copies repeat the same channel
 — the "same channel, not alternating" verdict of the 2026-08-02 capture (a
 rocker) and the alternating pattern the sibling captured on key elements are
-both right, per element type. A *hold* on a single-key element has not been
-captured through the gateway; by the code its second event-6 copy lands on
-the other datapoint (a value change, so not suppressed), so expect a different
-shape there. Upstream report material: a one-line counter dedupe in
+both right, per element type. A *hold* on a single-key element is different:
+its second event-6 copy lands on the other datapoint (a value change, so not
+suppressed) while the first side is still down — captured live on 2026-09-16
+(1 of 4 holds, table below) and in the middleware log on 10 of 25 key-element
+holds after the device update (0 of 38 before; regression section below).
+Upstream report material: a one-line counter dedupe in
 `btmesh_property_service.js` would fix all of it.
 
 Three facts follow, and they set the design space for any gesture logic:
@@ -389,7 +391,9 @@ is still down, and the finger's release (event 4, `prevButtonType`) then
 lands there too. `event.py` treats a press on the other side of a device
 whose one side has been down for 0.6–2.5 s as that copy and completes the
 hold with the copy's release (`BUTTON_HOLD_COPY_AFTER` /
-`BUTTON_HOLD_COPY_WINDOW`). Why three of four holds carried no copy is
+`BUTTON_HOLD_COPY_WINDOW`). The gateway's own log shows the same shape on
+10 of 25 key-element holds after the device update (regression section
+below), so it is common, not a fluke. Why the other holds carried no copy is
 unknown (mesh loss, or the device re-publishing the *current* key state
 rather than the message — the simultaneous mesh capture in
 `docs/cross-repo-analysis.md` §5 would tell).
@@ -403,11 +407,13 @@ middleware logs every state *change*, including each button edge and each
 device's `software_revision`:
 
 - **The device firmware update is in the log.** All 53 functions' revisions
-  were read as v2.0.0.4 at the 06-20 start; then 52 of them change to
-  v2.2.0.x — 2.2.0.2 on every button and most lights, 2.2.0.1 on seven
-  on/off actuators and sockets — in two waves: 16 functions on 2026-07-25
-  23:11 → 07-27 00:01, the rest on 2026-07-27 09:26–10:30 (the 53rd, a
-  button, is not re-read before the log ends). The timestamps are when the
+  were read as v2.0.0.4 at the 06-20 start. One of them, a button, left the
+  project on 06-28 (`devices_service.js`: `found 53 devices` on 06-20 20:24,
+  `found 52 devices` on 06-28 11:38; the button's last line is 11:38:03).
+  All 52 still in the project then change to v2.2.0.x — 2.2.0.2 on all 23
+  buttons and most lights, 2.2.0.1 on seven on/off actuators and sockets —
+  in two waves: 16 functions on 2026-07-25 23:11 → 07-27 00:01, the rest on
+  2026-07-27 09:26–10:30. The timestamps are when the
   gateway's hourly re-read (`SoftwareRevisionState.js`, `POLL_60MIN`) saw
   the new value, so the update itself can precede them by up to ~1 h. App
   2.2.x is what pushes device firmware (issue #66).
@@ -417,7 +423,17 @@ device's `software_revision`:
   **1.13 presses/burst before** (268 presses in 237 bursts, 06-22 → 07-27;
   89 % single presses, the rest genuine multi-taps) and **2.53 after** (86
   in 34, 07-26 → 07-28; not one single press). A 3 s split gives 1.18 →
-  2.97; the before/after contrast does not depend on it.
+  2.97; the before/after contrast does not depend on it. Every button edge
+  in the log is a **single-key** event — its 900 edge lines carry only the
+  modes `pushed`/`held`/`released` (events 5/6/4,
+  `btmesh_property_service.js:212-221`), never the rocker modes
+  `pushed_up`/`pushed_down`/`held_*` (events 0–3) — so these figures date
+  the change on single-key elements; the rocker side rests on the
+  2026-08-02 and 2026-09-16 captures.
+- **The copied single-key hold is in the log too, and common.** A `held: 1`
+  on the other side of the same function within 2 s of the first, whose
+  release then lands on the copy's side (the 2026-09-16 shape): 10 of the 25
+  holds after the update, 0 of the 38 before.
 
 So the double publication above is the new device firmware's behaviour.
 Gesture logic must tolerate BOTH reporting styles: one pair per tap
@@ -477,10 +493,16 @@ request: Device is locked`. (Errors that are not about a set carry no id:
 `message type is unknown`, the `not implemented yet` rejections, and a JSON
 parse error.)
 
-**Superseded sets (409).** Every mesh publish goes through one gateway-wide
-lock, `MutexID` in `middleware/dist/util/mutex.js`, keyed by the state id —
-which *is* the datapoint id (`device_state_service.js` `getState(state_id)`,
-called with the datapoint id). The lock is global (one publish at a time);
+**Superseded sets (409).** Every Generic, Property and scene publish goes
+through one gateway-wide lock, `MutexID` in `middleware/dist/util/mutex.js`
+(`util/device_state_helper.js` `sendIntervalGenericClientSet`,
+`sendPropertySet`, `sendGenericPropertySet`, `sendSceneRecall`), keyed by the
+state id — which *is* the datapoint id (`device_state_service.js`
+`getState(state_id)`, called with the datapoint id) — or, for a scene
+recall, the scene id. The status LED's user message (`sendKeyStatus`,
+`device_state_helper.js:274-290`, from `StatusLedState.js:85`) takes no
+lock, so an LED set is never superseded and never gets a 409. The lock is
+global (one locked publish at a time);
 the key only matters for the waiting queue, which holds at most one request
 per id: when a set arrives while the lock is held and a set for the **same
 datapoint** is already *waiting*, the waiting one is rejected with `deferred

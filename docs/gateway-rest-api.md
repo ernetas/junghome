@@ -33,7 +33,7 @@ everything `/functions/` drops. Probed 2026-09-16 (49 devices, 187 KB):
 | `states[*].statistics` | `reachable`, `last_seen` (s), `latest_request` (ms), `retry_attempts`, `connection_quality` (0–100), `not_supported`. **Not live**: the api-server answers from its cache, which takes a state's object only when its *value* changes (or the whole device list is republished) — `jung-device-service.js:249-276` — and the middleware serialises that object *before* the mesh answer is counted (`device_state_service.js:249-253`: `communicateToAPI`, then `notify_received`). So the flags are a snapshot from before the state's last change was acknowledged: 162 states/properties of the probe held a value yet read `reachable: false`, `last_seen: 0`. The live flag would not help either: `reachable` means "the last request for this state was answered" (`models/device-states.js:596-619`, false after `state_acceptable_request_fails` failures, which also resets the value to `NaN`), and push buttons never answer requests for their key states. Not an availability signal |
 | `states[*].profile` | `index` (the datapoint suffix, in hex: `input_power` index 16 ↔ `-010`), `range`, `unit`, `readable`/`writeable`/`visible`, `dirtyAfterSeconds` — how long after its last report or request a state counts as stale and is re-read (300 for most states, 3600 for the energy counter and `software_revision`; see the polling model in [bt-mesh-direct.md](bt-mesh-direct.md)) |
 | `states[*].model` | the mesh binding: `address` (element unicast), `server`/`client` model ids, `publish` (group), `bind`, `category` |
-| `property` | device *properties* — never states, so never datapoints: `software_revision` (`[2, 2, 0, 2]` = device firmware 2.2.0.2 — but `null` until the gateway has read it: in the probe 18 of the 20 push buttons were `null` and 2 read 2.2.0.2; lights 18 × 2.2.0.2, 5 × 2.2.0.1, 4 × `null`; both sockets 2.2.0.1), `key_mode` (0..6, see the WebSocket doc), `switch_operation_mode`, `enforced_output`, `device_key_lock`; on `SocketEnergy` additionally **`total_device_energy_use` in Wh** (e.g. 209655) — re-read from the device only **hourly** (`dirtyAfterSeconds` 3600, `device_property_states/TotalDeviceEnergyUse.js:65` `POLL_60MIN`) — and `total_device_power_on_time` in h (300) — the cumulative energy the function list lacks |
+| `property` | device *properties* — never states, so never datapoints: `software_revision` (`[2, 2, 0, 2]` = device firmware 2.2.0.2 — a *node* property, filled on each node's main-element function and `null` on its other functions: in the probe all 27 main-element functions carried it and all 22 others were `null` — 18 of the 20 push-button functions, 4 lights; filled: lights 18 × 2.2.0.2, 5 × 2.2.0.1, 2 buttons 2.2.0.2, both sockets 2.2.0.1; why, in the caveats below), `key_mode` (0..6, see the WebSocket doc), `switch_operation_mode`, `enforced_output`, `device_key_lock`; on `SocketEnergy` additionally **`total_device_energy_use` in Wh** (e.g. 209655) — re-read from the device only **hourly** (`dirtyAfterSeconds` 3600, `device_property_states/TotalDeviceEnergyUse.js:65` `POLL_60MIN`) — and `total_device_power_on_time` in h (300) — the cumulative energy the function list lacks |
 
 The integration reads it (`models.parse_devices_verbose`): the full list once
 after the first refresh (and again only when a function appears that the last
@@ -49,8 +49,22 @@ suppression. Caveats: the endpoint is declared subject to change (the sensor
 simply disappears on firmware without it); `property` values read `null`
 until the middleware has read them, and again after repeated unanswered
 re-reads (which reset the value and push the reset to the cache,
-`device_state_service.js:235-240` — most likely why most buttons'
-`software_revision` read `null`); `statistics` cannot tell a stale
+`device_state_service.js:235-240`). That second case is why a node's
+non-main functions read `software_revision` `null` — a gateway bug, not a
+read failure on the device: the middleware means to skip polling a node
+property on those functions and to copy it from the main-element function
+(`[POLL-SKIP]`/`[PROP-REDIRECT]` and `[PROP-SYNC]`,
+`services/device_state_service.js:388-393`, `:406-425`, `:436-465`), but
+`Product.isDeviceAtMainElement` (`models/product.js:41-43`) also counts the
+function's *properties*, and every function's property states sit at the
+node's element 0 — so every function passes as the main one and polls the
+revision itself. The node answers, but the answer is matched to the first
+function with a *state* at that address (`handler/bt_event_handler.js:469`),
+so the other function's request times out every hour (~850–900 `no answer
+from …-017` warnings per such function in the June–July middleware log) and
+its value is reset (`models/device-states.js:611-624` `onResponseFail`)
+between `[PROP-SYNC]` copies, which happen only when the main function's
+value changes (`device_state_service.js:254-257`). `statistics` cannot tell a stale
 counter from a fresh one (the second reference socket's counter held 53150 Wh
 with `last_seen: 0` — the cache snapshot described above); no cover exists in the reference network, so
 `move_operation_mode` (the awning hint) is still unobserved. Labels are in it
