@@ -449,7 +449,7 @@ async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) ->
     Two devices whose labels slug identically share one key in the slug->id
     map; the gateway's list order decides which id "wins". Without the
     duplicate_slugs guard, a mere order change between polls read as "the id
-    changed (firmware update?)" and scheduled a reload — on every flip,
+    changed" and scheduled a reload — on every flip,
     forever. A non-colliding device's genuine id change must still reload.
     """
     coordinator = _coordinator(hass)

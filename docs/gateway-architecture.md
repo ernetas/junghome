@@ -49,7 +49,10 @@ linked to the data partition.)
 > per the 2026-09-15 audit a function id is `"id"` + `md5(node UUID +
 > hex(location))[:15]` and a scene id is `"id"` + hex(scene number), so an id
 > moves when a node is re-provisioned or its location/element mapping is
-> re-enumerated — which those updates did. The integration's stable-ID
+> re-enumerated, a label is moved to another element, or the hardware is
+> swapped. Across the one measured device-firmware update (app 2.1.0 → 2.2.0)
+> no surviving node's id changed; every id that moved belonged to a label moved
+> or hardware swapped in the app in that window. The integration's stable-ID
 > handling (`const.py`, `__init__.py`) keys on the label regardless.
 
 ## Service components (`/opt`)

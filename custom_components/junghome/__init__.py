@@ -621,12 +621,14 @@ def _migrate_to_stable_ids(
 
     The gateway's device ids are derived from each node's mesh UUID and element
     location (``models.function_id_for``), so they change whenever the app
-    re-provisions or re-enumerates a node — which app-driven firmware updates
-    did — and the ``functions`` list carries no hardware identifier to key on
-    instead. That previously caused Home Assistant to create duplicate
-    entities/devices (the old ones left greyed-out). This maps
-    the currently-registered entries onto the new stable scheme so existing
-    automations keep working and future firmware updates stop creating duplicates.
+    re-provisions or re-enumerates a node, moves a label to another element
+    or swaps the hardware (not on a device-firmware update: the measured
+    2.1.0 → 2.2.0 one changed no id) — and the ``functions`` list carries no
+    hardware identifier to key on instead. That previously caused Home
+    Assistant to create duplicate entities/devices (the old ones left
+    greyed-out). This maps the currently-registered entries onto the new
+    stable scheme so existing automations keep working and later id changes
+    stop creating duplicates.
 
     Returns ``True`` on clean completion and ``False`` if any item (or the whole
     pass) failed, so the caller only marks the migration done when it fully
@@ -669,7 +671,7 @@ def _migrate_to_stable_ids(
                 existing = ent_reg.async_get_entity_id(entity.domain, DOMAIN, new_uid)
                 if existing and existing != entity.entity_id:
                     # A stable-id entity already exists (e.g. a leftover duplicate
-                    # from a previous firmware update); drop the stale entry rather
+                    # from a previous id change); drop the stale entry rather
                     # than collide on the new unique id.
                     ent_reg.async_remove(entity.entity_id)
                 else:

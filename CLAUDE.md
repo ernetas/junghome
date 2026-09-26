@@ -138,12 +138,15 @@ JUNG HOME Gateway over its REST API and WebSocket.
   **indistinguishable** (both = 2 identical pairs, overlapping gap ranges);
   tap vs hold separates perfectly on **pulse width** (5× empty band). **This
   is a regression, dated by the gateway's own log** (sdb4 middleware logs,
-  2026-06-20→07-29, gateway fw unchanged throughout): it records 52 of 53
-  functions' `software_revision` going v2.0.0.4 → v2.2.0.x (2.2.0.2 on every
-  button re-read) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
+  2026-06-20→07-29, gateway fw unchanged throughout): it records 52 of 52
+  functions in the project (a 53rd, a button, was removed on 06-28)
+  going v2.0.0.4 → v2.2.0.x in `software_revision` (2.2.0.2 on all 23
+  buttons) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
   (the time the hourly re-read saw it — app 2.2.x updates device firmware,
   issue #66), and per button presses/burst go from 1.13 before (89 % single
-  presses) to 2.53 after (none single; bursts split at > 2 s). Gesture
+  presses) to 2.53 after (none single; bursts split at > 2 s) — every
+  button edge in that log is a single-key event (5/6/4), so this dates
+  single-key elements; rockers rest on the captures. Gesture
   logic must tolerate both one and two pairs per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
   device, not per datapoint** (a key element's second copy lands on the
   other datapoint; earlier 0.15–0.25 s guidance came from a mis-segmented
@@ -166,7 +169,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   pre-2.2.0 device firmware with suppression turned off. A **hold on a
   single-key element** can be copied to the *other* side (captured
   2026-09-16, 1 of 4 holds: press, other-side press +1.4 s, the finger's
-  release on the copy's side, the first side never released): a press on the
+  release on the copy's side, the first side never released; the gateway's
+  June–July log shows the same shape on 10 of 25 key-element holds after
+  the device update, 0 of 38 before): a press on the
   other side of a device whose one side has been down 0.6–2.5 s
   (`BUTTON_HOLD_COPY_AFTER`/`BUTTON_HOLD_COPY_WINDOW`) is dropped as that
   copy and its release completes the hold on the side that is down — one
@@ -314,7 +319,10 @@ JUNG HOME Gateway over its REST API and WebSocket.
   sits at its node's main-element unicast, `model.address`, the Generic
   Property models being bound to element 0 —
   `services/products_service.js:29-33` — and each null one shares that
-  address with a function that read the node's revision), `key_mode`
+  address with a function that read the node's revision — a gateway bug:
+  `isDeviceAtMainElement` counts property addresses, so non-main functions
+  poll the revision themselves, the answer lands on the main function and
+  their own read times out and resets; docs/gateway-rest-api.md), `key_mode`
   (6 = gateway on 19 of 20 buttons), `switch_operation_mode`,
   `device_key_lock`. No cover in the network, so `move_operation_mode` is
   still unverified. Raw sample: `disk_dump/devices-verbose-20260916.json`
@@ -377,7 +385,8 @@ instead of re-deriving:
 ## Key behaviours to preserve
 
 - **Stable identity.** Device/datapoint `id`s have been observed to change
-  across app-driven firmware updates, so entity `unique_id`s and device
+  around app-driven firmware updates (not *by* them — measured below), so
+  entity `unique_id`s and device
   identifiers derive from the device **label** + datapoint **suffix**
   (`stable_unique_id`), never the raw id. The ids are not random: per the
   2026-09-15 audit a device id is `"id"` + `md5(node UUID + hex(location))[:15]`
@@ -456,8 +465,9 @@ instead of re-deriving:
   capability watcher, then `_reload_if_device_ids_changed` on list-order
   changes). Guard every such map with `duplicate_slugs()`; its current
   users are `_register_capability_reload`, `_reload_if_device_ids_changed`,
-  `_make_area_assigner`, `follow_renames`, `apply_node_identities` and
-  `link_node_identity` (the device-identifier migration guards the same
+  `_make_area_assigner`, `follow_renames`, `apply_node_identities`,
+  `link_node_identity` and `_apply_device_info` (the device-identifier
+  migration guards the same
   hazard differently — a registry `async_get_device` clash check before each
   write).
 - **Entity naming.** `_attr_has_entity_name = True` with a short `_attr_name`
@@ -571,7 +581,7 @@ instead of re-deriving:
   version-capped); Dependabot deliberately does not watch pip.
 - Tests: one file per platform plus flow/coordinator/websocket/init/blueprint/
   translations/device-trigger/diagnostics/models/project-export/tls/const/
-  device-properties/logbook files; new platform behaviour goes in that
+  device-properties/logbook/health files; new platform behaviour goes in that
   platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
   The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
@@ -801,8 +811,11 @@ or "clean — nothing above P3 survived verification."
   octets* of the status parameters (`util/device_state_helper.js:130-133`),
   which is the target while a transition's status carries one (current +
   target; the BGAPI event reports the remaining time in its own
-  `remaining_ms` field, not in `parameters` —
-  `handler/bt_event_handler.js:101-106`) and the current level otherwise — so `level_move` is *not* structurally 0
+  `remaining_ms` field, not in `parameters` — the field name is in the
+  bt_tunnel binary's strings next to `server_address`/`parameters`
+  (`opt/bt_tunnel/lbc-gw-bt-tunnel_pi-zero`), and the middleware reads
+  only `parameters` for the value, `handler/bt_event_handler.js:106`) and
+  the current level otherwise — so `level_move` is *not* structurally 0
   (an earlier audit said it was), but nothing has shown it moving either. No
   cover exists in any capture or in the reference network. Still needed before building anything: a capture of a
   blind actually moving (`tools/ws-capture/capture_ws.py capture --script
@@ -813,11 +826,12 @@ or "clean — nothing above P3 survived verification."
   (2026-09-16, three rocker elements and two single-key elements — the live
   verification table in docs/gateway-websocket.md): rocker taps/holds/double
   taps behave exactly as modelled, key-element taps alternate sides, and the
-  copied key-element hold was captured once in four and is now handled.
+  copied key-element hold was captured once in four (10 of 25 in the
+  gateway's June–July log) and is now handled.
   The upstream report is drafted —
   `docs/upstream-report-button-double-reporting.md`, ready to send to JUNG
   (the fix at source is a one-line counter dedupe in the gateway's
   `btmesh_property_service.js`, which ignores the `0x5012` counter byte, or
   the device firmware's double publication) — sending it is the user's
-  call. Optionally, more key-element hold samples to learn why three of four
-  carried no copy (the §5 mesh capture would settle it).
+  call. Optionally, more key-element hold samples to learn why some holds
+  carry no copy (the §5 mesh capture would settle it).

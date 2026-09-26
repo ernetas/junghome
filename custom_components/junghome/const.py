@@ -448,8 +448,11 @@ def device_slug(device: Device) -> str:
     The device ``id`` is not random — it is ``"id"`` + the first 15 hex digits
     of ``md5(node UUID + element location)`` (``models.function_id_for``,
     verified against the firmware) — but it changes whenever the app
-    re-provisions a node or re-enumerates its elements, which is what the
-    observed app-driven firmware updates did. The user-facing label survives
+    re-provisions a node or re-enumerates its elements, when a label is moved
+    to another element, or when the hardware is swapped (the one measured
+    app-driven device-firmware update, 2.1.0 → 2.2.0, changed no id; the ids
+    that moved around it were labels moved or hardware swapped in the app).
+    The user-facing label survives
     all of that, so it is the identity anchor; it also reads well in entity
     ids, which a hash never would. Falls back to the volatile id only if the
     label is missing or unsluggable.

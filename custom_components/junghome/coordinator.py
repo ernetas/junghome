@@ -781,12 +781,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 cast("dict[str, Any]", datapoint).update(overlay[dp_id])
 
     def _reload_if_device_ids_changed(self, devices: list[Device]) -> None:
-        """Reload the entry if the gateway regenerated its device ids.
+        """Reload the entry if a label's device id changed.
 
-        The gateway assigns new volatile device/datapoint ids on a firmware
-        update; entities cache those ids, so without a reload they can no longer
-        find their datapoint (state stops updating, commands target dead ids).
-        unique_ids are label-based and survive the reload.
+        A function id is ``md5(node UUID + element location)``, so it changes
+        when a node is re-provisioned or re-enumerated, a label is moved to
+        another element in the app, or the hardware is swapped (the one
+        measured device-firmware update changed none); entities cache those
+        ids, so without a reload they can no longer find their datapoint
+        (state stops updating, commands target dead ids). unique_ids are
+        label-based and survive the reload.
 
         Colliding slugs are skipped (see ``duplicate_slugs``): two devices whose
         labels slug identically would share ONE key in the map below, with the
@@ -808,7 +811,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._device_ids = new_ids
         if changed and self.config_entry is not None:
             _LOGGER.warning(
-                "Jung Home gateway device ids changed (firmware update?); "
+                "Jung Home gateway device ids changed (device re-provisioned, "
+                "label moved to another element or hardware swapped?); "
                 "reloading the integration to re-resolve entities"
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
@@ -2597,9 +2601,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if msg_type == "scenes":
                 self._handle_scenes_broadcast(data)
             elif msg_type == "groups":
-                # Full groups list (on connect and on change). Carries per-room
-                # capability metadata (area names, colour-temperature ranges) and
-                # is surfaced in diagnostics.
+                # Full groups list (on connect and on change): each room's id and
+                # name (area assignment, joined on a device's `parent_groups`),
+                # its member ids and its members' state type NAMES
+                # (`function_types` — no values, so no colour-temperature
+                # range); surfaced in diagnostics.
                 self.groups = [g for g in data if isinstance(g, dict)]
             elif msg_type == "functions":
                 self._handle_functions_broadcast(data)

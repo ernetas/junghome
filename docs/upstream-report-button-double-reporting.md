@@ -13,10 +13,12 @@ pairs about a second apart, and a rocker *hold* as one. The gateway's own
 middleware log dates the change (archived support snapshot, 2026-06-20 →
 07-29, gateway firmware unchanged throughout, 354 click events and 73 holds):
 it records the buttons' `software_revision` changing from v2.0.0.4 to
-v2.2.0.2 on 2026-07-25/27 (23 of 24; the last one is not re-read before the
-log ends), and from each button's update on, click events per
-burst go from **1.13 to 2.53** (bursts split at a > 2 s gap; 89 % of the
-bursts before were a single click, none after). Single and double clicks are
+v2.2.0.2 on 2026-07-25/27 — every one of the 23 buttons in the project (a
+24th had been removed from the project on 06-28) — and from each button's
+update on, click events per burst go from **1.13 to 2.53** (bursts split at
+a > 2 s gap; 89 % of the bursts before were a single click, none after).
+The buttons in that log were all single-key elements (events 5/6/4); the
+rocker behaviour below comes from WebSocket captures. Single and double clicks are
 therefore indistinguishable to any client of the local API, and every client
 has to guess with a time window.
 
@@ -43,7 +45,8 @@ has to guess with a time window.
    compatibility"), so the two copies of one tap land on `up_request` and
    `down_request` alternately, and a hold's second copy can land on the
    other datapoint while the first is still down (captured live, 1 of 4
-   holds).
+   holds; in the middleware log 10 of 25 single-key holds after the update,
+   0 of 38 before).
 
 ## Evidence available on request
 
@@ -54,10 +57,11 @@ has to guess with a time window.
   hold pulse 1.50–3.25 s; the copied single-key hold's copy 1.15 s). Tables
   in `docs/gateway-websocket.md`.
 - The gateway's own middleware log (above): the `software_revision` change
-  to v2.2.0.2 on 23 of 24 buttons, and the click-events-per-burst before and
-  after it. (`/devices/?verbose=true` shows `[2, 2, 0, 2]` too, but only on
-  the buttons the gateway has managed to read — 2 of 20 in a 2026-09-16
-  probe, the rest `null`.)
+  to v2.2.0.2 on all 23 buttons in the project, and the click-events-per-burst
+  before and after it. (`/devices/?verbose=true` shows `[2, 2, 0, 2]` too, on
+  each node's main-element function; the node's other functions read `null`
+  — 18 of the 20 button functions in a 2026-09-16 probe — because of the
+  separate gateway bug below, not because those devices went unread.)
 - The on-air capture from the Bluetooth-direct sibling project (same counter,
   fresh SEQ, ~1 s apart).
 
@@ -75,6 +79,28 @@ has to guess with a time window.
   hold-start / release) instead of flattening it into synthesised edges; the
   device knows, the gateway knows, and clients currently reconstruct it from
   pulse width.
+
+## A second, unrelated gateway bug: node properties on multi-function nodes
+
+`software_revision`, a node-wide Generic Property on element 0, reads
+`null` on every function of a multi-function node except
+the one at the node's main element — 22 of 49 functions in the 2026-09-16
+probe, 18 of them buttons. The middleware means to handle exactly this: it
+skips polling such a property on non-main functions and copies the main
+function's value to them (`[POLL-SKIP]`, `[PROP-REDIRECT]` and
+`[PROP-SYNC]` in `services/device_state_service.js`). But
+`Product.isDeviceAtMainElement` (`models/product.js`) also matches on the
+function's *property* addresses, and every function's property states sit at
+element 0 — so every function counts as the main one and polls the property
+itself. The node answers; the answer is matched to the first function with
+a *state* at that address (`handler/bt_event_handler.js`, the
+`STATUS_LBC_PROP_STATUS_ID` case), so the other function's request times out
+— every hour, for every such function (~850–900 `no answer from …` warnings
+each in the June–July middleware log) — and after the allowed failures its
+value is reset to `NaN` (`null` in the API) until the next `[PROP-SYNC]`,
+which only happens when the main function's value changes. Suggested fix:
+decide "main element" from the function's *states* only (as the answer
+matching already does), so the skip and the copy take effect.
 
 ## Contact / repository
 
