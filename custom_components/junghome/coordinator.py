@@ -312,7 +312,12 @@ def entry_derived_issue_ids(entry_id: str) -> list[str]:
     """Return the ids of the entry's repair issues re-derived from gateway state.
 
     The health issues (one per ``health.HEALTH_CONDITIONS``) and the
-    colliding-label issue; ``stop()`` and entry removal withdraw them all.
+    colliding-label issue. ``stop()`` deliberately leaves them: a reload or an
+    HA restart keeps the issue registry entry, and with it the user's
+    "Ignore" (``dismissed_version`` — a deleted issue comes back un-ignored),
+    while the next setup re-derives each one from the gateway anyway. They go
+    with the entry instead: ``async_remove_entry``, and an unload that
+    disables it (``async_unload_entry``).
     """
     return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
 
@@ -1693,7 +1698,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         (a Bluetooth chip failure, out of sequence numbers) stays raised until
         then — which is also what the gateway's own text tells the user to do.
         The time-sync condition is the exception: it is withdrawn as soon as
-        the gateway reports its clock synchronised again (``time_error``).
+        the gateway reports its clock synchronised again (``time_error``), or
+        a later failed round logs only the generic ``time error`` entry.
 
         Best-effort: a transport failure, a non-200 (401 included) or an
         unusable body changes nothing — issues from an earlier read stay until
@@ -1712,7 +1718,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if ISSUE_TIME_SYNC in active and await self._time_sync_recovered(host, token):
             del active[ISSUE_TIME_SYNC]
         if self._closing:
-            return  # unloaded while the read was in flight; stop() withdrew all
+            return  # unloaded while the read was in flight: it writes nothing
         self.health.entries = entries
         self.health.conditions = frozenset(active)
         self._apply_health_issues(active)
@@ -2902,11 +2908,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # own, or a reconfigure onto a confirmed new certificate) rebuilds the
         # coordinator, which re-raises it on the next poll if it still holds.
         ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
-        # The health and colliding-label issues: both are re-derived on the
-        # next setup (its first health read, its watcher's seed pass), so an
-        # entry that is disabled or removed takes them with it.
-        for issue_id in entry_derived_issue_ids(self.health.entry_id):
-            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        # NOT the health and colliding-label issues (`entry_derived_issue_ids`):
+        # deleting them here, on every reload and HA shutdown, lost the user's
+        # "Ignore" each time.
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:

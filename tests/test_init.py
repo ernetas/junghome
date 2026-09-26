@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,7 +15,7 @@ import aiohttp
 import attr
 import pytest
 from homeassistant.components.cover import CoverEntityFeature
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
     CONF_HOST,
     CONF_TOKEN,
@@ -2296,29 +2297,49 @@ def test_duplicate_slugs_reports_only_collisions() -> None:
     assert duplicate_slugs([]) == {}
 
 
-async def test_colliding_labels_raise_a_repair_issue_until_renamed(
-    hass: HomeAssistant,
-) -> None:
-    """The losing device of a slug collision is invisible; the issue names it.
-
-    Raised by the capability watcher's pass over each adopted list, listing
-    every colliding group; withdrawn on the first list without a collision
-    (the user renamed one in the app), and by unload.
-    """
+def _collision_entry(hass: HomeAssistant) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="1.2.3.4",
         data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
     )
     entry.add_to_hass(hass)
+    return entry
+
+
+def _colliding_pairs() -> list[dict]:
+    """Two colliding groups, the one sorting last listed first (and within it)."""
+    devices = copy.deepcopy(DEVICES)[:4]
+    devices[0]["label"] = "lamp_1"
+    devices[1]["label"] = "Lamp 1"
+    devices[2]["label"] = "Hall-Light"
+    devices[3]["label"] = "Hall Light"
+    return devices
+
+
+async def _adopt(
+    hass: HomeAssistant, entry: MockConfigEntry, fetch: AsyncMock, devices: list[dict]
+) -> None:
+    fetch.return_value = copy.deepcopy(devices)
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+
+async def test_colliding_labels_raise_a_repair_issue_until_renamed(
+    hass: HomeAssistant,
+) -> None:
+    """The losing device of a slug collision is invisible; the issue names it.
+
+    Raised by the capability watcher's pass over each adopted list, listing
+    every colliding group (sorted, whatever order the gateway lists them in);
+    withdrawn once two adoptions in a row carried no collision (the user
+    renamed one in the app) — a single one may be a partial poll.
+    """
+    entry = _collision_entry(hass)
     issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
     registry = ir.async_get(hass)
-    devices = copy.deepcopy(DEVICES)[:4]
-    devices[0]["label"] = "Hall Light"
-    devices[1]["label"] = "Hall-Light"
-    devices[2]["label"] = "Lamp 1"
-    devices[3]["label"] = "lamp_1"
-    fetch = AsyncMock(return_value=devices)
+    devices = _colliding_pairs()
+    fetch = AsyncMock(return_value=copy.deepcopy(devices))
     with (
         patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
         patch.object(
@@ -2339,31 +2360,179 @@ async def test_colliding_labels_raise_a_repair_issue_until_renamed(
 
         # One group renamed apart: the issue now lists the other only.
         renamed = copy.deepcopy(devices)
-        renamed[3]["label"] = "Lamp 2"
-        fetch.return_value = renamed
-        await entry.runtime_data.async_refresh()
-        await hass.async_block_till_done()
+        renamed[0]["label"] = "Lamp 2"
+        await _adopt(hass, entry, fetch, renamed)
         issue = registry.async_get_issue(DOMAIN, issue_id)
         assert issue is not None
         assert issue.translation_placeholders["labels"] == (
             '- "Hall Light", "Hall-Light"'
         )
 
-        # Both resolved: withdrawn.
-        renamed[1]["label"] = "Hall Lamp"
-        fetch.return_value = copy.deepcopy(renamed)
-        await entry.runtime_data.async_refresh()
-        await hass.async_block_till_done()
+        # Both resolved: kept on the first clean list, withdrawn on the second.
+        renamed[2]["label"] = "Hall Lamp"
+        await _adopt(hass, entry, fetch, renamed)
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await _adopt(hass, entry, fetch, renamed)
         assert registry.async_get_issue(DOMAIN, issue_id) is None
 
-        # A collision again, then unload: stop() takes it with it.
-        fetch.return_value = copy.deepcopy(devices)
-        await entry.runtime_data.async_refresh()
-        await hass.async_block_till_done()
+        # A collision again: raised on the first sighting.
+        await _adopt(hass, entry, fetch, devices)
         assert registry.async_get_issue(DOMAIN, issue_id) is not None
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_a_partial_poll_keeps_an_ignored_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """A list missing one label of a pair must not withdraw the issue.
+
+    Withdrawing on it made the next full list re-create the issue:
+    re-announced, and un-ignored (a deleted issue loses its dismissal).
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = _colliding_pairs()
+    partial = [devices[0], devices[2]]
+    fetch = AsyncMock(return_value=copy.deepcopy(devices))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        # Partial polls, each followed by the full list: never two clean in a row.
+        for _ in range(2):
+            await _adopt(hass, entry, fetch, partial)
+            await _adopt(hass, entry, fetch, devices)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.dismissed_version is not None
+        # An empty list confirms nothing either way.
+        await _adopt(hass, entry, fetch, partial)
+        await _adopt(hass, entry, fetch, [])
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await _adopt(hass, entry, fetch, partial)
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_an_ignored_collision_issue_survives_a_reload_and_goes_with_a_disable(
+    hass: HomeAssistant,
+) -> None:
+    """Unload keeps the issue (and its dismissal); disabling the entry withdraws it."""
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    fetch = AsyncMock(side_effect=lambda *_: _colliding_pairs())
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.active
+        assert issue.dismissed_version is not None
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
     assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def _unload_during_a_poll(
+    hass: HomeAssistant, unload: Callable[[MockConfigEntry], Awaitable[object]]
+) -> tuple[MockConfigEntry, list[str]]:
+    """Set up clean, then unload while a poll that returns a collision is in flight.
+
+    The poll lands while ``stop()`` awaits the WebSocket teardown: the
+    capability watcher is removed only after the unload returns, so it still
+    sees that adoption. Returns the entry and the order things happened in.
+    """
+    entry = _collision_entry(hass)
+    clean = copy.deepcopy(DEVICES)[:4]
+    gate = asyncio.Event()
+    calls = 0
+    order: list[str] = []
+
+    async def fetch(
+        self: JungHomeDataUpdateCoordinator, host: str, token: str
+    ) -> list[dict]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return copy.deepcopy(clean)
+        await gate.wait()  # a poll in flight when the unload starts
+        order.append("poll")
+        return _colliding_pairs()
+
+    async def ws(self: JungHomeDataUpdateCoordinator) -> None:
+        try:
+            await _fake_run_websocket(self)
+        except asyncio.CancelledError:
+            # stop() is awaiting this task: the poll lands now.
+            gate.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            order.append("ws closed")
+            raise
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", ws),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        entry.async_create_background_task(
+            hass, entry.runtime_data.async_refresh(), name="poll in flight"
+        )
+        await asyncio.sleep(0)
+        await unload(entry)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert calls == 2
+    return entry, order
+
+
+async def test_a_poll_landing_during_unload_raises_no_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """The watcher writes nothing while the entry unloads (as the health read does)."""
+    entry, order = await _unload_during_a_poll(
+        hass, lambda e: hass.config_entries.async_unload(e.entry_id)
+    )
+    assert order == ["poll", "ws closed"]  # the poll did land mid-stop()
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_a_poll_landing_during_a_disable_leaves_no_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """A disabled entry re-derives nothing: no issue may be stranded on it."""
+    entry, order = await _unload_during_a_poll(
+        hass,
+        lambda e: hass.config_entries.async_set_disabled_by(
+            e.entry_id, ConfigEntryDisabler.USER
+        ),
+    )
+    assert order == ["poll", "ws closed"]
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 async def test_user_can_delete_a_device_the_gateway_dropped(
@@ -4646,7 +4815,9 @@ async def test_removing_an_entry_that_never_loaded_withdraws_its_issues(
 ) -> None:
     """A certificate mismatch keeps an entry in SETUP_RETRY; deleting it must not leave the issue behind.
 
-    ``stop()`` deletes the coordinator's issues on unload, but an entry that never loaded never ran it.
+    ``stop()`` deletes the certificate and push-failure issues on unload, but an
+    entry that never loaded never ran it (and the health and colliding-label
+    issues outlive an unload anyway).
     """
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"})
     entry.add_to_hass(hass)

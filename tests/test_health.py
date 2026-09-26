@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_HOST, CONF_TOKEN
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
+from homeassistant.const import CONF_HOST, CONF_TOKEN, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
@@ -62,6 +62,16 @@ BT_ADAPTER = _entry("was not able to start bluetooth adapter, details: ", detail
 OUT_OF_SN = _entry("out of sequence numbers")
 TIME_SYNC = _entry(
     "JUNG HOME Gateway Time Sync Error", details="Last successful sync was 30 hours ago"
+)
+# Every failed sync logs this first (`time_error` set true,
+# sys_event_handler.js:132 → configuration_service.js:207); a failure > 24 h
+# after the last good sync then logs TIME_SYNC in the same handler (:154). So a
+# > 24 h failure reads, newest first, TIME_SYNC, TIME_ERROR — the firmware pair.
+TIME_ERROR = _entry(
+    "time error",
+    details="An error exists with the current time setting in your JUNG HOME "
+    "Gateway. This could be due to a missing Internet connection or the time "
+    "server cannot be reached",
 )
 PROJECT_MISSING = _entry("JUNG HOME Project missing", "WARN")
 PROJECT_NOT_UPLOADED = _entry("project not_uploaded", "WARN")
@@ -132,7 +142,7 @@ def test_each_condition_is_raised_by_its_firmware_messages() -> None:
     assert _active(BT_ADAPTER) == {ISSUE_BLUETOOTH_FAILURE}
     assert _active({**BT_ADAPTER, "description": BT_ADAPTER["description"].rstrip()})
     assert _active(OUT_OF_SN) == {ISSUE_OUT_OF_SEQUENCE_NUMBERS}
-    assert _active(TIME_SYNC) == {ISSUE_TIME_SYNC}
+    assert _active(TIME_SYNC, TIME_ERROR) == {ISSUE_TIME_SYNC}
     assert _active(PROJECT_MISSING) == {ISSUE_PROJECT_MISSING}
     assert _active(PROJECT_NOT_UPLOADED) == {ISSUE_PROJECT_MISSING}
     assert _active(PROJECT_INCOMPLETE) == {ISSUE_PROJECT_INCOMPLETE}
@@ -142,7 +152,7 @@ def test_each_condition_is_raised_by_its_firmware_messages() -> None:
     assert (
         _active(
             UNREACHABLE,
-            _entry("time error"),
+            TIME_ERROR,
             _entry("btmesh error"),
             UP_AND_RUNNING,
             NEW_PROJECT,
@@ -260,11 +270,25 @@ async def test_a_new_project_withdraws_the_project_issue(
         assert _raised(hass, entry) == set()
 
 
+def test_a_later_missed_sync_round_clears_the_time_sync_condition() -> None:
+    """Only the newest of the two time entries counts.
+
+    The log is never pruned, so a > 24 h failure's entry stays in it after the
+    clock recovers; a later single missed NTP round (< 24 h since the last good
+    sync) logs only `time error` on top of it.
+    """
+    assert _active(TIME_ERROR, TIME_SYNC, TIME_ERROR) == set()
+    # ... and a second > 24 h outage after that raises it again.
+    assert _active(TIME_SYNC, TIME_ERROR, TIME_ERROR, TIME_SYNC, TIME_ERROR) == {
+        ISSUE_TIME_SYNC
+    }
+
+
 async def test_time_sync_issue_follows_the_gateways_time_error_flag(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:
     """The log has no "recovered" message; `time_error` false withdraws the issue."""
-    health = AsyncMock(return_value=[TIME_SYNC, UP_AND_RUNNING])
+    health = AsyncMock(return_value=[TIME_SYNC, TIME_ERROR, UP_AND_RUNNING])
     time_error = AsyncMock(return_value=True)
     async with _running(hass, health, time_error) as entry:
         assert _raised(hass, entry) == {ISSUE_TIME_SYNC}
@@ -288,6 +312,33 @@ async def test_time_sync_issue_follows_the_gateways_time_error_flag(
         assert time_error.await_count == calls
 
 
+async def test_one_missed_sync_round_after_a_recovery_raises_nothing(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A stale > 24 h entry must not re-raise the issue on the next failed round.
+
+    The issue says the clock has not synchronised for more than 24 hours; one
+    missed NTP round after a recovery (`time_error` true again, but the last
+    good sync is recent) is exactly what it must not claim.
+    """
+    health = AsyncMock(return_value=[TIME_SYNC, TIME_ERROR, UP_AND_RUNNING])
+    time_error = AsyncMock(return_value=True)
+    async with _running(hass, health, time_error) as entry:
+        assert _raised(hass, entry) == {ISSUE_TIME_SYNC}
+        time_error.return_value = False  # synchronised again
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == set()
+        # Later, one missed round: only the generic entry is logged.
+        health.return_value = [TIME_ERROR, TIME_SYNC, TIME_ERROR, UP_AND_RUNNING]
+        time_error.return_value = True
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == set()
+        # Still failing a day later: the firmware logs the pair again.
+        health.return_value = [TIME_SYNC, TIME_ERROR, *health.return_value]
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == {ISSUE_TIME_SYNC}
+
+
 async def test_an_unreadable_log_changes_nothing(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:
@@ -305,15 +356,32 @@ async def test_an_unreadable_log_changes_nothing(
         assert entry.runtime_data.last_update_success
 
 
-async def test_unload_withdraws_and_reload_re_raises(hass: HomeAssistant) -> None:
-    """``stop()`` withdraws the issues; the next setup's first read raises them again."""
+async def test_issues_outlive_an_unload_and_go_with_a_disable_or_removal(
+    hass: HomeAssistant,
+) -> None:
+    """Unload keeps the issues (the next setup re-derives them); disable and removal withdraw them."""
     health = AsyncMock(return_value=[OUT_OF_SN])
     async with _running(hass, health) as entry:
         assert _raised(hass, entry) == {ISSUE_OUT_OF_SEQUENCE_NUMBERS}
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
-        assert _raised(hass, entry) == set()
+        assert _raised(hass, entry) == {ISSUE_OUT_OF_SEQUENCE_NUMBERS}
+        # The gateway restarted meanwhile: the next setup's first read withdraws.
+        health.return_value = [UP_AND_RUNNING]
         await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert _raised(hass, entry) == set()
+        health.return_value = [OUT_OF_SN]
+        await entry.runtime_data.async_fetch_health_status()
+        assert _raised(hass, entry) == {ISSUE_OUT_OF_SEQUENCE_NUMBERS}
+        # A disabled entry sets up no more: nothing would ever withdraw it.
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.NOT_LOADED
+        assert _raised(hass, entry) == set()
+        await hass.config_entries.async_set_disabled_by(entry.entry_id, None)
         await hass.async_block_till_done()
         assert _raised(hass, entry) == {ISSUE_OUT_OF_SEQUENCE_NUMBERS}
         await hass.config_entries.async_remove(entry.entry_id)
@@ -321,10 +389,49 @@ async def test_unload_withdraws_and_reload_re_raises(hass: HomeAssistant) -> Non
         assert _raised(hass, entry) == set()
 
 
+async def test_an_ignored_issue_stays_ignored_across_a_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Deleting the issue on unload lost the user's "Ignore" on every reload."""
+    health = AsyncMock(return_value=[OUT_OF_SN])
+    async with _running(hass, health) as entry:
+        issue_id = f"{ISSUE_OUT_OF_SEQUENCE_NUMBERS}_{entry.entry_id}"
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        assert health.await_count == 2  # re-derived by the new setup's read
+        issue = _issue(hass, ISSUE_OUT_OF_SEQUENCE_NUMBERS, entry)
+        assert issue is not None
+        assert issue.active
+        assert issue.dismissed_version is not None
+
+
+async def test_an_ignored_issue_stays_ignored_across_an_ha_shutdown(
+    hass: HomeAssistant,
+) -> None:
+    """HA's stop runs ``stop()`` without an unload; the registry must keep the dismissal.
+
+    The issue registry stores a non-persistent issue's dismissal and restores
+    it when the next start re-creates the issue — but only for an issue that
+    was not deleted on the way down.
+    """
+    health = AsyncMock(return_value=[OUT_OF_SN])
+    async with _running(hass, health) as entry:
+        issue_id = f"{ISSUE_OUT_OF_SEQUENCE_NUMBERS}_{entry.entry_id}"
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_block_till_done()
+        assert entry.runtime_data._closing
+        issue = _issue(hass, ISSUE_OUT_OF_SEQUENCE_NUMBERS, entry)
+        assert issue is not None
+        assert issue.dismissed_version is not None
+
+
 async def test_a_read_that_lands_after_unload_raises_nothing(
     hass: HomeAssistant,
 ) -> None:
-    """``stop()`` withdrew everything; a read still in flight must not re-raise."""
+    """A read still in flight when ``stop()`` runs writes nothing."""
     coordinator = bare_coordinator(hass)
     entry = coordinator.config_entry
 

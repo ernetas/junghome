@@ -8,10 +8,13 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - `custom_components/junghome/` — the integration.
   - `__init__.py` — setup/unload, one-time stable-ID registry migrations,
     stale-device pruner, area auto-assignment, capability-change reload
-    (whose pass also raises/withdraws the `duplicate_device_labels` repair
-    issue for `duplicate_slugs` collisions), manual device delete,
-    repair-issue withdrawal and store deletion on entry removal; loads the
-    rename-following store before the first refresh.
+    (whose pass also raises the `duplicate_device_labels` repair issue for
+    `duplicate_slugs` collisions — withdrawn only after
+    `LABEL_COLLISION_CLEAR_ADOPTIONS` = 2 collision-free adoptions in a row, a
+    partial poll must not flap it; nothing written while the entry unloads),
+    manual device delete, repair-issue withdrawal and store deletion on entry
+    removal (the entry-derived issues also on an unload that disables the
+    entry); loads the rename-following store before the first refresh.
   - `coordinator.py` — REST poll (default 60 s, options-configurable) +
     WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
@@ -29,7 +32,14 @@ JUNG HOME Gateway over its REST API and WebSocket.
     on the same element and rewrites the registry in place. And the gateway
     health log (`async_fetch_health_status`, `health`: after the first
     refresh, then every 15 min, best-effort) → one repair issue per
-    `health.HEALTH_CONDITIONS` entry, withdrawn on `stop()` and entry removal.
+    `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
+    (`entry_derived_issue_ids`) are **not** deleted by `stop()`: a reload or an
+    HA restart keeps them, so the user's "Ignore" survives (HA restores a
+    dismissal only for an issue it still holds; a deleted one comes back
+    un-ignored), and the next setup re-derives them. They go on entry removal
+    and on an unload with `entry.disabled_by` set (nothing would re-derive
+    them). The push-failure and certificate issues are still dropped by
+    `stop()`.
   - `health.py` — `GET /healthstatus/` parser and the condition table (which
     firmware messages raise which issue, and what clears them).
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
@@ -345,14 +355,19 @@ JUNG HOME Gateway over its REST API and WebSocket.
   description, details}`; never pruned, never deduplicated, no WS push
   (commented out). Same token as `/functions/` (401 only). So a condition
   "clears" only on a gateway restart or when a newer entry supersedes it
-  (`New Bluetooth Mesh Project` clears the project ones); the time-sync one
-  has no clearing entry and is withdrawn by `config/parameter/time_error`
-  reading `false`. Issues: Bluetooth chip/adapter failure, out of sequence
-  numbers, time sync (> 24 h), project missing, project incomplete.
-  `JUNG HOME Devices are unreachable` is `isDeviceOnline` — the push-button
-  false positive of the reachability decision — so diagnostics only; the
-  per-failure `time error` flag entry is not an issue either. Message table
-  in docs/gateway-rest-api.md.
+  (`New Bluetooth Mesh Project` clears the project ones). Time sync: every
+  failed NTP round logs the generic `time error` flag entry, and one more
+  than 24 h after the last good sync then also logs `JUNG HOME Gateway Time
+  Sync Error`, later in the same handler (`sys_event_handler.js:128-156`) —
+  so `time error` is that condition's clearing entry (a single missed round
+  after a recovery leaves it newest and must not resurrect the issue from
+  the stale entry), and a successful sync, which logs nothing, withdraws it
+  through `config/parameter/time_error` reading `false`. Issues: Bluetooth
+  chip/adapter failure, out of sequence numbers, time sync (> 24 h), project
+  missing, project incomplete. `JUNG HOME Devices are unreachable` is
+  `isDeviceOnline` — the push-button false positive of the reachability
+  decision — so diagnostics only; `time error` alone raises nothing. Message
+  table in docs/gateway-rest-api.md.
 
 ## Gateway reference — read `docs/` first
 
