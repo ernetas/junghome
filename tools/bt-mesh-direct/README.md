@@ -12,7 +12,8 @@
 >   firmware (v2.1.3) sends one acked Set; those config keys no longer exist.
 > - Colour temperature is hard-coded as Generic Level on element+1 with a
 >   fixed 2000–6000 K (`:47-49`). The real path is conditional (CTL
->   Temperature when the device has one) and 2000–6000 is a middleware clamp.
+>   Temperature when the device has one) and the middleware clamps to the
+>   device's own Light CTL Temperature Range (2000–6000 is only its default).
 > - There is **no vendor-model path** (buttons, status LED, parameters) — the
 >   opcodes are now known (see the doc) but not implemented here.
 > - The ESP32 sketch (`esp32/junghome_mesh_esp32.c:14-16`) assumes running as
