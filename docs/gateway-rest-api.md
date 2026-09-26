@@ -263,6 +263,30 @@ You can set a datapoint with `PATCH /functions/{id}/datapoints/{dpid}` (body
 WebSocket for both state updates and commands — see
 [gateway-websocket.md](gateway-websocket.md).
 
+Both run the same `JungFunctionService.updateDatapointValues`
+(`api-server/dist/controllers/07_functions-controller.js:223-260`,
+`services/websocket-server-service.js:206-220`), so a REST set publishes
+exactly like a WebSocket one and takes the same publish mutex. What differs
+is the answer. REST answers **every set on its own request** — `200
+{"message":"OK"}`, or the middleware's status with `{"error": <text>}` (409,
+423 locked, …; 400 when the error has none) — where the WebSocket confirms a
+success with a `datapoint` reply echoing the `message_id` but reports a
+failure as an uncorrelated `error:` message frame. Before any publish the
+REST handler also rejects a body whose `data` is not an array of `{key,
+value}` (400) and an unknown function/datapoint pair (404). The REST `200`
+carries **no value**: the WebSocket reply is the re-read datapoint, which is
+what the integration merges as the confirmed state.
+
+*Measured live* (2026-09-26, 2.1.3/2840, one tunable-white DALI light,
+`color_temperature` re-set to its current value; each request on a fresh
+TLS connection): a set answers `200 {"message":"OK"}` in 0.18–0.39 s
+against 0.15–0.17 s for the pre-publish 404/400 rejections, whose bodies are
+`{"error":"Datapoint with id '<dpid>' not found on function '<fid>' or
+function not found!"}` and `{"error":"Wrong format of payload! Expected
+array."}`. Three sets sent 5 ms apart drew `409 {"error":"Conflict with
+newer request"}` on the middle one in 2 of 3 bursts, the other two `200` —
+the same waiting-set supersession as over the WebSocket.
+
 ## How the JUNG HOME app uses the API
 
 The app is just another API client. The shapes below come from the
