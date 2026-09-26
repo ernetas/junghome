@@ -48,14 +48,23 @@ In order:
 | `functions` | array | Full list of functions (sent on connect and on change). |
 | `datapoint` | object | A single datapoint changed (broadcast to all clients), **or** the reply to a client `datapoint` command. |
 | `scene` | object | A scene was recalled. |
-| `groups` / `groups-new` / `groups-deleted` | array | Full groups list / added / removed. |
-| `scenes` / `scenes-new` / `scenes-deleted` | array | Full scenes list / added / removed. |
+| `groups` / `groups-new` / `groups-deleted` | array | Full groups list (objects) / ids added / ids removed. |
+| `scenes` / `scenes-new` / `scenes-deleted` | array | Full scenes list (objects) / ids added / ids removed. |
 | `devices-new` / `devices-deleted` | array | Lower-level device ids added / removed. (A full `devices` list type exists in the server too, but its emit call is commented out on current firmware — only the deltas can arrive.) |
 | `config` | object | Configuration (currently not emitted). |
 
 The `*-new` / `*-deleted` variants are how the gateway signals that nodes,
 groups, or scenes were added or removed at runtime (e.g. provisioning a new
-device in the app).
+device in the app). **Their `data` is a list of id strings, never objects**
+— e.g. `{"type":"scenes-new","data":["id0003"]}` — computed by diffing the
+new list's ids against the cached one (`jung-scenes-service.js:165-170`,
+`jung-group-service.js:166-170`, `jung-device-service.js:287-291`; a device
+delta carries the middleware `device_id`). Each is sent only when non-empty,
+and a scene or group delta only ever **follows** the full list it was diffed
+from, in one burst: `scenes`, then `scenes-new`, then `scenes-deleted`
+(`websocket-server-service.js:356-388`; groups `:392-424`). A client that
+adopts the full list therefore gains nothing from the deltas. On connect only
+the full lists are sent (`:162-168`), no deltas.
 
 A pushed `datapoint` frame carries the updated datapoint object, e.g.:
 
@@ -426,8 +435,9 @@ Any failure is returned as a `message` frame:
   optimistic guess — lands before the awaiting service call returns. A
   rejection itself is not correlatable (see "Errors" above), so it surfaces
   as a timeout rather than the gateway's own error text.
-- The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
-  broadcasts to populate the scene platform (recall is REST-only), and the
+- The coordinator consumes the full-list `scenes` broadcasts to populate the
+  scene platform (recall is REST-only; the `scenes-new` / `scenes-deleted` id
+  deltas that follow each one are not consumed), and the
   `groups` broadcasts for room→area assignment and diagnostics. The singular
   `scene` recall frame is re-emitted as a `junghome_scene_recalled` HA event.
 - Reconnect on drop: the gateway sends the full `functions`/`groups`/`scenes`
