@@ -89,7 +89,7 @@ def test_stable_unique_id_combines_slug_suffix_and_qualifier():
 
 def test_stable_unique_id_is_independent_of_the_gateway_device_id():
     """Same label + datapoint suffix must yield the same id even after the
-    gateway regenerates the device id on a firmware update."""
+    gateway's device id changes (a re-provisioned or re-enumerated node)."""
     device = {"label": "Kitchen Light"}
     before = {"id": "idAAAA1111-010"}
     after = {"id": "idBBBB2222-010"}
