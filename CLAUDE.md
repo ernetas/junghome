@@ -130,9 +130,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   **indistinguishable** (both = 2 identical pairs, overlapping gap ranges);
   tap vs hold separates perfectly on **pulse width** (5× empty band). **This
   is a regression, dated by the gateway's own log** (sdb4 middleware logs,
-  2026-06-20→07-29, gateway fw unchanged throughout): it records every
-  function's `software_revision` going v2.0.0.4 → v2.2.0.x (2.2.0.2 on every
-  button) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
+  2026-06-20→07-29, gateway fw unchanged throughout): it records 52 of 53
+  functions' `software_revision` going v2.0.0.4 → v2.2.0.x (2.2.0.2 on every
+  button re-read) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
   (the time the hourly re-read saw it — app 2.2.x updates device firmware,
   issue #66), and per button presses/burst go from 1.13 before (89 % single
   presses) to 2.53 after (none single; bursts split at > 2 s). Gesture
