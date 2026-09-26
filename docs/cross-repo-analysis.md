@@ -52,9 +52,14 @@ re-verified all of them against the dump. Legend: `[ ]` open · `[x]` done.
 - Status LED = `0x5013 KEY_STATUS` (1 byte), written with a User Property **Status** (op 0x11) to the button element.
 - `KEY_MODE 0x5003`: 0 light, 1 blinds, 2 scene, 3 property, 4 thermostat, 5 switch, **6 gateway**.
 - Colour temperature: `ColorTemperatureState.js:110-122` uses the CTL-Temperature state when the device has one, else
-  Generic Level on element+1. 2000–6000 K is a middleware clamp; `cdb_types_datapoints.json` allows 2000–10000.
+  Generic Level on element+1. The middleware clamps to the device's own Light CTL Temperature Range, read from the mesh
+  and bound into the profile (`device_state_service.js:664-686`, `ColorTemperatureState.js:94-103,190-197`);
+  2000–6000 K is only the constructor default (and what the reference fixtures report). `cdb_types_datapoints.json`
+  allows 2000–10000.
 - State acquisition = self-config subscribes client models to every element group (`self_config_service.js:104-158,279-346`)
-  **and** polls every 15 s (`config.json device_state_poll_interval_sec`). `generic_client_set` uses flags=1 (Silabs
+  **and** re-reads stale states: a 120 s sweep (`device_state_service.js:41-46`) over dirty states only, one Get every
+  15 s (`config.json device_state_poll_interval_sec` = the pause), a state dirty after `dirtyAfterSeconds × 2^retries`
+  ≤ 3600 s without a report (`device-states.js:364-388`). `generic_client_set` uses flags=1 (Silabs
   "response required" → acked Set); devices answer only with the group publication (~1 s), which explains command
   confirmation latency.
 - Time: `publish_time_interval_minutes = 0` → the gateway never publishes Time; only the phone sets device clocks.
@@ -62,14 +67,15 @@ re-verified all of them against the dump. Legend: `[ ]` open · `[x]` done.
   9–18 k msgs/day; IV-update request (< 128 reboots-worth left) is ~6–12 months out.
 - Security: the app obtains the gateway's API token / IP / TLS fingerprint **over the mesh** from vendor props
   `0xC001–0xC003` (`btmesh_property_service.js:38-45,151-170`) readable by anyone holding AppKey 0; `GET /project/cdb`
-  returns the CDB including keys.
+  returns the CDB including keys — and so does `GET /project/junghome` (its `network` field is the same CDB, Base64).
 - Cross-mapping to the sibling project: gateway function = one mesh element; group `id` = `"id"` + decimal group
   address; scene `value` = mesh scene number; `GET /project/junghome` (API 1.5.0+, i.e. gateway firmware 2.1.x)
   exposes node UUID / MAC / unicast / locations.
 - Matter: nothing implemented in this firmware (`sdb2/opt/matter-interface/` empty).
 - `GET /devices/?verbose=true` (probed 2026-09-16) returns the raw middleware device objects: per-state
-  `statistics.reachable`, per-device `property` incl. `software_revision` (2.2.0.2 on the buttons), `key_mode` and, on
-  `SocketEnergy`, `total_device_energy_use` in Wh — see `docs/gateway-rest-api.md`.
+  `statistics.reachable` (a cached snapshot from the state's last value change, not live), per-device `property` incl.
+  `software_revision` (2.2.0.2 where read — only 2 of 20 buttons; 18 `null`), `key_mode` and, on `SocketEnergy`,
+  `total_device_energy_use` in Wh (re-read hourly) — see `docs/gateway-rest-api.md`.
 - Identity across a real device-firmware update (June 13 vs August 1 dumps, app 2.1.0 → 2.2.0): 0 of 26 surviving
   nodes re-provisioned (UUID and MAC kept), 0 datapoint-suffix or function-type changes on the 30 kept labels; the
   8 kept-label id changes were labels moved between nodes (7) or onto swapped hardware (1 of 4 new nodes); 6 renames.

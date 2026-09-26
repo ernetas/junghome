@@ -117,8 +117,11 @@ Either way you then pick **how to connect**:
   in the Jung Home app.
 
 The gateway address is filled in for you when it was discovered; otherwise it
-defaults to `junghome.local` (which works on many networks) and you can change
-it to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
+defaults to `junghome.local` (the name on the gateway's certificate). That
+name resolves only on networks whose DNS happens to serve it — the gateway
+itself announces `junghome-<mac>.local` (its MAC address without colons) —
+so change it to that name or to your gateway's IP (e.g. `192.168.1.50`) if it
+doesn't resolve.
 
 The issued token is stored in the config entry. Devices added or removed in
 the Jung Home app afterwards are picked up automatically. The entry is keyed
@@ -287,9 +290,10 @@ entity IDs — Home Assistant will flag them as unavailable until you edit them.
 ## Troubleshooting
 
 **The gateway isn't discovered / `junghome.local` doesn't resolve.**
-mDNS doesn't cross VLANs or most VPNs. Add the integration manually with
-**Add Integration → Jung Home** and type the gateway's IP (e.g.
-`192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
+`junghome.local` is not a name the gateway announces (it announces
+`junghome-<mac>.local`), and mDNS doesn't cross VLANs or most VPNs. Add the
+integration manually with **Add Integration → Jung Home** and type the
+gateway's IP (e.g. `192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
 
 **Setup times out waiting for approval.**
 The gateway only holds the request open for about three minutes. Open the Jung
@@ -359,8 +363,10 @@ on connect and on every change — so at most about ten minutes at the default
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
 device is still installed, make sure it is powered and in range of the mesh;
-it is re-added automatically once the gateway reports it again, though any
-custom name, area or `entity_id` you had set is not restored. You can also
+it is re-added automatically once the gateway reports it again under the
+same name, and Home Assistant brings back the custom name, area and
+`entity_id` you had set (it keeps those for removed devices and entities), so
+only automations that fired while it was gone notice the gap. You can also
 remove a stale device yourself from its device page (**⋮ → Delete**); Home
 Assistant refuses this while the gateway is still reporting the device, since
 it would simply come straight back.
@@ -385,9 +391,11 @@ handshake presents it).
   gateway's function list carries a socket's instantaneous readings only; the
   cumulative Wh counter lives in the device's *properties*, which only the
   `/devices/?verbose=true` endpoint (marked deprecated/experimental in the
-  gateway's own API spec) exposes. It works on 2.1.3 and is re-read every
-  five minutes — the gateway's own cadence — but a future firmware could drop
-  it, in which case the sensor simply disappears and the Riemann-sum
+  gateway's own API spec) exposes. It works on 2.1.3. The gateway reads the
+  counter from the socket only about **once an hour**, so the sensor rises in
+  hourly steps (the integration re-reads the gateway every five minutes, so
+  a step shows up within minutes of the gateway's read). A future firmware
+  could drop the endpoint, in which case the sensor simply disappears and the Riemann-sum
   [Integration helper](https://www.home-assistant.io/integrations/integration/)
   on the power sensor is the fallback. Firmware without the endpoint shows no
   energy sensor at all.
@@ -405,7 +413,8 @@ handshake presents it).
 - The **puck** isn't supported/validated yet.
 - **Thermostat temperature moves in 0.5 °C steps, a few times an hour.** That
   is the device's reporting (the BT-Mesh temperature property it publishes
-  has 0.5 °C resolution and the gateway polls it every five minutes), not
+  has 0.5 °C resolution, and the gateway re-reads it only when it has heard
+  nothing for five minutes), not
   something the integration can refine.
 - **Two devices with the same label collide.** The gateway's device ids are
   derived from each node's mesh identity and location, so they change when a

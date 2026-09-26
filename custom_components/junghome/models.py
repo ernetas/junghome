@@ -453,9 +453,10 @@ def _meta_devices(document: dict[str, Any]) -> list[dict[str, Any]]:
 def _first(mapping: dict[str, Any], *keys: str) -> Any:
     """Return the first present key's value.
 
-    The endpoint serves camelCase: the api-server converts its stored
-    snake_case copy (``keysToCamelCase``, ``03_project-file-controller.js``).
-    Both spellings are still tried, defensively.
+    The endpoint always serves camelCase (the api-server converts every key,
+    ``03_project-file-controller.js:13-27,56``); the gateway's stored copy
+    (``res_6/jung_home_project.json``) is snake_case, so both spellings are
+    tried and a copy of that file taken off the card parses too.
     """
     for key in keys:
         if key in mapping:
@@ -575,11 +576,12 @@ def parse_project_export(document: Any) -> dict[str, NodeIdentity]:
 # raw ``JungHomeDevice`` objects — ``device_id`` is the function id — and with
 # them the device *properties* the function list never carries (probed live
 # 2026-09-16, docs/gateway-rest-api.md): a metering socket's cumulative energy
-# counter ``total_device_energy_use`` (Wh), the device firmware's
-# ``software_revision`` (``[2, 2, 0, 2]``), per-state ``statistics.reachable``,
-# and a tunable-white light's colour-temperature range. Only those four are
-# read — plus the address the revision belongs to, below — and the rest of
-# the document is dropped.
+# counter ``total_device_energy_use`` (Wh, re-read by the gateway hourly),
+# the device firmware's ``software_revision`` (``[2, 2, 0, 2]`` — or ``null``
+# where the gateway has not read it), per-state ``statistics.reachable``, and
+# a tunable-white light's colour-temperature range. Only those four are read
+# — plus the address the revision belongs to, below — and the rest of the
+# document is dropped.
 #
 # The revision is a property of the *node*, not of the function: the
 # middleware binds the Generic Property models to the node's main element
@@ -603,12 +605,14 @@ class DeviceProperties:
     """The verbose endpoint's per-device facts the integration uses."""
 
     # The energy counter exists on this device (a metering socket); its value
-    # is None until the middleware has polled it.
+    # is None until the middleware has read it (and it moves only hourly).
     has_energy: bool = False
     energy_wh: float | None = None
     # ``software_revision`` as a version tuple, e.g. ``(2, 2, 0, 2)``.
     software_revision: tuple[int, ...] | None = None
-    # The middleware's ``isDeviceOnline``: any state reachable.
+    # The middleware's ``isDeviceOnline``: any state reachable — as of the
+    # api-server's cached copy of each state, taken at its last value change
+    # before that answer was counted, so not a live flag (diagnostics only).
     reachable: bool | None = None
     # The (min, max) Kelvin window the gateway clamps this light's
     # colour-temperature writes to — see ``color_temp_range``.

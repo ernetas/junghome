@@ -62,7 +62,8 @@ rules:
   docs-triggers:
     status: done
     comment: >-
-      Device triggers (button pressed/released) are documented in the README's
+      Device triggers (per button side: clicked, hold started, hold ended, and
+      the raw pressed/released edges) are documented in the README's
       "Button automations" section and docs/example-button-automation.md.
 
   # Gold

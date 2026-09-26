@@ -129,8 +129,9 @@ CONF_INVERTED_COVERS = "inverted_covers"
 #   more often than a single fetch can take turns the backstop into
 #   near-continuous load on a slow gateway.
 # - The ceiling (1 h) keeps the pruner's debounce meaningful: it counts
-#   STALE_DEVICE_PRUNE_MISSES *polls*, so the stale-device window scales
-#   linearly with this interval.
+#   STALE_DEVICE_PRUNE_MISSES *device-list adoptions* — one per poll, plus one
+#   per WS `functions` broadcast (connect, app edits) — so the stale-device
+#   window scales linearly with this interval at most.
 CONF_POLL_INTERVAL = "poll_interval"
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 30

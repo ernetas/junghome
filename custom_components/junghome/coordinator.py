@@ -170,8 +170,10 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # re-read from the deprecated verbose device endpoint (`GET /devices/{id}?
 # verbose=true`, ~8 KB per device — probed 2026-09-16): a metering socket's
 # cumulative energy counter, every device's firmware revision, reachability.
-# The middleware itself re-polls a device's properties every five minutes
-# (`profile.dirtyAfterSeconds` 300), so reading more often buys nothing. Only
+# The middleware re-reads the energy counter from the device only hourly
+# (`TotalDeviceEnergyUse.js:65`, `dirtyAfterSeconds` POLL_60MIN = 3600 s;
+# `software_revision` likewise), so the sensor moves in hourly steps; this
+# cheap 5-minute re-read only bounds how late a step shows up here. Only
 # the devices with an energy counter are re-read each interval; the full list
 # (~190 KB on 49 devices) is read once at setup and again only when a function
 # appears that the last answer did not list (one the endpoint omits is not
@@ -368,9 +370,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None when the owning device carries no id, which entities treat as
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
-        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", read from
-        # REST `GET /version/` (`async_fetch_gateway_version`) — not the
-        # WebSocket "version" frame, which carries the API version. The hub's
+        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
+        # over REST `GET /version/` (`async_fetch_gateway_version`) at setup
+        # and again on each stable WebSocket session — never from the WS
+        # "version" frame, which is the API version (`api_version`). The hub's
         # `sw_version`, and a device's only while its own firmware revision is
         # unknown (`sw_version_for`).
         self.gateway_version: str | None = None
@@ -456,7 +459,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # capability watcher in __init__.py) compare this instead of counting
         # raw dispatches: pushes, scenes broadcasts and the WS-drop
         # notification all call async_update_listeners too, and counting those
-        # shrank the pruner's 10-poll window during a WS flap or a
+        # shrank the pruner's 10-adoption window during a WS flap or a
         # scene-editing session while a device was transiently missing from
         # one poll — and re-running the assigner/watcher's O(devices) walks on
         # every push was steady waste on a chatty gateway.

@@ -776,7 +776,7 @@ def test_hold_copy_target_window() -> None:
     ("revision", "clicks"),
     [
         ([2, 1, 4, 0], 2),  # pre-2.2.0: exempt, two pairs are two clicks
-        ([2, 2, 0, 2], 1),  # what every real button reports: the copy is dropped
+        ([2, 2, 0, 2], 1),  # current button firmware (where read): copy dropped
     ],
 )
 async def test_suppression_follows_the_button_firmware(

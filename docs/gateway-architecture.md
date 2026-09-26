@@ -145,8 +145,14 @@ their events there.
   plus the vendor property servers `0x05271011/12/13` and client `0x05271015`)
   and subscribes them to **every element group the devices publish to**
   (`:104-158,279-346`; the June log shows 221 desired / 202 current
-  subscriptions), **and** it polls every device state with a Get every 15 s
-  (`config.json` `btmesh.device_state_poll_interval_sec`). Because acked Sets
+  subscriptions), **and** it re-reads stale states with Gets: a sweep every
+  120 s (`device_state_service.js:41-46`) over only the states that are
+  dirty — untouched by any report or request for `dirtyAfterSeconds ×
+  2^retries`, at most 3600 s (`models/device-states.js:364-388`; 300 s for
+  most states) — one Get every 15 s (`config.json`
+  `btmesh.device_state_poll_interval_sec` is the pause between Gets, not a
+  per-state period; details in [bt-mesh-direct.md](bt-mesh-direct.md)).
+  Because acked Sets
   to JUNG devices are answered only by the group publication (see
   [bt-mesh-direct.md](bt-mesh-direct.md)), the subscription is also what
   confirms commands.

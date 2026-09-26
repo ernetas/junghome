@@ -394,17 +394,34 @@ unknown (mesh loss, or the device re-publishing the *current* key state
 rather than the message — the simultaneous mesh capture in
 `docs/cross-repo-analysis.md` §5 would tell).
 
-**This is a regression, and the gateway's own logs prove it.** The gateway
-middleware logs every button state change, and the 2026-08-01 dump carries an
-archived support snapshot with logs from 2026-06-20 → 2026-07-28 (~900
-events, ~450 press bursts): **1.00 presses per burst** throughout — including
-the very button measured above, clean single pairs on every click. Between
-2026-07-29 and 2026-08-02 something changed it to 2.00. The gateway firmware
-did not change (the June and August dumps are byte-identical builds); the
-JUNG app went 2.1.0 → 2.2.0 in that window, and app 2.2.x updates *device*
-firmware (issue #66) — the double publication above is that device firmware's
-behaviour. Gesture logic must tolerate BOTH reporting styles: one pair per
-tap (pre-2.2.0.x device firmware) and two (current).
+**This is a regression, and the gateway's own log dates it.** The 2026-08-01
+dump carries an archived support snapshot of the middleware log
+(`sdb4/board_ctrl/snapshot/start_error/middleware.log*`, 2026-06-20 →
+2026-07-29, one middleware start on 06-20, gateway firmware unchanged
+throughout — the June and August dumps are byte-identical builds). The
+middleware logs every state *change*, including each button edge and each
+device's `software_revision`:
+
+- **The device firmware update is in the log.** All 53 functions' revisions
+  were read as v2.0.0.4 at the 06-20 start; then 52 of them change to
+  v2.2.0.x — 2.2.0.2 on every button and most lights, 2.2.0.1 on seven
+  on/off actuators and sockets — in two waves: 16 functions on 2026-07-25
+  23:11 → 07-27 00:01, the rest on 2026-07-27 09:26–10:30 (the 53rd, a
+  button, is not re-read before the log ends). The timestamps are when the
+  gateway's hourly re-read (`SoftwareRevisionState.js`, `POLL_60MIN`) saw
+  the new value, so the update itself can precede them by up to ~1 h. App
+  2.2.x is what pushes device firmware (issue #66).
+- **Presses per burst double at that point, per button.** Counting `is
+  pushed: 1` lines per function, a burst ending at a > 2 s gap (the log has
+  1 s resolution) and each button split at its own first 2.2.x read:
+  **1.13 presses/burst before** (268 presses in 237 bursts, 06-22 → 07-27;
+  89 % single presses, the rest genuine multi-taps) and **2.53 after** (86
+  in 34, 07-26 → 07-28; not one single press). A 3 s split gives 1.18 →
+  2.97; the before/after contrast does not depend on it.
+
+So the double publication above is the new device firmware's behaviour.
+Gesture logic must tolerate BOTH reporting styles: one pair per tap
+(device firmware before 2.2.0.x) and two (current).
 
 Note also that a rocker's press datapoints are **read-only**
 (`writeable: false`, `UserPermission.ReadOnly` in `PushedUpState.js`) — nothing

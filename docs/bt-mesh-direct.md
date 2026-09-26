@@ -92,10 +92,18 @@ So lights, dimmers, tunable-white, sockets, blinds, energy and scenes are all
 **standard SIG models**. Only rocker buttons, the status LED, and device
 parameters use the **vendor property models**. The gateway reads state two
 ways at once: its self-configuration subscribes its client models to every
-element group the devices publish to, *and* it polls every device state with a
-Get every 15 s (`services/self_config_service.js:104-158` for the
-subscriptions, `services/device_state_service.js:37` for the poll loop;
-`const/config.json` `btmesh.device_state_poll_interval_sec`). A gateway-free client only needs the
+element group the devices publish to, *and* it re-reads **stale** states with
+Gets (`services/self_config_service.js:104-158` for the subscriptions). The
+poll is a sweep every **120 s** (`services/device_state_service.js:41-46`)
+over only the states `isDirty()` reports — oldest first, one Get at a time,
+**15 s apart** (`const/config.json` `btmesh.device_state_poll_interval_sec`,
+used as the pause, `:182-199`). A state is dirty once neither a report nor a
+request has touched it for `dirtyAfterSeconds × 2^retry_attempts`, capped at
+`state_max_dirty_timeout_sec` = 3600 s (`models/device-states.js:364-388`):
+300 s for most states, 3600 s for the energy counter and
+`software_revision`; push-button and status-LED states (`POLL_ONCE`) only
+while they hold no value. So a device that publishes its changes is hardly polled at all, and an
+unanswering one backs off to hourly. A gateway-free client only needs the
 subscription half — a proxy client with an empty blacklist filter hears every
 publication in the flat.
 
@@ -163,16 +171,26 @@ to unsigned. OnOff is a single byte; level/lightness are little-endian uint16.
 
 **Colour temperature — a conditional path, not a rule.** The middleware's
 `ColorTemperatureState.publishValue`
-(`models/device_states/ColorTemperatureState.js:95-122`) first clamps the
-value to the state profile's range (2000–6000 K, `:60`), then, **if the device
+(`models/device_states/ColorTemperatureState.js:94-122`) first clamps the
+value to the state profile's range, then, **if the device
 has a `ColorTemperature2` state** (a Light CTL Temperature server, `0x1306`),
 delegates the publish to it; **otherwise** it falls back to **Generic Level on
-`address + 1`**, mapping the clamped Kelvin onto int16 `-0x8000…0x7FFF`. Range
-facts: 2000–6000 K is a **middleware clamp** (the descriptor
-`cdb_types_datapoints.json` declares 2000–10000); the JUNG app itself sends
-`Light CTL Set` with 2000–10000 K (sibling project's app analysis). A device's
-real range comes from `Light CTL Temperature Range Get` (`0x8262` → Status
-`0x8263`) — read that instead of hard-coding either figure.
+`address + 1`**, mapping the clamped Kelvin onto int16 `-0x8000…0x7FFF` over
+that same range. Range facts: the profile range is **the device's own** — the
+middleware reads `Light CTL Temperature Range` (`0x8262` Get → `0x8263`
+Status; the `ColorTemperatureRange` state, `ColorTemperatureStateRange.js`,
+re-read every 5 min) and binds it into the `ColorTemperature`,
+`ColorTemperature2` and `ColorTemperatureLevel` profiles
+(`services/device_state_service.js:664-686`,
+`ColorTemperatureState.js:190-197`). 2000–6000 K (`:60`) is only the
+constructor default until the device has answered (the reference network's
+tunable-white fixtures all report exactly 2000–6000). The descriptor
+`cdb_types_datapoints.json` declares 2000–10000; the JUNG app itself sends
+`Light CTL Set` with 2000–10000 K (sibling project's app analysis). The range
+maps to no datapoint (`util/datapoint_helper_methods.js:97` returns `null`),
+so over the API it is visible only in `GET /devices/?verbose=true`
+(`states.color_temperature_range.value`, `states.color_temperature.profile.range`)
+and, as a bare type name without values, in a group's `function_types`.
 
 ### Scenes
 

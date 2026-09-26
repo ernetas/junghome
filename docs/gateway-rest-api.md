@@ -1,7 +1,8 @@
 # JUNG HOME Gateway — REST API
 
 Base: `https://<gateway>/api/junghome` (TLS, self-signed cert). `<gateway>` can
-be the IP or `junghome.local`. API version 1.5.0.
+be the IP or the mDNS name the gateway announces, `junghome-<mac>.local`
+(`junghome.local` is only the certificate's CN). API version 1.5.0.
 
 ## Authentication
 
@@ -29,24 +30,29 @@ everything `/functions/` drops. Probed 2026-09-16 (49 devices, 187 KB):
 | field | what it carries |
 |---|---|
 | `device_type` | the middleware's type (`OnOffLight`, `TuneableWhiteLight`, `SocketEnergy`, `PushButton`, …), finer than the function type |
-| `states[*].statistics` | `reachable`, `last_seen` (s), `latest_request` (ms), `retry_attempts`, `connection_quality` (0–100), `not_supported` — **per-device reachability** (`isDeviceOnline` = any state reachable); 19 of 49 devices were unreachable at probe time — but `reachable` means "the last request for this state was answered" (`models/device-states.js:596-619`, false after `state_acceptable_request_fails` failures, which also resets the value to `NaN`), and push buttons never answer requests for their key states: 13 of the 20 mains-powered buttons read unreachable while working. Not an availability signal |
-| `states[*].profile` | `index` (the datapoint suffix, in hex: `input_power` index 16 ↔ `-010`), `range`, `unit`, `readable`/`writeable`/`visible`, `dirtyAfterSeconds` (300 = the 5-minute re-read) |
+| `states[*].statistics` | `reachable`, `last_seen` (s), `latest_request` (ms), `retry_attempts`, `connection_quality` (0–100), `not_supported`. **Not live**: the api-server answers from its cache, which takes a state's object only when its *value* changes (or the whole device list is republished) — `jung-device-service.js:249-276` — and the middleware serialises that object *before* the mesh answer is counted (`device_state_service.js:249-253`: `communicateToAPI`, then `notify_received`). So the flags are a snapshot from before the state's last change was acknowledged: 162 states/properties of the probe held a value yet read `reachable: false`, `last_seen: 0`. The live flag would not help either: `reachable` means "the last request for this state was answered" (`models/device-states.js:596-619`, false after `state_acceptable_request_fails` failures, which also resets the value to `NaN`), and push buttons never answer requests for their key states. Not an availability signal |
+| `states[*].profile` | `index` (the datapoint suffix, in hex: `input_power` index 16 ↔ `-010`), `range`, `unit`, `readable`/`writeable`/`visible`, `dirtyAfterSeconds` — how long after its last report or request a state counts as stale and is re-read (300 for most states, 3600 for the energy counter and `software_revision`; see the polling model in [bt-mesh-direct.md](bt-mesh-direct.md)) |
 | `states[*].model` | the mesh binding: `address` (element unicast), `server`/`client` model ids, `publish` (group), `bind`, `category` |
-| `property` | device *properties* — never states, so never datapoints: `software_revision` (`[2, 2, 0, 2]` on every push button = device firmware 2.2.0.2; `[2, 2, 0, 1]` on the lights that had been read), `key_mode` (0..6, see the WebSocket doc), `switch_operation_mode`, `enforced_output`, `device_key_lock`; on `SocketEnergy` additionally **`total_device_energy_use` in Wh** (e.g. 209655) and `total_device_power_on_time` in h — the cumulative energy the function list lacks |
+| `property` | device *properties* — never states, so never datapoints: `software_revision` (`[2, 2, 0, 2]` = device firmware 2.2.0.2 — but `null` until the gateway has read it: in the probe 18 of the 20 push buttons were `null` and 2 read 2.2.0.2; lights 18 × 2.2.0.2, 5 × 2.2.0.1, 4 × `null`; both sockets 2.2.0.1), `key_mode` (0..6, see the WebSocket doc), `switch_operation_mode`, `enforced_output`, `device_key_lock`; on `SocketEnergy` additionally **`total_device_energy_use` in Wh** (e.g. 209655) — re-read from the device only **hourly** (`dirtyAfterSeconds` 3600, `device_property_states/TotalDeviceEnergyUse.js:65` `POLL_60MIN`) — and `total_device_power_on_time` in h (300) — the cumulative energy the function list lacks |
 
 The integration reads it (`models.parse_devices_verbose`): the full list once
 after the first refresh (and again only when a function appears that the last
 answer did not list — one the endpoint omits is not asked for again; a missing
 endpoint or a failed read is retried every interval, one small request), then
 `GET /devices/{device_id}?verbose=true` — the same object for one device,
-~8 KB — every five minutes for each device that has an energy counter. That
+~8 KB — every five minutes for each device that has an energy counter (the
+counter itself only moves when the gateway re-reads it, about hourly, so the
+sensor steps once an hour; the cheap re-read just keeps the lag short). That
 feeds the `total_energy` sensor (Wh, `total_increasing`) and exempts buttons
 whose `software_revision` is known to predate 2.2.0 from duplicate-press
 suppression. Caveats: the endpoint is declared subject to change (the sensor
 simply disappears on firmware without it); `property` values read `null`
-until the middleware has polled them; the second reference socket's counter
-had `last_seen: 0` (never polled — the device was unreachable), so a counter
-can be stale; no cover exists in the reference network, so
+until the middleware has read them, and again after repeated unanswered
+re-reads (which reset the value and push the reset to the cache,
+`device_state_service.js:235-240` — most likely why most buttons'
+`software_revision` read `null`); `statistics` cannot tell a stale
+counter from a fresh one (the second reference socket's counter held 53150 Wh
+with `last_seen: 0` — the cache snapshot described above); no cover exists in the reference network, so
 `move_operation_mode` (the awning hint) is still unobserved. Labels are in it
 — keep captures out of issues.
 
@@ -124,8 +130,8 @@ the gateway's network-key password.
 | GET  | `/types/functions`, `/types/function_versions`, `/types/datapoints`, `/types/datapoint_versions` | Type/template catalog. |
 | GET  | `/config/`, `/config/types`, `/config/parameter/{parameter}`, `/config/topic/{topic}` | Gateway configuration. `parameter/system_serial` returns the hardware serial as a raw JSON string — the same cpuinfo-derived value the mDNS TXT record advertises (`serial=`); read-only, populated by the middleware shortly after boot (empty string until then), 404 on firmware without it. The integration keys config entries on it. `parameter/version_release` and `parameter/version_build` return the gateway's **software** version, e.g. `"2.1.3"` and `"2840"` — the middleware populates them from the board controller's `MSG_SW_VERSION_IND` (raw form `"2.1.3 Release (2840)"`, split on the parentheses) and ships the declared defaults `"0.0.0"` / `"0"` until it has answered. Do **not** use the WebSocket `version` frame for this: that is the API version. |
 | POST | `/config/` | Update configuration — this is the app's main write channel; see [How the JUNG HOME app uses the API](#how-the-jung-home-app-uses-the-api). |
-| GET  | `/products/`, `/products/{uuid}` | Product catalog *(fw 1.5.0+)*. |
-| GET  | `/project/cdb`, `/project/junghome` ; PATCH `/project` | Project / mesh DB export *(fw 1.5.0+)*. The integration parses `/project/junghome` into `NodeIdentity` (`models.parse_project_export`) at setup; a function id is `"id" + md5(UUID upper-case with dashes + 4-hex element location)[:15]` (`util/project_file_helper_methods.js:19-31`, location parsed as hex from `elements[0]` in `services/devices_service.js:211`), `models.function_id_for`. **`/project/cdb` returns the Bluetooth Mesh CDB including NetKey, AppKeys and every device key**; `/project/junghome` is the app's `ExportDto` (node UUID / MAC / unicast / locations per device — the hardware identity the `functions` payload lacks) **and carries the same keys**: its `network` field is that CDB, Base64-encoded (the api-server returns the stored upload whole — `03_project-file-controller.js:47-61`, `project_file_service.js:88-99`). |
+| GET  | `/products/`, `/products/{uuid}` | Product catalog *(API 1.5.0+, i.e. gateway fw 2.1.x)*. |
+| GET  | `/project/cdb`, `/project/junghome` ; PATCH `/project` | Project / mesh DB export *(API 1.5.0+, i.e. gateway fw 2.1.x)*. The integration parses `/project/junghome` into `NodeIdentity` (`models.parse_project_export`) at setup; a function id is `"id" + md5(UUID upper-case with dashes + 4-hex element location)[:15]` (`util/project_file_helper_methods.js:19-31`, location parsed as hex from `elements[0]` in `services/devices_service.js:211`), `models.function_id_for`. **`/project/cdb` returns the Bluetooth Mesh CDB including NetKey, AppKeys and every device key**; `/project/junghome` is the app's `ExportDto` (node UUID / MAC / unicast / locations per device — the hardware identity the `functions` payload lacks) **and carries the same keys**: it returns the stored upload whole, keys converted to camelCase (`03_project-file-controller.js:13-27,47-61`, `project_file_service.js:88-99`), whose `network` field is that CDB, Base64-encoded. Treat both as secrets. |
 | GET  | `/log/...` | Diagnostic snapshots (system, kernel, middleware, api-server, jungremote-client, bt_mesh_project, jung_home_project). |
 
 > Endpoint set grows with firmware. `products/*` and `project/*` exist on 1.5.0
@@ -137,7 +143,7 @@ the gateway's network-key password.
 ```jsonc
 [
   {
-    "id": "id5f09764942a70ce",          // "id" + md5(node UUID + hex(location))[:15] — changes on re-provisioning / re-enumeration (observed after firmware updates)
+    "id": "id5f09764942a70ce",          // "id" + md5(node UUID + hex(location))[:15] — changes on re-provisioning / re-enumeration (not on a device-firmware update: all 26 surviving nodes kept theirs across app 2.1.0 → 2.2.0)
     "type": "OnOff",                     // OnOff | ColorLight | Socket | RockerSwitch | ...
     "label": "Ernesto balkonas",         // user-set, stable across updates
     "parent_groups": ["id49186"],

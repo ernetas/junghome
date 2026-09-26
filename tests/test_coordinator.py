@@ -335,10 +335,10 @@ async def test_a_superseded_poll_does_not_re_flag_id_churn(
 ) -> None:
     """The superseded poll must skip the id-churn check, not just the adoption.
 
-    On a firmware update the `functions` broadcast carries regenerated ids: it
+    When nodes are re-provisioned the `functions` broadcast carries new ids: it
     detects the churn, schedules the reload and rewrites `_device_ids` to the
-    NEW ids. A poll whose fetch was already in flight returns the PRE-update
-    list; running the churn check on it would detect "churn" a second time —
+    NEW ids. A poll whose fetch was already in flight returns the OLD list;
+    running the churn check on it would detect "churn" a second time —
     scheduling a redundant reload AND clobbering `_device_ids` back to the
     stale ids, because the check overwrites the map with whatever list it is
     handed.
