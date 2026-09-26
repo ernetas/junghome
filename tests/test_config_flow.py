@@ -296,8 +296,8 @@ def _zeroconf_info(
 
 
 _SERIAL_TXT = {
-    "serial": "0000000084fb4b1b",
-    "mac": "00:22:d1:05:96:02",
+    "serial": "00000000c0ffee42",
+    "mac": "02:00:5e:c0:ff:ee",
     "version": "2.1.3 Release (2840)",
 }
 
@@ -339,7 +339,7 @@ async def test_zeroconf_confirm_shows_serial_and_firmware(
     assert result["type"] == FlowResultType.MENU
     assert result["description_placeholders"] == {
         "host": "1.2.3.4",
-        "serial": "0000000084fb4b1b",
+        "serial": "00000000c0ffee42",
         "version": "2.1.3 Release (2840)",
     }
 
@@ -2124,10 +2124,10 @@ async def test_reconfigure_to_an_already_configured_gateway_aborts(
 async def test_fetch_serial_over_rest(hass: HomeAssistant, aioclient_mock) -> None:
     """The REST helper parses the raw-string body and tolerates failures."""
     url = "https://gw/api/junghome/config/parameter/system_serial"
-    aioclient_mock.get(url, json="0000000084fb4b1b")
+    aioclient_mock.get(url, json="00000000c0ffee42")
     assert (
         await _flow(hass)._async_fetch_serial("gw", "tok", FAKE_FINGERPRINT)
-        == "0000000084fb4b1b"
+        == "00000000c0ffee42"
     )
 
     # Older firmware: parameter unknown -> 404 -> None.
@@ -2673,7 +2673,7 @@ async def test_forged_discovery_cannot_redirect_the_token_of_a_loaded_entry(
     HOST_B. Now: abort, host unchanged, no reload, and not a single request
     to HOST_B.
     """
-    host_a, host_b, serial, token = "192.168.1.50", "192.168.1.66", "0022D1059602", "t"
+    host_a, host_b, serial, token = "192.168.1.50", "192.168.1.66", "02005EC0FFEE", "t"
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=serial,
@@ -2695,7 +2695,7 @@ async def test_forged_discovery_cannot_redirect_the_token_of_a_loaded_entry(
         assert entry.state is ConfigEntryState.LOADED
 
         info = _zeroconf_info(
-            hostname="junghome-0022d1059602.local.",
+            hostname="junghome-02005ec0ffee.local.",
             host=host_b,
             properties={"serial": serial, "version": "2.1.3"},
         )

@@ -114,7 +114,7 @@ class _Server:
         if path.endswith(("/register", "/register/by-password")):
             return web.json_response({"token": TOKEN})
         if path.endswith("/system_serial"):
-            return web.json_response("0000000084fb4b1b")
+            return web.json_response("00000000c0ffee42")
         if path.endswith("/version/"):
             return web.json_response("1.5.0")
         return web.json_response({}, status=404)
@@ -264,10 +264,10 @@ def test_fingerprint_helpers() -> None:
 
 
 def _entry(host: str, fingerprint: str | None) -> MockConfigEntry:
-    data = {CONF_HOST: host, CONF_TOKEN: TOKEN, CONF_SERIAL: "0000000084fb4b1b"}
+    data = {CONF_HOST: host, CONF_TOKEN: TOKEN, CONF_SERIAL: "00000000c0ffee42"}
     if fingerprint is not None:
         data[CONF_TLS_FINGERPRINT] = fingerprint
-    return MockConfigEntry(domain=DOMAIN, unique_id="0000000084fb4b1b", data=data)
+    return MockConfigEntry(domain=DOMAIN, unique_id="00000000c0ffee42", data=data)
 
 
 @pytest.mark.real_tls_probe

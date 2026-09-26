@@ -2278,7 +2278,7 @@ def test_scrub_masks_secrets_but_ignores_tiny_ones() -> None:
     deliberately not swept.
     """
     token = "eyJhbGciOiJIUzI1NiJ9.secret-token-value"
-    host = "junghome-0022d1059602.local"
+    host = "junghome-02005ec0ffee.local"
     secrets = _secrets(
         SimpleNamespace(data={CONF_TOKEN: token, CONF_HOST: host})  # type: ignore[arg-type]
     )
