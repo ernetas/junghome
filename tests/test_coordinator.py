@@ -434,18 +434,20 @@ async def test_a_broadcast_that_fails_to_adopt_does_not_supersede_a_poll(
 
 async def test_reload_scheduled_when_device_ids_change(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
-    coordinator._device_ids = {"katilas": "idOLD"}
+    coordinator._device_ids = {"water_heater": "idOLD"}
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        coordinator._reload_if_device_ids_changed([{"id": "idNEW", "label": "Katilas"}])
+        coordinator._reload_if_device_ids_changed(
+            [{"id": "idNEW", "label": "Water Heater"}]
+        )
     reload.assert_called_once()
 
 
 async def test_no_reload_when_device_ids_stable(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
-    coordinator._device_ids = {"katilas": "idSAME"}
+    coordinator._device_ids = {"water_heater": "idSAME"}
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         coordinator._reload_if_device_ids_changed(
-            [{"id": "idSAME", "label": "Katilas"}]
+            [{"id": "idSAME", "label": "Water Heater"}]
         )
     reload.assert_not_called()
 
@@ -462,7 +464,7 @@ async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) ->
     coordinator = _coordinator(hass)
     lamp_a = {"id": "idA", "label": "Lamp 1"}
     lamp_b = {"id": "idB", "label": "Lamp-1"}  # both slug to lamp_1
-    other = {"id": "idC", "label": "Katilas"}
+    other = {"id": "idC", "label": "Water Heater"}
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         coordinator._reload_if_device_ids_changed([lamp_a, lamp_b, other])
         coordinator._reload_if_device_ids_changed([lamp_b, lamp_a, other])
@@ -470,12 +472,12 @@ async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) ->
     reload.assert_not_called()
     # The colliding slug is not tracked at all; the healthy device is.
     assert "lamp_1" not in coordinator._device_ids
-    assert coordinator._device_ids == {"katilas": "idC"}
+    assert coordinator._device_ids == {"water_heater": "idC"}
 
     # A genuine id change on the non-colliding device still reloads.
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         coordinator._reload_if_device_ids_changed(
-            [lamp_b, lamp_a, {"id": "idNEW", "label": "Katilas"}]
+            [lamp_b, lamp_a, {"id": "idNEW", "label": "Water Heater"}]
         )
     reload.assert_called_once()
 
@@ -711,8 +713,8 @@ async def test_correlated_error_frame_for_a_settled_command_is_a_no_op(
 # `could not set datapoint (<id>) value, ` wrapper around JungFunctionService's
 # `Error during publish request: ` wrapper around the middleware's reply
 # message (ip_event_handler.js Publish handler).
-_DP_A = "id5f09764942a70ce-001"
-_DP_B = "id5f09764942a70ce-010"
+_DP_A = "id0a1b2c3d4e5f607-001"
+_DP_B = "id0a1b2c3d4e5f607-010"
 
 
 def _set_error(datapoint_id: str, detail: str) -> dict:
@@ -737,7 +739,7 @@ def _two_switch_coordinator(
     coordinator.websocket = ws
     coordinator.data = [
         {
-            "id": "id5f09764942a70ce",
+            "id": "id0a1b2c3d4e5f607",
             "label": "L",
             "datapoints": [
                 {
@@ -1390,7 +1392,7 @@ async def test_scene_recall_fires_event(hass: HomeAssistant) -> None:
             "type": "scene",
             "data": {
                 "id": "id0001",
-                "label": "Išjungti WC",
+                "label": "Küche aus",
                 "related_functions": [],
                 "value": "0001",
             },
@@ -1399,7 +1401,7 @@ async def test_scene_recall_fires_event(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     assert len(events) == 1
     assert events[0].data["scene_id"] == "id0001"
-    assert events[0].data["label"] == "Išjungti WC"
+    assert events[0].data["label"] == "Küche aus"
 
 
 async def test_scene_recall_event_carries_the_entity_id(

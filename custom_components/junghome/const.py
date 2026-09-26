@@ -433,7 +433,7 @@ def datapoint_bool(datapoint: Datapoint | None, key: str) -> bool | None:
 def datapoint_suffix(datapoint_id: str) -> str:
     """Return the stable element index of a datapoint id.
 
-    Datapoint ids look like ``id5f09764942a70ce-001``. The ``id...`` prefix is
+    Datapoint ids look like ``id0a1b2c3d4e5f607-001``. The ``id...`` prefix is
     the device id — derived from the node UUID and element location (see
     ``device_slug``), so it changes whenever the app re-provisions or
     re-enumerates a node — but the suffix (``001``, ``010``, ``00e`` ...) is a

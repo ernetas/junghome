@@ -235,12 +235,12 @@ the gateway's network-key password.
 ```jsonc
 [
   {
-    "id": "id5f09764942a70ce",          // "id" + md5(node UUID + hex(location))[:15] — changes on re-provisioning / re-enumeration (not on a device-firmware update: all 26 surviving nodes kept theirs across app 2.1.0 → 2.2.0)
+    "id": "id0a1b2c3d4e5f607",          // "id" + md5(node UUID + hex(location))[:15] — changes on re-provisioning / re-enumeration (not on a device-firmware update: all 26 surviving nodes kept theirs across app 2.1.0 → 2.2.0)
     "type": "OnOff",                     // OnOff | ColorLight | Socket | RockerSwitch | ...
     "label": "Balcony Light",            // user-set, stable across updates
     "parent_groups": ["id49186"],
     "datapoints": [
-      { "id": "id5f09764942a70ce-001",   // "<device_id>-<suffix>"; suffix is stable
+      { "id": "id0a1b2c3d4e5f607-001",   // "<device_id>-<suffix>"; suffix is stable
         "type": "switch",
         "values": [ { "key": "switch", "value": "0" } ] }
     ]
