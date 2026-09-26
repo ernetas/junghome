@@ -1514,15 +1514,18 @@ def test_color_temp_range_for_device_first_group_wins(hass: HomeAssistant) -> No
 
 
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
-    """A gateway-side groups failure leaves groups empty and never raises."""
+    """A gateway-side groups failure leaves groups empty and never raises.
+
+    Unreachable, slow, or a body that is not JSON (``response.json()`` raises
+    JSONDecodeError, a ValueError) — each is the gateway's failure.
+    """
     coordinator = bare_coordinator(hass)
-    with patch.object(
-        coordinator,
-        "_fetch_groups_from_api",
-        AsyncMock(side_effect=aiohttp.ClientError),
-    ):
-        await coordinator.async_fetch_groups()
-    assert coordinator.groups == []
+    for err in (aiohttp.ClientError(), TimeoutError(), ValueError("not json")):
+        with patch.object(
+            coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=err)
+        ):
+            await coordinator.async_fetch_groups()
+        assert coordinator.groups == []
     with patch.object(
         coordinator,
         "_fetch_groups_from_api",
@@ -2856,6 +2859,31 @@ async def test_node_identity_fetch_is_best_effort(hass: HomeAssistant) -> None:
         pytest.raises(RuntimeError),
     ):
         await coordinator.async_fetch_node_identities()
+
+
+async def test_identical_export_re_read_writes_nothing(hass: HomeAssistant) -> None:
+    """A re-read that resolves the same identities leaves the registry alone.
+
+    ``apply_node_identities`` walks every device of the entry; the debounced
+    re-read (a function without an identity) usually learns nothing new.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    identities = coordinator.node_identities
+    assert identities
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=_project_export()),
+        ),
+        patch.object(coordinator, "apply_node_identities") as apply,
+    ):
+        await coordinator.async_fetch_node_identities()
+    apply.assert_not_called()
+    assert coordinator.node_identities is identities
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 @pytest.mark.real_project_fetch

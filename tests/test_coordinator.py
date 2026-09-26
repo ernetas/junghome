@@ -1753,13 +1753,17 @@ async def test_gateway_version_tolerates_missing_or_unread_fields(
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version == "2.1.3"
 
-    # A transport failure, a non-200 and a non-object body each leave the
-    # previously known value in place.
+    # A transport failure, a non-200, a non-object body and a body that is not
+    # JSON each leave the previously known value in place.
     for fail in (
         {"exc": aiohttp.ClientError()},
+        {"exc": TimeoutError()},
         {"status": 404},
         {"json": "2.1.3"},
         {"json": {"version_release": 213}},
+        # Truncated: `response.json()` raises JSONDecodeError, a ValueError
+        # rather than a ClientError.
+        {"text": '{"version_release": "2.1.'},
     ):
         aioclient_mock.clear_requests()
         aioclient_mock.get(url, **fail)

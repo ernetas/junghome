@@ -14,6 +14,7 @@ import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -487,6 +488,82 @@ async def test_fetches_treat_non_200_and_odd_bodies_as_nothing(
     ) == _verbose("idx")
     # A device without a string id has no properties to look up.
     assert coordinator.device_properties_for({"label": "no id"}) is None
+    await coordinator.async_shutdown()
+
+
+@pytest.mark.real_device_properties_fetch
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"exc": aiohttp.ClientError()},
+        {"exc": TimeoutError()},
+        # A truncated body: `response.json()` raises JSONDecodeError — a
+        # ValueError, not a ClientError.
+        {"text": '[{"device_id": "idso'},
+    ],
+    ids=["unreachable", "timeout", "not-json"],
+)
+async def test_a_failed_read_leaves_the_properties(
+    hass: HomeAssistant, aioclient_mock, failure: dict
+) -> None:
+    """Each gateway failure is caught on both reads, and the properties stay.
+
+    On the full list (setup, membership change) and on the per-device counter
+    re-read alike, nothing propagates out of the best-effort enrichment.
+    """
+    coordinator = bare_coordinator(hass)
+    base = f"https://{coordinator.config['host']}/api/junghome/devices"
+    known = parse_devices_verbose([_verbose(SOCKET)])
+    coordinator.device_properties = MappingProxyType(known)
+    aioclient_mock.get(f"{base}/?verbose=true", **failure)
+    await coordinator.async_fetch_device_properties()
+    assert coordinator.device_properties == known
+    # Not answered: the next interval asks for the full list again.
+    assert coordinator._properties_listed_for is None
+
+    # Every live function listed: the interval re-reads the counter alone.
+    coordinator._properties_listed_for = frozenset()
+    aioclient_mock.get(f"{base}/{SOCKET}?verbose=true", **failure)
+    await coordinator._refresh_device_properties()
+    assert aioclient_mock.call_count == 2
+    assert coordinator.device_properties == known
+    await coordinator.async_shutdown()
+
+
+async def test_properties_refresh_notifies_only_on_a_change(
+    hass: HomeAssistant,
+) -> None:
+    """Listeners hear about a re-read only when it changed something.
+
+    Each notification rewrites every entity of the entry. An unchanged state
+    write leaves ``last_updated`` alone, so a state-based check cannot see a
+    spurious one; the listener calls are counted instead — on both paths, the
+    full list and the per-device counter re-read.
+    """
+    coordinator = bare_coordinator(hass)
+    calls: list[None] = []
+    unsub = coordinator.async_add_listener(lambda: calls.append(None))
+    full = AsyncMock(return_value=[_verbose(SOCKET)])
+    single = AsyncMock(return_value=_verbose(SOCKET))
+    with (
+        patch.object(coordinator, "_fetch_devices_verbose_from_api", full),
+        patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+    ):
+        # Nothing known yet: the full list, which teaches something.
+        await coordinator._refresh_device_properties()
+        assert (full.await_count, len(calls)) == (1, 1)
+        # The full list again (as after a membership change), same answer.
+        coordinator._properties_listed_for = None
+        await coordinator._refresh_device_properties()
+        assert (full.await_count, len(calls)) == (2, 1)
+        # Covered: the counter alone, unchanged, then changed.
+        await coordinator._refresh_device_properties()
+        assert (single.await_count, len(calls)) == (1, 1)
+        single.return_value = _verbose(SOCKET, energy=209700)
+        await coordinator._refresh_device_properties()
+        assert (single.await_count, len(calls)) == (2, 2)
+    assert coordinator.device_properties[SOCKET].energy_wh == 209700.0
+    unsub()
     await coordinator.async_shutdown()
 
 
