@@ -25,7 +25,7 @@
           "host": "Amfitrió"
         },
         "data_description": {
-          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, el valor predeterminat junghome.local funciona en moltes xarxes, o bé utilitza l'adreça IP (per exemple 192.168.1.50)."
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, substitueix el valor predeterminat junghome.local, que només es resol en algunes xarxes, per l'adreça IP de la passarel·la (per exemple 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Contrasenya de la clau de xarxa"
         },
         "data_description": {
-          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, el valor predeterminat junghome.local funciona en moltes xarxes, o bé utilitza l'adreça IP (per exemple 192.168.1.50).",
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home. S'emplena automàticament quan es detecta la passarel·la; si no, substitueix el valor predeterminat junghome.local, que només es resol en algunes xarxes, per l'adreça IP de la passarel·la (per exemple 192.168.1.50).",
           "password": "La contrasenya de la clau de xarxa de la passarel·la Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Amfitrió"
         },
         "data_description": {
-          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home (per exemple 192.168.1.50 o junghome.local)."
+          "host": "Adreça IP o nom d'amfitrió de la passarel·la Jung Home (per exemple 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

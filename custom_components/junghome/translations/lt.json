@@ -25,7 +25,7 @@
           "host": "Serveris"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50)."
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytąją reikšmę junghome.local, kuri veikia tik kai kuriuose tinkluose, pakeiskite sietuvo IP adresu (pavyzdžiui, 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Tinklo rakto slaptažodis"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50).",
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytąją reikšmę junghome.local, kuri veikia tik kai kuriuose tinkluose, pakeiskite sietuvo IP adresu (pavyzdžiui, 192.168.1.50).",
           "password": "„Jung Home“ sietuvo tinklo rakto slaptažodis."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Serveris"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50 arba junghome.local)."
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

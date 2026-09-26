@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls funktioniert die Vorgabe junghome.local in vielen Netzwerken, oder verwende die IP-Adresse (zum Beispiel 192.168.1.50)."
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls ersetze die Vorgabe junghome.local, die nur in manchen Netzwerken aufgelöst wird, durch die IP-Adresse des Gateways (zum Beispiel 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Netzwerkschlüssel-Passwort"
         },
         "data_description": {
-          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls funktioniert die Vorgabe junghome.local in vielen Netzwerken, oder verwende die IP-Adresse (zum Beispiel 192.168.1.50).",
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways. Sie wird automatisch ausgefüllt, wenn das Gateway gefunden wurde; andernfalls ersetze die Vorgabe junghome.local, die nur in manchen Netzwerken aufgelöst wird, durch die IP-Adresse des Gateways (zum Beispiel 192.168.1.50).",
           "password": "Das Netzwerkschlüssel-Passwort des Jung Home Gateways."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP-Adresse oder Hostname des Jung Home Gateways (zum Beispiel 192.168.1.50 oder junghome.local)."
+          "host": "IP-Adresse oder Hostname des Jung Home Gateways (zum Beispiel 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

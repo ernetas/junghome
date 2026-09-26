@@ -25,7 +25,7 @@
           "host": "Sunucu"
         },
         "data_description": {
-          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde varsayılan junghome.local birçok ağda çalışır ya da IP adresini kullanın (örneğin 192.168.1.50)."
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde yalnızca bazı ağlarda çözümlenen varsayılan junghome.local değerini ağ geçidinin IP adresiyle değiştirin (örneğin 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Ağ anahtarı parolası"
         },
         "data_description": {
-          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde varsayılan junghome.local birçok ağda çalışır ya da IP adresini kullanın (örneğin 192.168.1.50).",
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı. Ağ geçidi bulunduğunda otomatik olarak doldurulur; aksi halde yalnızca bazı ağlarda çözümlenen varsayılan junghome.local değerini ağ geçidinin IP adresiyle değiştirin (örneğin 192.168.1.50).",
           "password": "Jung Home ağ geçidinin ağ anahtarı parolası."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Sunucu"
         },
         "data_description": {
-          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı (örneğin 192.168.1.50 veya junghome.local)."
+          "host": "Jung Home ağ geçidinin IP adresi veya ana bilgisayar adı (örneğin 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

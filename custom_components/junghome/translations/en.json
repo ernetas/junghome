@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise the default junghome.local works on many networks, or use the IP address (for example 192.168.1.50)."
+          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise replace the default junghome.local, which resolves only on some networks, with the gateway's IP address (for example 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Network-key password"
         },
         "data_description": {
-          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise the default junghome.local works on many networks, or use the IP address (for example 192.168.1.50).",
+          "host": "IP address or hostname of the Jung Home gateway. It is filled in automatically when the gateway is discovered; otherwise replace the default junghome.local, which resolves only on some networks, with the gateway's IP address (for example 192.168.1.50).",
           "password": "The Jung Home gateway network-key password."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50 or junghome.local)."
+          "host": "IP address or hostname of the Jung Home gateway (for example 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

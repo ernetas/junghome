@@ -25,7 +25,7 @@
           "host": "Värd"
         },
         "data_description": {
-          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars fungerar standardvärdet junghome.local i många nätverk, eller använd IP-adressen (till exempel 192.168.1.50)."
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars ersätter du standardvärdet junghome.local, som bara kan slås upp i vissa nätverk, med gatewayens IP-adress (till exempel 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Lösenord för nätverksnyckel"
         },
         "data_description": {
-          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars fungerar standardvärdet junghome.local i många nätverk, eller använd IP-adressen (till exempel 192.168.1.50).",
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn. Det fylls i automatiskt när gatewayen hittas; annars ersätter du standardvärdet junghome.local, som bara kan slås upp i vissa nätverk, med gatewayens IP-adress (till exempel 192.168.1.50).",
           "password": "Jung Home-gatewayens lösenord för nätverksnyckeln."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Värd"
         },
         "data_description": {
-          "host": "Jung Home-gatewayens IP-adress eller värdnamn (till exempel 192.168.1.50 eller junghome.local)."
+          "host": "Jung Home-gatewayens IP-adress eller värdnamn (till exempel 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

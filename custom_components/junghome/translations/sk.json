@@ -25,7 +25,7 @@
           "host": "Hostiteľ"
         },
         "data_description": {
-          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak predvolená hodnota junghome.local funguje v mnohých sieťach, prípadne použite IP adresu (napríklad 192.168.1.50)."
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak nahraďte predvolenú hodnotu junghome.local, ktorá funguje len v niektorých sieťach, IP adresou brány (napríklad 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Heslo sieťového kľúča"
         },
         "data_description": {
-          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak predvolená hodnota junghome.local funguje v mnohých sieťach, prípadne použite IP adresu (napríklad 192.168.1.50).",
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home. Vyplní sa automaticky, keď sa brána nájde; inak nahraďte predvolenú hodnotu junghome.local, ktorá funguje len v niektorých sieťach, IP adresou brány (napríklad 192.168.1.50).",
           "password": "Heslo sieťového kľúča brány Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Hostiteľ"
         },
         "data_description": {
-          "host": "IP adresa alebo názov hostiteľa brány Jung Home (napríklad 192.168.1.50 alebo junghome.local)."
+          "host": "IP adresa alebo názov hostiteľa brány Jung Home (napríklad 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

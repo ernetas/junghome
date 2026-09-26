@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; anders werkt de standaardwaarde junghome.local in veel netwerken, of gebruik het IP-adres (bijvoorbeeld 192.168.1.50)."
+          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; vervang anders de standaardwaarde junghome.local, die alleen in sommige netwerken wordt omgezet, door het IP-adres van de gateway (bijvoorbeeld 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Netwerksleutelwachtwoord"
         },
         "data_description": {
-          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; anders werkt de standaardwaarde junghome.local in veel netwerken, of gebruik het IP-adres (bijvoorbeeld 192.168.1.50).",
+          "host": "IP-adres of hostnaam van de Jung Home-gateway. Dit wordt automatisch ingevuld wanneer de gateway wordt gevonden; vervang anders de standaardwaarde junghome.local, die alleen in sommige netwerken wordt omgezet, door het IP-adres van de gateway (bijvoorbeeld 192.168.1.50).",
           "password": "Het netwerksleutelwachtwoord van de Jung Home-gateway."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "IP-adres of hostnaam van de Jung Home-gateway (bijvoorbeeld 192.168.1.50 of junghome.local)."
+          "host": "IP-adres of hostnaam van de Jung Home-gateway (bijvoorbeeld 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie domyślna wartość junghome.local działa w wielu sieciach, można też użyć adresu IP (na przykład 192.168.1.50)."
+          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie zastąp domyślną wartość junghome.local, która jest rozpoznawana tylko w niektórych sieciach, adresem IP bramki (na przykład 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Hasło klucza sieciowego"
         },
         "data_description": {
-          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie domyślna wartość junghome.local działa w wielu sieciach, można też użyć adresu IP (na przykład 192.168.1.50).",
+          "host": "Adres IP lub nazwa hosta bramki Jung Home. Jest wypełniany automatycznie, gdy bramka zostanie wykryta; w przeciwnym razie zastąp domyślną wartość junghome.local, która jest rozpoznawana tylko w niektórych sieciach, adresem IP bramki (na przykład 192.168.1.50).",
           "password": "Hasło klucza sieciowego bramki Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Adres IP lub nazwa hosta bramki Jung Home (na przykład 192.168.1.50 lub junghome.local)."
+          "host": "Adres IP lub nazwa hosta bramki Jung Home (na przykład 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

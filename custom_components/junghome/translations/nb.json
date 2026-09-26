@@ -25,7 +25,7 @@
           "host": "Vert"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50)."
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers erstatter du standardverdien junghome.local, som bare kan slås opp på enkelte nettverk, med IP-adressen til gatewayen (for eksempel 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Passord for nettverksnøkkel"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50).",
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers erstatter du standardverdien junghome.local, som bare kan slås opp på enkelte nettverk, med IP-adressen til gatewayen (for eksempel 192.168.1.50).",
           "password": "Passordet for nettverksnøkkelen til Jung Home-gatewayen."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Vert"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50 eller junghome.local)."
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

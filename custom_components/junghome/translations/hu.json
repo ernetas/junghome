@@ -25,7 +25,7 @@
           "host": "Kiszolgáló"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50)."
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként cseréld le az alapértelmezett junghome.local értéket, amely csak egyes hálózatokon oldható fel, az átjáró IP-címére (például 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Hálózatikulcs-jelszó"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50).",
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként cseréld le az alapértelmezett junghome.local értéket, amely csak egyes hálózatokon oldható fel, az átjáró IP-címére (például 192.168.1.50).",
           "password": "A Jung Home átjáró hálózatikulcs-jelszava."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Kiszolgáló"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50 vagy junghome.local)."
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

@@ -25,7 +25,7 @@
           "host": "Gostitelj"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50)."
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeto vrednost junghome.local, ki se razreši le v nekaterih omrežjih, zamenjajte z naslovom IP prehoda (na primer 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Geslo omrežnega ključa"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50).",
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeto vrednost junghome.local, ki se razreši le v nekaterih omrežjih, zamenjajte z naslovom IP prehoda (na primer 192.168.1.50).",
           "password": "Geslo omrežnega ključa prehoda Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Gostitelj"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50 ali junghome.local)."
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

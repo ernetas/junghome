@@ -25,7 +25,7 @@
           "host": "Isäntä"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50)."
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa korvaa oletusarvo junghome.local, joka toimii vain joissakin verkoissa, yhdyskäytävän IP-osoitteella (esimerkiksi 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Verkkoavaimen salasana"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50).",
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa korvaa oletusarvo junghome.local, joka toimii vain joissakin verkoissa, yhdyskäytävän IP-osoitteella (esimerkiksi 192.168.1.50).",
           "password": "Jung Home -yhdyskäytävän verkkoavaimen salasana."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Isäntä"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50 tai junghome.local)."
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

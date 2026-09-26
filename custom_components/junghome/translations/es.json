@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, el valor predeterminado junghome.local funciona en muchas redes, o puedes usar la dirección IP (por ejemplo, 192.168.1.50)."
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, sustituye el valor predeterminado junghome.local, que solo se resuelve en algunas redes, por la dirección IP de la pasarela (por ejemplo, 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Contraseña de la clave de red"
         },
         "data_description": {
-          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, el valor predeterminado junghome.local funciona en muchas redes, o puedes usar la dirección IP (por ejemplo, 192.168.1.50).",
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home. Se rellena automáticamente cuando se detecta la pasarela; si no, sustituye el valor predeterminado junghome.local, que solo se resuelve en algunas redes, por la dirección IP de la pasarela (por ejemplo, 192.168.1.50).",
           "password": "La contraseña de la clave de red de la pasarela Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Dirección IP o nombre de host de la pasarela Jung Home (por ejemplo, 192.168.1.50 o junghome.local)."
+          "host": "Dirección IP o nombre de host de la pasarela Jung Home (por ejemplo, 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

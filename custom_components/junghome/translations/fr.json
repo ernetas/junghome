@@ -25,7 +25,7 @@
           "host": "Hôte"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50)."
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, remplacez la valeur par défaut junghome.local, qui n'est résolue que sur certains réseaux, par l'adresse IP de la passerelle (par exemple 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Mot de passe de la clé réseau"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50).",
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, remplacez la valeur par défaut junghome.local, qui n'est résolue que sur certains réseaux, par l'adresse IP de la passerelle (par exemple 192.168.1.50).",
           "password": "Le mot de passe de la clé réseau de la passerelle Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Hôte"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50 ou junghome.local)."
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {

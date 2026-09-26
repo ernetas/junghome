@@ -25,7 +25,7 @@
           "host": "Gazdă"
         },
         "data_description": {
-          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, valoarea implicită junghome.local funcționează în multe rețele sau folosește adresa IP (de exemplu 192.168.1.50)."
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, înlocuiește valoarea implicită junghome.local, care se rezolvă doar în unele rețele, cu adresa IP a gateway-ului (de exemplu 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Parola cheii de rețea"
         },
         "data_description": {
-          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, valoarea implicită junghome.local funcționează în multe rețele sau folosește adresa IP (de exemplu 192.168.1.50).",
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home. Se completează automat când gateway-ul este descoperit; altfel, înlocuiește valoarea implicită junghome.local, care se rezolvă doar în unele rețele, cu adresa IP a gateway-ului (de exemplu 192.168.1.50).",
           "password": "Parola cheii de rețea a gateway-ului Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Gazdă"
         },
         "data_description": {
-          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home (de exemplu 192.168.1.50 sau junghome.local)."
+          "host": "Adresa IP sau numele de gazdă al gateway-ului Jung Home (de exemplu 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
