@@ -125,7 +125,10 @@ once after the first refresh and every 15 minutes, best-effort (any non-200 —
 401 included — or transport error changes nothing), and raises one repair
 issue per condition: Bluetooth failure (the first two rows), out of sequence
 numbers, time sync (withdrawn as soon as `GET /config/parameter/time_error`
-reads `false` — the log has no "recovered" entry), project missing (`JUNG HOME
+reads `false` — the log has no "recovered" entry — or a newer `time error`
+entry shows a later failed round within 24 h of a good sync: a > 24 h failure
+logs `time error` first and `Time Sync Error` after it, so only a short one
+leaves `time error` newest), project missing (`JUNG HOME
 Project missing` or `project not_uploaded`) and project incomplete (both
 withdrawn by a newer `New Bluetooth Mesh Project`). The others — the
 unreachable list above all — go to diagnostics only, with the myJUNG user

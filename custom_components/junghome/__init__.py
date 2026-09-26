@@ -31,6 +31,7 @@ from .coordinator import (
     entry_derived_issue_ids,
     function_anchors_store,
 )
+from .entity import entry_unloading
 from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,21 +98,41 @@ _MIGRATION_ERRORS = (
 )
 
 
+# Consecutive collision-free device-list adoptions that withdraw the
+# colliding-labels issue. One is not enough: a partial poll (the gateway
+# occasionally returns one, notably right after a reload — see the stale-device
+# pruner) can drop one label of a colliding pair, and withdrawing on it made the
+# next full list re-create the issue — re-announced, and un-ignored, because a
+# deleted issue loses its dismissal. Two is the capability watcher's window.
+LABEL_COLLISION_CLEAR_ADOPTIONS = 2
+
+
 def _sync_label_collision_issue(
     hass: HomeAssistant,
     entry: JungHomeConfigEntry,
     collisions: dict[str, list[str]],
+    collision_free_adoptions: int,
 ) -> None:
     """Raise, update or withdraw the entry's colliding-labels repair issue.
 
     Two labels that slug identically share one device identity and the second
     device gets no entities (`duplicate_slugs`) — invisible in the UI apart
     from a log line, so it is a repair issue too. One issue per entry lists
-    every group; it goes away on the first adoption without a collision.
+    every group; it goes away once ``LABEL_COLLISION_CLEAR_ADOPTIONS``
+    adoptions in a row carried no collision.
+
+    Nothing is written while the entry unloads: an adoption landing in that
+    window (a poll still in flight while ``stop()`` awaits the WebSocket
+    teardown — this listener is removed only after the unload returns) would
+    otherwise re-raise the issue a disabling unload has just withdrawn, for an
+    entry that no longer runs anything to withdraw it again.
     """
+    if entry_unloading(entry):
+        return
     issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
     if not collisions:
-        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        if collision_free_adoptions >= LABEL_COLLISION_CLEAR_ADOPTIONS:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
         return
     groups = sorted(
         ", ".join(f'"{label}"' for label in sorted(labels))
@@ -196,6 +217,9 @@ def _register_capability_reload(
     # dropped, and "consecutive" means exactly that.
     pending_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
     warned_collisions: set[str] = set()
+    # Adoptions in a row without a colliding label (the issue's withdrawal
+    # window, LABEL_COLLISION_CLEAR_ADOPTIONS); an empty list counts neither way.
+    collision_free_adoptions = 0
     reload_scheduled = False
     # The last device-list adoption this watcher has fingerprinted, mirroring
     # the stale-device pruner's guard. Capability signatures key on datapoint
@@ -211,6 +235,7 @@ def _register_capability_reload(
     @callback
     def _reload_on_capability_change() -> None:
         nonlocal reload_scheduled, last_generation, pending_signatures
+        nonlocal collision_free_adoptions
         if reload_scheduled:
             return
         if coordinator.data_generation == last_generation:
@@ -230,7 +255,8 @@ def _register_capability_reload(
         # devices does it describe?), so drop any stale entry and skip it. If the
         # user renames one, the slug stops colliding and re-seeds cleanly.
         collisions = duplicate_slugs(coordinator.data)
-        _sync_label_collision_issue(hass, entry, collisions)
+        collision_free_adoptions = 0 if collisions else collision_free_adoptions + 1
+        _sync_label_collision_issue(hass, entry, collisions, collision_free_adoptions)
         for slug, labels in collisions.items():
             capability_signatures.pop(slug, None)
             if slug not in warned_collisions:
@@ -856,14 +882,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     # stop() is idempotent; call it unconditionally so a failed platform unload
     # doesn't leak the WebSocket reconnect loop.
     await entry.runtime_data.stop()
+    # The health and colliding-label issues outlive a reload or an HA restart
+    # (the next setup re-derives them, and the registry keeps the user's
+    # "Ignore" only for an issue it still holds). A disabled entry sets up no
+    # more, so nothing would re-derive or withdraw them: they go with it.
+    # (`disabled_by` is set before HA unloads the entry.) After `stop()`, so a
+    # health read still in flight cannot re-raise one (its `_closing` guard),
+    # and the watcher writes nothing while the entry unloads.
+    if entry.disabled_by is not None:
+        for issue_id in entry_derived_issue_ids(entry.entry_id):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
     """Withdraw the entry's repair issues and delete its store.
 
-    ``stop()`` deletes the issues on unload, but an entry removed while it sits
-    in SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
+    ``stop()`` deletes the certificate and push-failure issues on unload, but
+    an entry removed while it sits in SETUP_RETRY (a certificate mismatch keeps
+    it there) never ran ``stop()``; the health and colliding-label issues
+    outlive every unload short of a disable (``async_unload_entry``).
     """
     for issue_id in (
         f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",

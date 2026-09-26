@@ -51,7 +51,9 @@ HEALTH_STATUS_REFRESH_INTERVAL = 900
 # The config parameter that says whether the gateway's clock is currently
 # unsynchronised (``GET /config/parameter/time_error`` returns a raw JSON
 # boolean). The health log has no "time sync recovered" message, so this is
-# what withdraws the time issue: ``sys_event_handler.js:127,132`` sets it
+# what withdraws the time issue after a good sync (a later failed round
+# withdraws it through the log instead — ``ISSUE_TIME_SYNC``'s clearing
+# entry): ``sys_event_handler.js:127,132`` sets it
 # ``false`` on every successful sync and ``true`` on every failed one
 # (``api-server/dist/services/jung-configuration-service.js:171-185`` returns
 # the stored value as-is).
@@ -119,11 +121,20 @@ HEALTH_CONDITIONS: tuple[HealthCondition, ...] = (
         ISSUE_TIME_SYNC,
         ir.IssueSeverity.WARNING,
         # sys_event_handler.js:154 — a failed sync more than 24 h after the
-        # last successful one. (Every failed sync also logs the generic
-        # `time error` flag entry, configuration_service.js:207 — one missed
-        # NTP round is enough, so that one is not an issue.) Withdrawn by
-        # TIME_ERROR_PARAMETER, not by a log entry.
+        # last successful one.
         frozenset({"JUNG HOME Gateway Time Sync Error"}),
+        # Every failed sync first logs the generic `time error` flag entry
+        # (sys_event_handler.js:132 sets `time_error` true, and
+        # configuration_service.js:192-207 logs every `true` write of an
+        # error-level parameter, `_` → ` `); only a failure > 24 h after the
+        # last good sync then logs the entry above, later in the same
+        # handler. So the newest of the two tells the rounds apart: a
+        # > 24 h failure leaves `Time Sync Error` newest, a single missed NTP
+        # round after a recovery leaves `time error` newest — which must not
+        # resurrect the issue from the old entry the log never prunes. A
+        # successful sync logs nothing: TIME_ERROR_PARAMETER withdraws the
+        # issue while `Time Sync Error` is still the newest.
+        frozenset({"time error"}),
     ),
     HealthCondition(
         ISSUE_PROJECT_MISSING,
