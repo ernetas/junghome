@@ -28,7 +28,12 @@ PARALLEL_UPDATES = 0
 # effective window from the verbose device endpoint (`DeviceProperties.
 # color_temp_range`, `models.color_temp_range`) and uses these defaults only
 # until — or unless — it is known: firmware without the endpoint, a failed
-# read, a range that is not plausible. The defaults are the gateway's own
+# read, a range that is not plausible, or a read taken before the gateway had
+# read the node's range after a boot (still the default profile next to an
+# unread range state — pending, and re-read by the coordinator's periodic
+# properties refresh until known). The range is looked up on every state
+# write, so one learned after the entity exists reaches it on that refresh's
+# listener dispatch. The defaults are the gateway's own
 # starting range — what it clamps to until it has read the node's — and the
 # range of every tunable-white light in the 2026-09-16 probe. (The
 # `/types/datapoints` catalog advertises 2000-10000; it is a descriptor, not

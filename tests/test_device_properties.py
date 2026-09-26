@@ -189,12 +189,20 @@ def test_parse_tolerates_every_shape_seen_or_plausible() -> None:
     }
 
 
-def _ct_light(device_id: str, profile_range: object) -> dict:
+_READ = object()  # the range state holds the profile's own pair
+
+
+def _ct_light(
+    device_id: str, profile_range: object, range_value: object = _READ
+) -> dict:
     """A tunable-white light's verbose object, as the 2026-09-16 probe shows it.
 
     The probe's lights carried ``color_temperature.profile.range`` 2000-6000
     next to a ``color_temperature_range`` state of ``[2000, 6000]`` (mode
-    ``"2000 - 6000"``); the profile range is what the gateway clamps to.
+    ``"2000 - 6000"``); the profile range is what the gateway clamps to, the
+    range state's value only says whether the node's range has been read and
+    bound into it yet (``[]`` until then). ``range_value=None`` omits the
+    range state; by default it holds the profile's pair, as once bound.
     """
     doc = _verbose(device_id, energy_present=False, device_type="ColorLight")
     doc["states"]["color_temperature"] = {
@@ -203,15 +211,20 @@ def _ct_light(device_id: str, profile_range: object) -> dict:
         "value": 2000,
         "profile": {"index": 4, "range": profile_range, "unit": "Kelvin"},
     }
-    # The range state itself is not read: its value is already folded into
-    # the profile range above by the middleware's state binding.
-    doc["states"]["color_temperature_range"] = {
-        "state_id": f"{device_id}-02d",
-        "state_type": "color_temperature_range",
-        "value": [1111, 9999],
-        "mode": "1111 - 9999",
-        "profile": {"index": 45, "range": {"min": 800, "max": 20000, "step": 1}},
-    }
+    if range_value is _READ:
+        range_value = (
+            [profile_range.get("min"), profile_range.get("max")]
+            if isinstance(profile_range, dict)
+            else [2000, 6000]
+        )
+    if range_value is not None:
+        doc["states"]["color_temperature_range"] = {
+            "state_id": f"{device_id}-02d",
+            "state_type": "color_temperature_range",
+            "value": range_value,
+            "mode": "",
+            "profile": {"index": 45, "range": {"min": 800, "max": 20000, "step": 1}},
+        }
     return doc
 
 
@@ -222,15 +235,61 @@ def test_parse_reads_the_light_kelvin_range_from_the_profile() -> None:
     # The probe's lights: the constructor default, which is the device's too.
     doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1})
     assert parse_device_properties(doc).color_temp_range == (2000, 6000)
+    assert parse_device_properties(doc).color_temp_range_pending is False
     # A list-shaped `states` container works the same way.
     doc["states"] = list(doc["states"].values())
     assert parse_device_properties(doc).color_temp_range == (2000, 6000)
-    # Not a light / no profile / an unusable range: unknown.
+    # Not a light / no profile / an unusable range: unknown, and not pending
+    # (a re-read would not change it).
     assert parse_device_properties(_verbose(SOCKET)).color_temp_range is None
     doc = _ct_light(LIGHT, {"min": 6500, "max": 2700})
-    assert parse_device_properties(doc).color_temp_range is None
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, False)
     doc["states"]["color_temperature"]["profile"] = "nope"
-    assert parse_device_properties(doc).color_temp_range is None
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, False)
+
+
+@pytest.mark.parametrize(
+    "range_value",
+    [[], None, [None, None], [2000], [True, 6000], ["2000", "6000"], "2000 - 6000"],
+    ids=["unread", "nan", "nan-pair", "short", "bool", "strings", "mode-string"],
+)
+def test_parse_default_profile_before_the_range_is_read_is_pending(
+    range_value: object,
+) -> None:
+    """Right after a gateway boot the profile is the constructor default.
+
+    The range state is ``[]`` until the boot's first poll pass reads it (or
+    ``NaN`` — ``null`` on the wire — after failed requests); until then the
+    2000-6000 K profile says nothing about the node, so the window is unknown
+    and pending — the periodic refresh re-reads the device.
+    """
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1}, [])
+    doc["states"]["color_temperature_range"]["value"] = range_value
+    props = parse_device_properties(doc)
+    assert props.color_temp_range is None
+    assert props.color_temp_range_pending is True
+
+
+def test_parse_trusts_a_profile_the_range_state_cannot_contradict() -> None:
+    """A bound profile, or one nothing can ever rebind, is the clamp."""
+    # Bound earlier, range value since reset to NaN by failed requests: the
+    # binding is not reset with it.
+    doc = _ct_light(LIGHT, {"min": 2700, "max": 6500, "step": 1}, [])
+    doc["states"]["color_temperature_range"]["value"] = None
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (
+        (2700, 6500),
+        False,
+    )
+    # No range state at all: the default can never be rebound.
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1}, None)
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (
+        (2000, 6000),
+        False,
+    )
 
 
 def test_parse_kelvin_range_rejects_bad_payloads() -> None:
@@ -361,6 +420,7 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
             "software_revision": (2, 2, 0, 1),
             "reachable": True,
             "color_temp_range": None,
+            "color_temp_range_pending": False,
             "node_address": None,
         }
 
@@ -571,6 +631,65 @@ async def test_a_light_range_read_after_setup_reaches_the_entity(
         state = hass.states.get("light.strip")
         assert state.attributes["min_color_temp_kelvin"] == 2700
         assert state.attributes["max_color_temp_kelvin"] == 6500
+
+
+async def test_a_range_unread_at_setup_is_re_read_until_known(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """HA set up right after a gateway boot, before the node's range was bound.
+
+    The setup-time list shows the light's constructor default with an unread
+    (``[]``) range state: the window is unknown, the light falls back to
+    2000-6000 K, and every interval re-reads that light alone (next to the
+    energy counter) — a pending answer again, then the bound 2700-6500 K,
+    which reaches the entity; once known it is not re-read.
+    """
+    default = {"min": 2000, "max": 6000, "step": 1}
+    unread = _ct_light("idcolor1", default, [])
+    initial = [_verbose(SOCKET), unread, *_everything_but(SOCKET, "idcolor1")]
+    async with _running(hass, initial) as entry:
+        coordinator = entry.runtime_data
+        props = coordinator.device_properties["idcolor1"]
+        assert props.color_temp_range is None
+        assert props.color_temp_range_pending is True
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2000
+        assert state.attributes["max_color_temp_kelvin"] == 6000
+
+        answers = {"idcolor1": unread, SOCKET: _verbose(SOCKET)}
+        single = AsyncMock(side_effect=lambda _h, _t, device_id: answers[device_id])
+        full = AsyncMock(return_value=[])
+
+        def asked() -> list[str]:
+            return sorted(call.args[2] for call in single.await_args_list)
+
+        with (
+            patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+            patch.object(coordinator, "_fetch_devices_verbose_from_api", full),
+        ):
+            # Still unread: asked again, still the default.
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", SOCKET]
+            state = hass.states.get("light.strip")
+            assert state.attributes["max_color_temp_kelvin"] == 6000
+            # Bound now: the node's own window reaches the entity.
+            answers["idcolor1"] = _ct_light(
+                "idcolor1", {"min": 2700, "max": 6500, "step": 1}
+            )
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET]
+            state = hass.states.get("light.strip")
+            assert state.attributes["min_color_temp_kelvin"] == 2700
+            assert state.attributes["max_color_temp_kelvin"] == 6500
+            assert state.attributes["color_temp_kelvin"] == 2700
+            # Known: only the counter is re-read from now on.
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET, SOCKET]
+            assert full.await_count == 0
+        assert coordinator.device_properties["idcolor1"].color_temp_range == (
+            2700,
+            6500,
+        )
 
 
 async def test_an_empty_answer_keeps_the_properties(hass: HomeAssistant) -> None:

@@ -2994,6 +2994,7 @@ async def test_device_diagnostics_carry_properties_and_the_anchor(
         "software_revision": None,
         "reachable": None,
         "color_temp_range": None,
+        "color_temp_range_pending": False,
         "node_address": 0xCF,
     }
     assert device_diag["node_software_revision"] == (2, 2, 0, 2)
