@@ -55,7 +55,6 @@ from custom_components.junghome.coordinator import (
     ISSUE_TLS_MISMATCH,
     NODE_IDENTITY_REFETCH_INTERVAL,
     JungHomeDataUpdateCoordinator,
-    _parse_color_temp_range,
 )
 from custom_components.junghome.diagnostics import (
     _scrub,
@@ -1347,9 +1346,8 @@ async def test_area_for_device_tolerates_malformed_gateway_json(
 ) -> None:
     """Malformed groups/parents must not raise out of the _assign_areas listener.
 
-    Same hardening contract as ``color_temp_range_for_device``: an unhashable
-    group id or parent entry (a list, a dict) raised ``TypeError`` from dict
-    construction/lookup inside a coordinator listener. HA contains a raising
+    An unhashable group id or parent entry (a list, a dict) raised
+    ``TypeError`` from dict construction/lookup inside a coordinator listener. HA contains a raising
     listener (each callback runs in its own try/except; the rest still
     dispatch), but that logs a full traceback for merely-malformed gateway
     data on every refresh, and area assignment silently stops for the device.
@@ -1369,148 +1367,6 @@ async def test_area_for_device_tolerates_malformed_gateway_json(
     assert coordinator.area_for_device({"id": "d", "parent_groups": "g1"}) is None
     # A parent resolving to a nameless group keeps looking / returns None.
     assert coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) is None
-
-
-async def test_color_temp_range_for_device_reads_group_metadata(
-    hass: HomeAssistant,
-) -> None:
-    """color_temp_range_for_device resolves the group's advertised Kelvin range."""
-    coordinator = bare_coordinator(hass)
-    device = {"id": "d", "parent_groups": ["g1"]}
-    # Both plausible encodings are accepted, and values may be strings.
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 6500}}
-    ]
-    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
-    coordinator.groups = [{"id": "g1", "color_temperature_range": ["2700", "6500"]}]
-    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
-    # No parent groups / an id that doesn't resolve / a group without a range.
-    assert coordinator.color_temp_range_for_device({"id": "d"}) is None
-    assert (
-        coordinator.color_temp_range_for_device({"id": "d", "parent_groups": ["gX"]})
-        is None
-    )
-    coordinator.groups = [{"id": "g1", "name": "Living room"}]
-    assert coordinator.color_temp_range_for_device(device) is None
-    # The first parent group advertising a usable range wins.
-    coordinator.groups = [
-        {"id": "g0", "name": "no range here"},
-        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 4000}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g0", "g1"]}
-    ) == (2200, 4000)
-
-
-def test_parse_color_temp_range_rejects_bad_payloads() -> None:
-    """The range parser only trusts a well-formed, plausible pair of numbers."""
-    assert _parse_color_temp_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
-    assert _parse_color_temp_range([2700, 6500]) == (2700, 6500)
-    for raw in (
-        None,
-        "2700-6500",
-        42,
-        {},  # no keys at all
-        {"min": 2700},  # half a range
-        {"min": "warm", "max": "cool"},  # non-numeric
-        {"min": None, "max": 6500},
-        {"min": {"nested": 1}, "max": 6500},  # not a scalar
-        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
-        {"min": 6500, "max": 2700},  # reversed
-        {"min": 4000, "max": 4000},  # zero-width
-        {"min": 10, "max": 6500},  # implausibly low
-        {"min": 2700, "max": 999999},  # implausibly high
-        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
-        {"min": 2700, "max": float("inf")},  # ...and Infinity
-        [2700],  # wrong arity
-        [2000, 4000, 6500],
-    ):
-        assert _parse_color_temp_range(raw) is None, raw
-
-
-def test_parse_color_temp_range_survives_unrepresentable_numbers() -> None:
-    """A huge JSON integer is rejected, not raised on.
-
-    `json.loads` parses integer literals at arbitrary precision, so a frame can
-    hand us an `int` that `float()` cannot represent — which raises
-    `OverflowError`, not `ValueError`. This escaped the parser and propagated out
-    of `JungHomeLight.__init__`, so a single malformed frame removed every light
-    entity while the config entry still reported itself loaded.
-    """
-    huge = json.loads("9" * 400)  # an int, not a float
-    assert isinstance(huge, int)
-    with pytest.raises(OverflowError):
-        float(huge)
-    for raw in (
-        {"min": 2700, "max": huge},
-        {"min": huge, "max": 6500},
-        [huge, 6500],
-        [2700, huge],
-        {"min": -huge, "max": huge},
-    ):
-        assert _parse_color_temp_range(raw) is None, raw
-    # A huge *string* is representable (it becomes inf) and is rejected by the
-    # finiteness guard instead.
-    assert _parse_color_temp_range({"min": 2700, "max": "9" * 400}) is None
-
-
-def test_color_temp_range_for_device_survives_malformed_groups(
-    hass: HomeAssistant,
-) -> None:
-    """Non-scalar ids and a non-list parent_groups are rejected, not raised on.
-
-    Both would otherwise raise `TypeError` out of a constructor: an unhashable
-    id blows up the lookup dict, and a non-iterable `parent_groups` blows up the
-    loop.
-    """
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
-    )
-    good = {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}
-    coordinator.groups = [good]
-    for device in (
-        {"id": "d", "parent_groups": 5},  # not iterable
-        {"id": "d", "parent_groups": "g1"},  # a bare string, not a list
-        {"id": "d", "parent_groups": [{"id": "g1"}]},  # unhashable member
-        {"id": "d", "parent_groups": [["g1"]]},
-        {"id": "d", "parent_groups": [None]},
-    ):
-        assert coordinator.color_temp_range_for_device(device) is None, device
-    # Unhashable / malformed group entries are skipped rather than raising.
-    coordinator.groups = [{"id": ["g1"]}, "not a dict", None, good]  # type: ignore[list-item]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1"]}
-    ) == (2700, 4000)
-
-
-def test_color_temp_range_for_device_first_group_wins(hass: HomeAssistant) -> None:
-    """When two parent groups disagree, the first in `parent_groups` wins.
-
-    Order-dependent by construction, which is only tolerable because nothing
-    consumes the result yet. Pinned so a future caller finds the behaviour
-    documented rather than discovering it.
-    """
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
-    )
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
-        {"id": "g2", "color_temperature_range": {"min": 2200, "max": 6500}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1", "g2"]}
-    ) == (2700, 4000)
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g2", "g1"]}
-    ) == (2200, 6500)
-    # Duplicate ids resolve to the first occurrence, matching the docstring.
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
-        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 6500}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1"]}
-    ) == (2700, 4000)
 
 
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:

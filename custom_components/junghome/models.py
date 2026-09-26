@@ -23,6 +23,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -538,8 +539,9 @@ def parse_project_export(document: Any) -> dict[str, NodeIdentity]:
 # them the device *properties* the function list never carries (probed live
 # 2026-09-16, docs/gateway-rest-api.md): a metering socket's cumulative energy
 # counter ``total_device_energy_use`` (Wh), every device's ``software_revision``
-# (``[2, 2, 0, 2]``), and per-state ``statistics.reachable``. Only those three
-# are read; the rest of the document is dropped.
+# (``[2, 2, 0, 2]``), per-state ``statistics.reachable``, and a tunable-white
+# light's colour-temperature range. Only those four are read; the rest of the
+# document is dropped.
 
 # The device firmware that started publishing every button event twice
 # (docs/cross-repo-analysis.md §1.1). A button whose revision is known to be
@@ -560,6 +562,9 @@ class DeviceProperties:
     software_revision: tuple[int, ...] | None = None
     # The middleware's ``isDeviceOnline``: any state reachable.
     reachable: bool | None = None
+    # The (min, max) Kelvin window the gateway clamps this light's
+    # colour-temperature writes to — see ``color_temp_range``.
+    color_temp_range: tuple[int, int] | None = None
 
 
 def _entries(collection: Any) -> list[dict[str, Any]]:
@@ -601,6 +606,86 @@ def _energy_wh(prop: dict[str, Any]) -> float | None:
     return result if result >= 0 else None
 
 
+# The Light CTL Temperature Range a mesh node can report (Mesh Model spec,
+# 0x0320-0x4E20 K; the gateway's own range state declares exactly this as its
+# model range — `models/device_states/ColorTemperatureStateRange.js:83`). A
+# range outside it is not a tunable-white range — the spec's 0xFFFF "unknown"
+# lands here — and is treated as unknown rather than declared to Home
+# Assistant, which would then offer it to the user.
+MIN_PLAUSIBLE_KELVIN = 800
+MAX_PLAUSIBLE_KELVIN = 20000
+
+
+def _as_kelvin(raw: Any) -> int | None:
+    """Coerce one end of a range to Kelvin, or None if it isn't a number.
+
+    ``"2700"`` and ``2700`` are both accepted; ``bool`` is rejected explicitly
+    (an ``int`` subclass, and ``True`` is not a temperature). Every conversion
+    can raise on untrusted JSON, and not only ``ValueError``: ``float()`` on a
+    huge ``int`` (``json.loads`` parses integer literals at arbitrary
+    precision) raises ``OverflowError``, and ``round()`` rejects the bare
+    ``NaN``/``Infinity`` literals ``json.loads`` also accepts — screened out
+    by ``math.isfinite`` first.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        kelvin = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(kelvin):
+        return None
+    return round(kelvin)
+
+
+def parse_kelvin_range(raw: Any) -> tuple[int, int] | None:
+    """Parse a colour-temperature range, or None if unusable.
+
+    Accepts the middleware's ``{"min": 2000, "max": 6000, ...}`` profile range
+    and the range state's ``[2000, 6000]`` value. Rejects non-numeric,
+    reversed, zero-width and implausible ranges — the light then keeps its
+    defaults.
+    """
+    if isinstance(raw, dict):
+        low, high = raw.get("min"), raw.get("max")
+    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
+        low, high = raw[0], raw[1]
+    else:
+        return None
+    low_k, high_k = _as_kelvin(low), _as_kelvin(high)
+    if low_k is None or high_k is None or low_k >= high_k:
+        return None
+    if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
+        return None
+    return low_k, high_k
+
+
+def color_temp_range(states: list[dict[str, Any]]) -> tuple[int, int] | None:
+    """Return the Kelvin window the gateway clamps a light's writes to.
+
+    That window is the ``color_temperature`` state's ``profile.range``: the
+    state's ``publishValue`` clamps every write to it
+    (`models/device_states/ColorTemperatureState.js:94-103`). The constructor
+    sets 2000-6000 K (`:60`), and once the middleware has read the node's
+    Light CTL Temperature Range (the ``color_temperature_range`` state,
+    `ColorTemperatureStateRange.js:101-120`) the state binding copies it in
+    (`services/device_state_service.js:664-687` ->
+    `fromState_ColorTemperatureRange`, `ColorTemperatureState.js:190-197`). So
+    the profile range is the gateway's effective limit either way — the
+    range state's own value is not read, it is already folded in. Neither
+    reaches ``/functions/`` (``getDatapointTypeByState`` maps the range state
+    to no datapoint, `util/datapoint_helper_methods.js:97`), which is why only
+    this endpoint carries it.
+    """
+    for state in states:
+        if state.get("state_type") != "color_temperature":
+            continue
+        profile = state.get("profile")
+        if isinstance(profile, dict):
+            return parse_kelvin_range(profile.get("range"))
+    return None
+
+
 def parse_device_properties(document: Any) -> DeviceProperties | None:
     """Parse one verbose device object; None if it is not one."""
     if not isinstance(document, dict) or not isinstance(document.get("device_id"), str):
@@ -628,6 +713,7 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
         energy_wh=energy_wh,
         software_revision=revision,
         reachable=reachable,
+        color_temp_range=color_temp_range(states),
     )
 
 

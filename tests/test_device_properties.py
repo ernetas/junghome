@@ -1,16 +1,19 @@
-"""The verbose device endpoint: energy counters, firmware revisions, reachability.
+"""The verbose device endpoint: energy, firmware, reachability, Kelvin range.
 
 ``GET /devices/?verbose=true`` (deprecated/experimental, live on 2.1.3) returns
 the middleware's raw device objects, keyed by the function id. The
 integration reads three things out of them: a metering socket's cumulative
 ``total_device_energy_use`` (the Energy Dashboard's sensor), every device's
 ``software_revision`` (a button on firmware older than 2.2.0 reports each tap
-once, so duplicate suppression is skipped for it — see ``test_event.py``), and
-per-state reachability (diagnostics). Shapes below mirror the 2026-09-16 probe.
+once, so duplicate suppression is skipped for it — see ``test_event.py``),
+per-state reachability (diagnostics), and a tunable-white light's effective
+colour-temperature window (``test_light.py``). Shapes below mirror the
+2026-09-16 probe.
 """
 
 import asyncio
 import copy
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -37,6 +40,7 @@ from custom_components.junghome.models import (
     DeviceProperties,
     parse_device_properties,
     parse_devices_verbose,
+    parse_kelvin_range,
 )
 from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket, bare_coordinator
 
@@ -160,6 +164,102 @@ def test_parse_tolerates_every_shape_seen_or_plausible() -> None:
     }
 
 
+def _ct_light(device_id: str, profile_range: object) -> dict:
+    """A tunable-white light's verbose object, as the 2026-09-16 probe shows it.
+
+    The probe's lights carried ``color_temperature.profile.range`` 2000-6000
+    next to a ``color_temperature_range`` state of ``[2000, 6000]`` (mode
+    ``"2000 - 6000"``); the profile range is what the gateway clamps to.
+    """
+    doc = _verbose(device_id, energy_present=False, device_type="ColorLight")
+    doc["states"]["color_temperature"] = {
+        "state_id": f"{device_id}-004",
+        "state_type": "color_temperature",
+        "value": 2000,
+        "profile": {"index": 4, "range": profile_range, "unit": "Kelvin"},
+    }
+    # The range state itself is not read: its value is already folded into
+    # the profile range above by the middleware's state binding.
+    doc["states"]["color_temperature_range"] = {
+        "state_id": f"{device_id}-02d",
+        "state_type": "color_temperature_range",
+        "value": [1111, 9999],
+        "mode": "1111 - 9999",
+        "profile": {"index": 45, "range": {"min": 800, "max": 20000, "step": 1}},
+    }
+    return doc
+
+
+def test_parse_reads_the_light_kelvin_range_from_the_profile() -> None:
+    """``color_temperature.profile.range`` is the gateway's effective clamp."""
+    doc = _ct_light(LIGHT, {"min": 2700, "max": 6500, "step": 1})
+    assert parse_device_properties(doc).color_temp_range == (2700, 6500)
+    # The probe's lights: the constructor default, which is the device's too.
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1})
+    assert parse_device_properties(doc).color_temp_range == (2000, 6000)
+    # A list-shaped `states` container works the same way.
+    doc["states"] = list(doc["states"].values())
+    assert parse_device_properties(doc).color_temp_range == (2000, 6000)
+    # Not a light / no profile / an unusable range: unknown.
+    assert parse_device_properties(_verbose(SOCKET)).color_temp_range is None
+    doc = _ct_light(LIGHT, {"min": 6500, "max": 2700})
+    assert parse_device_properties(doc).color_temp_range is None
+    doc["states"]["color_temperature"]["profile"] = "nope"
+    assert parse_device_properties(doc).color_temp_range is None
+
+
+def test_parse_kelvin_range_rejects_bad_payloads() -> None:
+    """The range parser only trusts a well-formed, plausible pair of numbers."""
+    assert parse_kelvin_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
+    assert parse_kelvin_range([2700, 6500]) == (2700, 6500)
+    # The Mesh Model spec's own bounds, 0x0320-0x4E20, are accepted.
+    assert parse_kelvin_range({"min": 800, "max": 20000}) == (800, 20000)
+    for raw in (
+        None,
+        "2700-6500",
+        42,
+        {},  # no keys at all
+        {"min": 2700},  # half a range
+        {"min": "warm", "max": "cool"},  # non-numeric
+        {"min": None, "max": 6500},
+        {"min": {"nested": 1}, "max": 6500},  # not a scalar
+        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
+        {"min": 6500, "max": 2700},  # reversed
+        {"min": 4000, "max": 4000},  # zero-width
+        {"min": 799, "max": 6500},  # below the spec's range
+        {"min": 2700, "max": 0xFFFF},  # the spec's "unknown"
+        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
+        {"min": 2700, "max": float("inf")},  # ...and Infinity
+        [2700],  # wrong arity
+        [2000, 4000, 6500],
+    ):
+        assert parse_kelvin_range(raw) is None, raw
+
+
+def test_parse_kelvin_range_survives_unrepresentable_numbers() -> None:
+    """A huge JSON integer is rejected, not raised on.
+
+    ``json.loads`` parses integer literals at arbitrary precision, so a body
+    can hand the parser an ``int`` that ``float()`` cannot represent — which
+    raises ``OverflowError``, not ``ValueError``.
+    """
+    huge = json.loads("9" * 400)  # an int, not a float
+    assert isinstance(huge, int)
+    with pytest.raises(OverflowError):
+        float(huge)
+    for raw in (
+        {"min": 2700, "max": huge},
+        {"min": huge, "max": 6500},
+        [huge, 6500],
+        [2700, huge],
+        {"min": -huge, "max": huge},
+    ):
+        assert parse_kelvin_range(raw) is None, raw
+    # A huge *string* is representable (it becomes inf) and is rejected by the
+    # finiteness guard instead.
+    assert parse_kelvin_range({"min": 2700, "max": "9" * 400}) is None
+
+
 @asynccontextmanager
 async def _running(
     hass: HomeAssistant, verbose: object, unique_id: str = "1.2.3.4"
@@ -235,6 +335,7 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
             "energy_wh": 209655.0,
             "software_revision": (2, 2, 0, 1),
             "reachable": True,
+            "color_temp_range": None,
         }
 
 
@@ -416,6 +517,34 @@ async def test_a_function_adopted_during_the_full_read_is_read_next_time(
             await _tick(hass, freezer)
             assert full.await_count == 2
             assert "idnewB" in coordinator.device_properties
+
+
+async def test_a_light_range_read_after_setup_reaches_the_entity(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Setup's read failed; the retry's range reaches the existing light.
+
+    The light already exists with the 2000-6000 K default when the retried
+    full read delivers its own window: the refresh dispatches the listeners
+    and the light publishes the new min/max without a reload.
+    """
+    async with _running(hass, None) as entry:
+        coordinator = entry.runtime_data
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2000
+        assert state.attributes["max_color_temp_kelvin"] == 6000
+        full = AsyncMock(
+            return_value=[
+                _ct_light("idcolor1", {"min": 2700, "max": 6500, "step": 1}),
+                *_everything_but("idcolor1"),
+            ]
+        )
+        with patch.object(coordinator, "_fetch_devices_verbose_from_api", full):
+            await _tick(hass, freezer)
+        assert full.await_count == 1
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2700
+        assert state.attributes["max_color_temp_kelvin"] == 6500
 
 
 async def test_an_empty_answer_keeps_the_properties(hass: HomeAssistant) -> None:

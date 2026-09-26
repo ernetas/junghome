@@ -18,7 +18,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
     enrichments read after the first refresh: node identities from the
     project export (`node_identities`) and device properties from the
     deprecated verbose device endpoint (`device_properties`: energy counters
-    re-read every 5 min, firmware revisions, reachability). And rename
+    re-read every 5 min, firmware revisions, reachability, light Kelvin
+    ranges). And rename
     following (`follow_renames`, on every device-list adoption before the
     listeners run): `function_anchors` (slug → `models.FunctionAnchor`:
     function id, node MAC, element location), persisted in the entry's
@@ -205,15 +206,27 @@ JUNG HOME Gateway over its REST API and WebSocket.
   gateway calls every cover a `WindowCover`, so there is nothing else to key on.
   Don't hard-code `blind` again: it gave every roller shutter slat-oriented
   controls and icons.
-- **Colour temperature is 2000–6000 K, enforced by the gateway**: the
-  middleware hard-codes that range and clamps every tunable-white write
-  (`models/device_states/ColorTemperatureState.js:60,95-103`; see the
-  `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it — it is a
-  gateway limit, not the device's (the app sends `Light CTL Set` with
-  2000–10000 K; the real range is `Light CTL Temperature Range Get`
-  `0x8262`, which the gateway never surfaces). The write path is
-  conditional (`:108-122`): the CTL-Temperature state when the device has
-  one, else Generic Level on element+1.
+- **Colour temperature: the gateway clamps to the device's own range, and
+  the light declares that range.** `ColorTemperatureState.publishValue`
+  clamps every tunable-white write to the state's `profile.range`
+  (`models/device_states/ColorTemperatureState.js:94-103`); 2000–6000 K is
+  only its constructor default (`:60`). The middleware reads the node's
+  Light CTL Temperature Range (`ColorTemperatureStateRange.js`, state
+  `color_temperature_range`) and binds it into that profile range
+  (`services/device_state_service.js:664-687` →
+  `fromState_ColorTemperatureRange`, `:190-197`). `/functions/` carries
+  neither (`getDatapointTypeByState` maps the range state to `null`), but
+  the verbose endpoint does: `models.color_temp_range` reads
+  `states.color_temperature.profile.range` (the effective clamp — probe:
+  2000–6000 on all four lights) into `DeviceProperties.color_temp_range`.
+  `light.py` reads it **live** (`_kelvin_range`, falling back to
+  `DEFAULT_MIN/MAX_KELVIN` 2000–6000 K when unknown or implausible —
+  outside the spec's 800–20000 K), so a range read after the entity exists
+  reaches it on the properties refresh's listener dispatch; min/max and
+  both clamp directions (`_clamp_kelvin`) use it. The `/types/datapoints`
+  catalog's 2000–10000 is a descriptor, not the enforcement. The write
+  path is conditional (`:107-122`): the CTL-Temperature state when the
+  device has one, else Generic Level on element+1.
 - **The WS handshake's `version` frame is the API version, not the firmware.**
   It carries `api-junghome`'s own package version (`"1.5.0"`, matching
   `apidoc.json` `info.version`); the gateway's *software* version is the
@@ -268,7 +281,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   only at registration, so counters registered earlier stay Wh;
   `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
   per-device duplicate-suppression exemption
-  (`button_reports_each_tap_once`: revision known AND < 2.2.0). Reachability
+  (`button_reports_each_tap_once`: revision known AND < 2.2.0) and each
+  tunable-white light's Kelvin range (colour-temperature bullet above). Reachability
   is diagnostics-only — availability semantics are a settled decision.
 
 ## Gateway reference — read `docs/` first
@@ -564,9 +578,13 @@ them without new evidence wastes a session.
 - **ruff `target-version` stays `py313`** — bumping to py314 flips
   TC001/TC002/UP037 semantics (PEP 649 lazy annotations) and would churn every
   module for zero behavioural gain; revisit when HA core moves.
-- **The group `color_temperature_range` parser stays unwired** — no captured
-  firmware sends the field (`disk_dump/ws-capture*/groups.json`); the gateway
-  clamps CT to 2000–6000 K anyway.
+- **Groups carry no colour-temperature range — the group parser is gone.**
+  `color_temperature_range` in a `groups` frame's `function_types` is only
+  a member state's *type name*: the list is the set of visible state types
+  of the group's members (`services/groups_service.js:37-58`), and a group
+  (`models/jung-home-group.js`) has no other field. No capture carries a
+  value. The per-device range comes from the verbose endpoint instead (the
+  colour-temperature bullet above).
 - **The three broad excepts in `coordinator.py` stay broad** (reconnect loop,
   frame-handler catch-all, WS send path) — wontfix. Each is load-bearing
   containment: the reconnect loop must retry through *any* failure class, a

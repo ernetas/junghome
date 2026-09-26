@@ -194,7 +194,7 @@ async def async_get_config_entry_diagnostics(
             for function_id, identity in coordinator.node_identities.items()
         },
         # Function id -> what the verbose device endpoint added (energy
-        # counter, firmware revision, reachability); empty on firmware
+        # counter, firmware revision, reachability, Kelvin range); empty on firmware
         # without it. No labels, no keys — the parser keeps only those fields.
         "device_properties": {
             function_id: asdict(props)

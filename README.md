@@ -16,9 +16,9 @@ is required.
 ## What works
 
 - **Lights** — on/off switch actuators (e.g. BT S1 B2 U) and dimmers
-  (DALI, etc.) with brightness and colour *temperature* (tunable white; the
-  gateway supports 2000–6000 K). Full RGB colour is not exposed by the
-  gateway.
+  (DALI, etc.) with brightness and colour *temperature* (tunable white,
+  within the fixture's own range as the gateway reads it — 2000–6000 K until
+  that is known). Full RGB colour is not exposed by the gateway.
 - **Sockets** — on/off plus their live meter readings (input power,
   load-side power, output current) and, on gateway firmware 2.1.x+, the
   socket's **cumulative energy counter** as a `total_increasing` sensor —
@@ -397,8 +397,11 @@ handshake presents it).
   [Button automations](#button-automations-rocker-switches)).
 - The rocker **status-LED colour** can't be set from here (on/off only);
   colour is configured in the JUNG app or over BT-Mesh.
-- **Colour temperature tops out at 6000 K** — the gateway itself clamps every
-  tunable-white command to 2000–6000 K, regardless of the fixture.
+- **Colour temperature follows the gateway's range for each fixture** — the
+  gateway clamps every tunable-white command to the range it read from the
+  fixture (2000–6000 K until it has one). The integration reads that range
+  from the gateway's deprecated verbose device endpoint (gateway firmware
+  2.1.x+); where it cannot, the slider stays at 2000–6000 K.
 - The **puck** isn't supported/validated yet.
 - **Thermostat temperature moves in 0.5 °C steps, a few times an hour.** That
   is the device's reporting (the BT-Mesh temperature property it publishes
