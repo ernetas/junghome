@@ -56,10 +56,12 @@ REGISTER_USER_NAME = "Home Assistant"
 # retyping it feels immediate.
 PROBE_TIMEOUT = 10
 
-# The gateway's generic mDNS hostname (also its TLS certificate CN). Offered as
-# the default host so most users need not look up the gateway's IP. It only
-# resolves if the network maps it; the reliable name is the per-device mDNS
-# hostname (junghome-<mac>.local) that discovery supplies, and an IP always works.
+# The gateway's TLS certificate CN (`etc/nginx/generate_ssl_key.sh:69`), offered
+# as the default host so users have something to edit. It is NOT an mDNS name:
+# the gateway announces only junghome-<mac>.local (avahi `host-name`, written
+# by `opt/tools/static_mac.sh`) and plain `junghome` is just its DHCP host
+# name, so this resolves only where the local DNS happens to serve it. The
+# reliable names are the one discovery supplies and the gateway's IP.
 MDNS_DEFAULT_HOST = "junghome.local"
 
 _PASSWORD_SELECTOR = selector.TextSelector(
@@ -186,9 +188,10 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
         A flagged cover missing from the current poll may only be offline, so
         keep it (labelled by its uid) if its entity still exists — saving must
         not silently clear it. But a uid with no live cover *and* no registered
-        entity is orphaned: its device was removed or relabelled, which changes
-        the label-derived unique_id, so the platform registered a fresh cover
-        and the stale one was pruned. The old code resurrected such orphans as
+        entity is orphaned: its device was removed, or its label moved to
+        another element or collided (a plain rename is followed and rewrites
+        the flag with the unique_id), so the stale one was pruned. The old
+        code resurrected such orphans as
         a permanent, un-removable raw-slug row here; drop them so the list
         matches the covers that actually exist. Used by both the form build
         and the no-covers save path, so the two can never disagree about which

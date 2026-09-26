@@ -16,9 +16,9 @@ is required.
 ## What works
 
 - **Lights** — on/off switch actuators (e.g. BT S1 B2 U) and dimmers
-  (DALI, etc.) with brightness and colour *temperature* (tunable white; the
-  gateway supports 2000–6000 K). Full RGB colour is not exposed by the
-  gateway.
+  (DALI, etc.) with brightness and colour *temperature* (tunable white,
+  within the range the fixture reports to the gateway — 2000–6000 K on every
+  fixture seen so far). Full RGB colour is not exposed by the gateway.
 - **Sockets** — on/off plus their live meter readings (power, current, …)
   and, on gateway firmware 2.1.x+, the socket's **cumulative energy counter**
   as a `total_increasing` sensor — add it to the Energy Dashboard directly.
@@ -111,8 +111,11 @@ Either way you then pick **how to connect**:
   in the Jung Home app.
 
 The gateway address is filled in for you when it was discovered; otherwise it
-defaults to `junghome.local` (which works on many networks) and you can change
-it to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
+defaults to `junghome.local` (the name on the gateway's certificate). That
+name resolves only on networks whose DNS happens to serve it — the gateway
+itself announces `junghome-<mac>.local` (its MAC address without colons) —
+so change it to that name or to your gateway's IP (e.g. `192.168.1.50`) if it
+doesn't resolve.
 
 The issued token is stored in the config entry. Devices added or removed in
 the Jung Home app afterwards are picked up automatically. The entry is keyed
@@ -371,9 +374,11 @@ handshake presents it).
   gateway's function list carries a socket's instantaneous readings only; the
   cumulative Wh counter lives in the device's *properties*, which only the
   `/devices/?verbose=true` endpoint (marked deprecated/experimental in the
-  gateway's own API spec) exposes. It works on 2.1.3 and is re-read every
-  five minutes — the gateway's own cadence — but a future firmware could drop
-  it, in which case the sensor simply disappears and the Riemann-sum
+  gateway's own API spec) exposes. It works on 2.1.3. The gateway reads the
+  counter from the socket only about **once an hour**, so the sensor rises in
+  hourly steps (the integration re-reads the gateway every five minutes, so
+  a step shows up within minutes of the gateway's read). A future firmware
+  could drop the endpoint, in which case the sensor simply disappears and the Riemann-sum
   [Integration helper](https://www.home-assistant.io/integrations/integration/)
   on the power sensor is the fallback. Firmware without the endpoint shows no
   energy sensor at all.
@@ -383,12 +388,15 @@ handshake presents it).
   [Button automations](#button-automations-rocker-switches)).
 - The rocker **status-LED colour** can't be set from here (on/off only);
   colour is configured in the JUNG app or over BT-Mesh.
-- **Colour temperature tops out at 6000 K** — the gateway itself clamps every
-  tunable-white command to 2000–6000 K, regardless of the fixture.
+- **Colour temperature is limited to the range the fixture reports** — the
+  gateway clamps every tunable-white command to it (2000–6000 K on every
+  fixture seen so far, and the gateway's default until a fixture has
+  answered).
 - The **puck** isn't supported/validated yet.
 - **Thermostat temperature moves in 0.5 °C steps, a few times an hour.** That
   is the device's reporting (the BT-Mesh temperature property it publishes
-  has 0.5 °C resolution and the gateway polls it every five minutes), not
+  has 0.5 °C resolution, and the gateway re-reads it only when it has heard
+  nothing for five minutes), not
   something the integration can refine.
 - **Two devices with the same label collide.** The gateway's device ids are
   derived from each node's mesh identity and location, so they change when a

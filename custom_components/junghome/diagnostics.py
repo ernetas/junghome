@@ -229,8 +229,9 @@ async def async_get_device_diagnostics(
 
     ``matched`` is None when the HA device has no counterpart in the current
     poll, which is itself the useful signal: it means the gateway has stopped
-    reporting it (renamed label, removed hardware) and it is on its way to being
-    pruned.
+    reporting it (removed hardware, or a label that moved to another element —
+    a plain rename is followed and re-keys the device instead) and it is on its
+    way to being pruned.
     """
     coordinator = entry.runtime_data
     secrets = _secrets(entry)
