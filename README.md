@@ -61,6 +61,9 @@ Feedback and issue reports are welcome — see
 
 ## Installation
 
+Requires **Home Assistant 2025.12.4 or newer** (the minimum declared in
+`hacs.json`, which HACS checks before downloading).
+
 ### HACS (recommended)
 
 **Jung Home is in the HACS default store** — no custom repository needed.

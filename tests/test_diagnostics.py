@@ -26,8 +26,8 @@ from custom_components.junghome.diagnostics import (
 from tests.conftest import _fake_run_websocket, find_device
 
 HOST = "192.168.1.50"
-HOSTNAME = "junghome-0022d1059602.local"
-SERIAL = "0022D1059602"
+HOSTNAME = "junghome-02005ec0ffee.local"
+SERIAL = "02005EC0FFEE"
 
 
 @pytest.mark.parametrize(

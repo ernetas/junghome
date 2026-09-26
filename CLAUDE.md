@@ -460,10 +460,16 @@ instead of re-deriving:
   (self-signed gateway cert); never build SSL contexts on the event loop.
 - CI: `test.yml` (pytest + mypy, strict via `pyproject.toml`), `lint.yml` (ruff, pinned),
   `validate.yml` (hassfest + HACS), `floor.yml` (imports the integration
-  against the `hacs.json` minimum HA on every branch — a floor break means
-  *raise the floor*, not block the release, unless the missing name is
-  type-only, which goes under `TYPE_CHECKING` as `repairs.py` does),
-  `release.yml` (tag-gated on all checks). Coverage
+  and runs the full suite against the `hacs.json` minimum HA on every
+  branch, with `FLOOR_PHCC` = the phcc release pinning the nearest older
+  core — bump it with the floor; the eight `test_all_*_entities` snapshots
+  are deselected there, their only floor delta being core's `aliases`
+  serializer; a floor break means *raise the floor*, not block the release,
+  unless the missing name is type-only, which goes under `TYPE_CHECKING` as
+  `repairs.py` does), `canary.yml` (weekly/manual, non-gating: the full
+  suite against the newest stable HA that has a matching phcc — an early
+  warning before the next bump), `release.yml` (tag-gated on lint, test and
+  validate only). Coverage
   gate: 95 % branch (`.coveragerc`). Renovate owns pip (the
   pytest-homeassistant-custom-component stack moves as one group and is
   version-capped); Dependabot deliberately does not watch pip.

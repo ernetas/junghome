@@ -138,7 +138,7 @@ def test_entry_anchor_prefers_frozen_anchor_then_unique_id_then_entry_id():
     """
     frozen = SimpleNamespace(
         data={"identity_anchor": "old-host.local"},
-        unique_id="0000000084fb4b1b",
+        unique_id="00000000c0ffee42",
         entry_id="eid",
     )
     assert entry_anchor(frozen) == "old-host.local"
