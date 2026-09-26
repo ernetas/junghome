@@ -241,11 +241,22 @@ JUNG HOME Gateway over its REST API and WebSocket.
   the verbose endpoint does: `models.color_temp_range` reads
   `states.color_temperature.profile.range` (the effective clamp — probe:
   2000–6000 on all four lights) into `DeviceProperties.color_temp_range`.
-  `light.py` reads it **live** (`_kelvin_range`, falling back to
-  `DEFAULT_MIN/MAX_KELVIN` 2000–6000 K when unknown or implausible —
-  outside the spec's 800–20000 K), so a range read after the entity exists
-  reaches it on the properties refresh's listener dispatch; min/max and
-  both clamp directions (`_clamp_kelvin`) use it. The `/types/datapoints`
+  The binding runs only once the range state is read — every state starts
+  dirty and the boot's first poll pass (`startup.js:165`
+  `boostPollStates`) reaches it seconds to minutes after a gateway start —
+  so a verbose read taken before then shows the constructor default next to
+  an unread (`[]`) range state. The profile is trusted only when the range
+  state holds a read `[min, max]`, when there is no range state, or when it
+  already differs from 2000–6000 (bound earlier; a failed-request `NaN`
+  reset of the range value does not unbind it); otherwise the range is
+  unknown and `color_temp_range_pending`, and the periodic properties
+  refresh re-reads that light (`GET /devices/{id}?verbose=true`, next to the
+  energy counters) until it is known. `light.py` looks the range up on every
+  state write (`_kelvin_range`, falling back to `DEFAULT_MIN/MAX_KELVIN`
+  2000–6000 K when unknown or implausible — outside the spec's 800–20000
+  K), so a range learned after the entity exists reaches it on that
+  refresh's listener dispatch; min/max and both clamp directions
+  (`_clamp_kelvin`) use it. The `/types/datapoints`
   catalog's 2000–10000 is a descriptor, not the enforcement. The write
   path is conditional (`:107-122`): the CTL-Temperature state when the
   device has one, else Generic Level on element+1.
@@ -324,7 +335,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   first refresh (and again only when a function appears that the last answer
   did not list — an omitted function is not re-asked, a missing endpoint or
   failed read is retried each interval), then
-  `GET /devices/{id}?verbose=true` (~8 KB) per energy device every
+  `GET /devices/{id}?verbose=true` (~8 KB) per energy device — and per
+  light whose Kelvin range is still pending, until known — every
   `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
   counter itself moves at most hourly). Drives the `total_energy`
   sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that

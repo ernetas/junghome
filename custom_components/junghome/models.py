@@ -617,6 +617,11 @@ class DeviceProperties:
     # The (min, max) Kelvin window the gateway clamps this light's
     # colour-temperature writes to — see ``color_temp_range``.
     color_temp_range: tuple[int, int] | None = None
+    # A tunable-white light whose window the middleware has not read from the
+    # node yet (the first poll pass after a gateway boot): its profile range
+    # is still the constructor default, so ``color_temp_range`` is None and
+    # the periodic properties refresh re-reads this device until it is known.
+    color_temp_range_pending: bool = False
     # The ``software_revision`` state's ``model.address``: the node's main
     # element unicast, shared by every function of the node — the key a
     # function whose own revision is null finds its node's revision by.
@@ -716,7 +721,34 @@ def parse_kelvin_range(raw: Any) -> tuple[int, int] | None:
     return low_k, high_k
 
 
-def color_temp_range(states: list[dict[str, Any]]) -> tuple[int, int] | None:
+# The ``color_temperature`` state's constructor range
+# (`models/device_states/ColorTemperatureState.js:60`): what its profile says
+# until the middleware has bound the node's own range into it.
+GATEWAY_DEFAULT_KELVIN_RANGE = (2000, 6000)
+
+
+def _is_range_value(raw: Any) -> bool:
+    """Whether a ``color_temperature_range`` value is a read ``[min, max]``.
+
+    Unread it is the constructor's ``[]``; after enough failed requests the
+    middleware resets it to ``NaN`` (``onResponseFail``), which the api-server
+    serialises as ``null``.
+    """
+    return (
+        isinstance(raw, list)
+        and len(raw) == 2
+        and all(
+            not isinstance(end, bool)
+            and isinstance(end, (int, float))
+            and math.isfinite(end)
+            for end in raw
+        )
+    )
+
+
+def color_temp_range(
+    states: list[dict[str, Any]],
+) -> tuple[tuple[int, int] | None, bool]:
     """Return the Kelvin window the gateway clamps a light's writes to.
 
     That window is the ``color_temperature`` state's ``profile.range``: the
@@ -726,20 +758,44 @@ def color_temp_range(states: list[dict[str, Any]]) -> tuple[int, int] | None:
     Light CTL Temperature Range (the ``color_temperature_range`` state,
     `ColorTemperatureStateRange.js:101-120`) the state binding copies it in
     (`services/device_state_service.js:664-687` ->
-    `fromState_ColorTemperatureRange`, `ColorTemperatureState.js:190-197`). So
-    the profile range is the gateway's effective limit either way — the
-    range state's own value is not read, it is already folded in. Neither
-    reaches ``/functions/`` (``getDatapointTypeByState`` maps the range state
-    to no datapoint, `util/datapoint_helper_methods.js:97`), which is why only
-    this endpoint carries it.
+    `fromState_ColorTemperatureRange`, `ColorTemperatureState.js:190-197`).
+    Neither reaches ``/functions/`` (``getDatapointTypeByState`` maps the range
+    state to no datapoint, `util/datapoint_helper_methods.js:97`), which is
+    why only this endpoint carries it.
+
+    The binding runs only when the range state is read — every state starts
+    dirty and the boot's first poll pass (`startup.js:165`,
+    ``boostPollStates``) reaches it seconds to minutes after a gateway start
+    — so until then the profile range is the constructor default, not the
+    node's. The profile is trusted when the range state holds a read
+    ``[min, max]``, when there is no range state (nothing can ever rebind the
+    default, so it is the clamp), or when it already differs from the
+    default (bound earlier; the range state's value is reset to ``NaN`` after
+    failed requests, the binding is not). Otherwise the window is unknown
+    and *pending*: the second element of the result, which makes the
+    periodic properties refresh re-read the device.
     """
+    color_temperature: dict[str, Any] | None = None
+    range_state: dict[str, Any] | None = None
     for state in states:
-        if state.get("state_type") != "color_temperature":
-            continue
-        profile = state.get("profile")
-        if isinstance(profile, dict):
-            return parse_kelvin_range(profile.get("range"))
-    return None
+        kind = state.get("state_type")
+        if kind == "color_temperature" and color_temperature is None:
+            color_temperature = state
+        elif kind == "color_temperature_range" and range_state is None:
+            range_state = state
+    if color_temperature is None:
+        return None, False
+    profile = color_temperature.get("profile")
+    if not isinstance(profile, dict):
+        return None, False
+    window = parse_kelvin_range(profile.get("range"))
+    if (
+        range_state is None
+        or _is_range_value(range_state.get("value"))
+        or window != GATEWAY_DEFAULT_KELVIN_RANGE
+    ):
+        return window, False
+    return None, True
 
 
 def parse_device_properties(document: Any) -> DeviceProperties | None:
@@ -767,12 +823,14 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
             and stats.get("reachable") is True
             for state in states
         )
+    kelvin_range, kelvin_range_pending = color_temp_range(states)
     return DeviceProperties(
         has_energy=has_energy,
         energy_wh=energy_wh,
         software_revision=revision,
         reachable=reachable,
-        color_temp_range=color_temp_range(states),
+        color_temp_range=kelvin_range,
+        color_temp_range_pending=kelvin_range_pending,
         node_address=node_address,
     )
 

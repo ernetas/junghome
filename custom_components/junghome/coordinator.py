@@ -536,7 +536,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # (`models.DeviceProperties`): the energy counter of a metering socket,
         # the device's firmware revision, reachability, a tunable-white light's
         # Kelvin range. Read once at setup
-        # (`async_fetch_device_properties`), the energy counters re-read every
+        # (`async_fetch_device_properties`); the energy counters, and a light
+        # whose Kelvin range the gateway had not read yet, re-read every
         # DEVICE_PROPERTIES_REFRESH_INTERVAL (`_async_refresh_device_properties`,
         # armed by `start`). Replaced wholesale, never mutated. Empty on
         # firmware without the endpoint.
@@ -1595,13 +1596,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._apply_device_info()
 
     async def _async_refresh_device_properties(self, _now: datetime) -> None:
-        """Periodic re-read of the properties that change: the energy counters.
+        """Periodic re-read of the properties that change.
 
-        A function that appeared since the last full-list answer (added in the
+        Those are the energy counters, and a tunable-white light's Kelvin
+        range while it is still pending (read before the gateway had bound
+        the node's range — `models.color_temp_range`; stops once known). A
+        function that appeared since the last full-list answer (added in the
         app), or no answer yet (firmware without the endpoint, a failed read),
-        triggers a full-list read instead; otherwise each device holding an
-        energy counter is re-read on its own, small endpoint. Listeners are
-        notified only when a value changed. Runs are not stacked.
+        triggers a full-list read instead; otherwise each such device is
+        re-read on its own, small endpoint. Listeners are notified only when a
+        value changed. Runs are not stacked.
         """
         if self._properties_refresh_running:
             return
@@ -1625,7 +1629,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         updated = dict(known)
         changed = revised = False
         for device_id, props in known.items():
-            if not props.has_energy:
+            if not props.has_energy and not props.color_temp_range_pending:
                 continue
             try:
                 document = await self._fetch_device_verbose_from_api(
@@ -2877,7 +2881,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task = entry.async_create_background_task(
             self.hass, self._websocket_loop(), name="junghome_ws"
         )
-        # The energy counters move; everything else in the map is static.
+        # The energy counters move, and a light's Kelvin range may still be
+        # unread; everything else in the map is static.
         self._properties_unsub = async_track_time_interval(
             self.hass,
             self._async_refresh_device_properties,
