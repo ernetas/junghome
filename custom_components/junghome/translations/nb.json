@@ -25,7 +25,7 @@
           "host": "Vert"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50)."
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers erstatter du standardverdien junghome.local, som bare kan slås opp på enkelte nettverk, med IP-adressen til gatewayen (for eksempel 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Passord for nettverksnøkkel"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers fungerer standardverdien junghome.local på mange nettverk, eller bruk IP-adressen (for eksempel 192.168.1.50).",
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen. Det fylles ut automatisk når gatewayen blir funnet; ellers erstatter du standardverdien junghome.local, som bare kan slås opp på enkelte nettverk, med IP-adressen til gatewayen (for eksempel 192.168.1.50).",
           "password": "Passordet for nettverksnøkkelen til Jung Home-gatewayen."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Vert"
         },
         "data_description": {
-          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50 eller junghome.local)."
+          "host": "IP-adressen eller vertsnavnet til Jung Home-gatewayen (for eksempel 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvens" },
       "temperature": { "name": "Temperatur" },
       "illuminance": { "name": "Belysningsstyrke" },
+      "input_power": { "name": "Enhetens inngangseffekt" },
+      "load_power": { "name": "Aktiv effekt (lastside)" },
+      "output_current": { "name": "Utgangsstrøm" },
+      "input_current": { "name": "Inngangsstrøm" },
+      "output_voltage": { "name": "Utgangsspenning" },
+      "ambient_temperature": { "name": "Omgivelsestemperatur" },
       "present_illuminance": { "name": "Nåværende belysningsstyrke" },
       "humidity": { "name": "Luftfuktighet" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "Adressen svarer, men tilhører en annen Jung Home-gateway enn denne oppføringen. Bruk Konfigurer på nytt for å endre adressen i stedet."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home-enheter med navn i konflikt",
+      "description": "Noen enheter på Jung Home-gatewayen på {host} har navn som Home Assistant ikke kan skille fra hverandre, fordi de bare skiller seg i store/små bokstaver, mellomrom eller tegnsetting:\n\n{labels}\n\nBare én enhet i hver gruppe får entiteter i Home Assistant. Gi de andre nye navn i Jung Home-appen. Dette problemet forsvinner av seg selv når navnene er forskjellige."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Bluetooth-feil på Jung Home-gatewayen",
+      "description": "Jung Home-gatewayen på {host} melder at Bluetooth-brikken ikke startet, så den kan ikke nå Jung Home-enhetene dine. Start gatewayen på nytt ved å koble fra strømmen et øyeblikk. Hvis problemet vedvarer, tilbakestill gatewayen og legg den til i prosjektet ditt på nytt i Jung Home-appen. Dette problemet forsvinner når gatewayen har startet på nytt uten feilen."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home-gatewayen har gått tom for sekvensnumre",
+      "description": "Jung Home-gatewayen på {host} melder at den har gått tom for Bluetooth Mesh-sekvensnumre, så den kan kanskje ikke lenger sende kommandoer til Jung Home-enhetene dine. Hvis enhetene slutter å svare, tilbakestill gatewayen og legg den til i prosjektet ditt på nytt i Jung Home-appen. Dette problemet forsvinner når gatewayen har startet på nytt uten feilen."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Klokken på Jung Home-gatewayen er ikke synkronisert",
+      "description": "Jung Home-gatewayen på {host} har ikke klart å synkronisere klokken med en tidsserver på over 24 timer. Kontroller at gatewayen har internettilgang. Dette problemet forsvinner av seg selv når klokken er synkronisert igjen."
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home-gatewayen har ikke noe prosjekt",
+      "description": "Jung Home-gatewayen på {host} melder at den ikke har mottatt prosjektet fra Jung Home-appen, så den kjenner ikke enhetene dine. Åpne Jung Home-appen på det samme lokale nettverket som gatewayen, slik at den kan laste opp prosjektet på nytt. Dette problemet forsvinner når gatewayen har mottatt et nytt prosjekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Prosjektet på Jung Home-gatewayen er ufullstendig",
+      "description": "Jung Home-gatewayen på {host} melder at prosjektet mangler enhetsopplysninger, så enhetsnavn, rom og scener kan mangle eller være feil. Synkroniser prosjektet manuelt i Jung Home-appen. Dette problemet forsvinner når gatewayen har mottatt et nytt prosjekt."
     }
   }
 }

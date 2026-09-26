@@ -23,6 +23,7 @@ import binascii
 import hashlib
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -278,6 +279,43 @@ class NodeIdentity:
     primary: bool = False
 
 
+# The gateway's own names for the product ids a node's ``pid`` carries — the
+# middleware's ``ProductID`` enum, verbatim (``models/btmesh_product_ids.js``).
+# A node backs several functions (a 2-gang push button is two rockers and two
+# loads on one radio), so every function of the node shares the name. An id
+# missing here (a product newer than this table) has no name: the caller falls
+# back rather than inventing one.
+PRODUCT_NAMES: dict[int, str] = {
+    1: "PushButton1gang",
+    2: "PushButton2gang",
+    3: "SocketAct1gangEnergy",
+    4: "SwitchAct1gang2input",
+    5: "PushButton1gangBat",
+    6: "PushButton2gangBat",
+    7: "MotionDetector1m",
+    8: "MotionDetector2m",
+    9: "PresenceDetector",
+    10: "RoomThermostat",
+    11: "Gateway",
+    12: "SocketAct1gang",
+    13: "BlindsAct1gang2input",
+    16: "SwitchAct1gang2inputEnergy",
+    17: "SwitchAct2gang2input",
+    18: "DimmerAct1gang2input",
+    19: "BlindsPP2Act1gang2input",
+    20: "DaliAct1gang2input",
+    21: "MiniSensor2inputMains",
+    22: "MiniSensor2inputBat",
+}
+
+
+def product_name(identity: NodeIdentity | None) -> str | None:
+    """Return the gateway's name for the product behind ``identity``, if known."""
+    if identity is None or identity.product_id is None:
+        return None
+    return PRODUCT_NAMES.get(identity.product_id)
+
+
 @dataclass(frozen=True, slots=True)
 class FunctionAnchor:
     """What ties a function's *label* to the element it was last seen on.
@@ -415,9 +453,10 @@ def _meta_devices(document: dict[str, Any]) -> list[dict[str, Any]]:
 def _first(mapping: dict[str, Any], *keys: str) -> Any:
     """Return the first present key's value.
 
-    The endpoint serves camelCase: the api-server converts its stored
-    snake_case copy (``keysToCamelCase``, ``03_project-file-controller.js``).
-    Both spellings are still tried, defensively.
+    The endpoint always serves camelCase (the api-server converts every key,
+    ``03_project-file-controller.js:13-27,56``); the gateway's stored copy
+    (``res_6/jung_home_project.json``) is snake_case, so both spellings are
+    tried and a copy of that file taken off the card parses too.
     """
     for key in keys:
         if key in mapping:
@@ -537,9 +576,22 @@ def parse_project_export(document: Any) -> dict[str, NodeIdentity]:
 # raw ``JungHomeDevice`` objects — ``device_id`` is the function id — and with
 # them the device *properties* the function list never carries (probed live
 # 2026-09-16, docs/gateway-rest-api.md): a metering socket's cumulative energy
-# counter ``total_device_energy_use`` (Wh), every device's ``software_revision``
-# (``[2, 2, 0, 2]``), and per-state ``statistics.reachable``. Only those three
-# are read; the rest of the document is dropped.
+# counter ``total_device_energy_use`` (Wh, re-read by the gateway hourly),
+# the device firmware's ``software_revision`` (``[2, 2, 0, 2]`` — or ``null``
+# where the gateway has not read it), per-state ``statistics.reachable``, and
+# a tunable-white light's colour-temperature range. Only those four are read
+# — plus the address the revision belongs to, below — and the rest of the
+# document is dropped.
+#
+# The revision is a property of the *node*, not of the function: the
+# middleware binds the Generic Property models to the node's main element
+# (element 0, at the node's unicast — ``services/products_service.js:29-33``),
+# so every function of a node carries a ``software_revision`` state at that
+# one address, and only the main-element function's is reliably filled. In
+# the 2026-09-16 probe 18 of 20 push-button functions (and four lights on a
+# node's second channel) read ``null``, each sharing its address with a
+# function that read the revision. ``coordinator.software_revision_for``
+# resolves the revision per node through that address.
 
 # The device firmware that started publishing every button event twice
 # (docs/cross-repo-analysis.md §1.1). A button whose revision is known to be
@@ -553,13 +605,27 @@ class DeviceProperties:
     """The verbose endpoint's per-device facts the integration uses."""
 
     # The energy counter exists on this device (a metering socket); its value
-    # is None until the middleware has polled it.
+    # is None until the middleware has read it (and it moves only hourly).
     has_energy: bool = False
     energy_wh: float | None = None
     # ``software_revision`` as a version tuple, e.g. ``(2, 2, 0, 2)``.
     software_revision: tuple[int, ...] | None = None
-    # The middleware's ``isDeviceOnline``: any state reachable.
+    # The middleware's ``isDeviceOnline``: any state reachable — as of the
+    # api-server's cached copy of each state, taken at its last value change
+    # before that answer was counted, so not a live flag (diagnostics only).
     reachable: bool | None = None
+    # The (min, max) Kelvin window the gateway clamps this light's
+    # colour-temperature writes to — see ``color_temp_range``.
+    color_temp_range: tuple[int, int] | None = None
+    # A tunable-white light whose window the middleware has not read from the
+    # node yet (the first poll pass after a gateway boot): its profile range
+    # is still the constructor default, so ``color_temp_range`` is None and
+    # the periodic properties refresh re-reads this device until it is known.
+    color_temp_range_pending: bool = False
+    # The ``software_revision`` state's ``model.address``: the node's main
+    # element unicast, shared by every function of the node — the key a
+    # function whose own revision is null finds its node's revision by.
+    node_address: int | None = None
 
 
 def _entries(collection: Any) -> list[dict[str, Any]]:
@@ -601,6 +667,137 @@ def _energy_wh(prop: dict[str, Any]) -> float | None:
     return result if result >= 0 else None
 
 
+# The Light CTL Temperature Range a mesh node can report (Mesh Model spec,
+# 0x0320-0x4E20 K; the gateway's own range state declares exactly this as its
+# model range — `models/device_states/ColorTemperatureStateRange.js:83`). A
+# range outside it is not a tunable-white range — the spec's 0xFFFF "unknown"
+# lands here — and is treated as unknown rather than declared to Home
+# Assistant, which would then offer it to the user.
+MIN_PLAUSIBLE_KELVIN = 800
+MAX_PLAUSIBLE_KELVIN = 20000
+
+
+def _as_kelvin(raw: Any) -> int | None:
+    """Coerce one end of a range to Kelvin, or None if it isn't a number.
+
+    ``"2700"`` and ``2700`` are both accepted; ``bool`` is rejected explicitly
+    (an ``int`` subclass, and ``True`` is not a temperature). Every conversion
+    can raise on untrusted JSON, and not only ``ValueError``: ``float()`` on a
+    huge ``int`` (``json.loads`` parses integer literals at arbitrary
+    precision) raises ``OverflowError``, and ``round()`` rejects the bare
+    ``NaN``/``Infinity`` literals ``json.loads`` also accepts — screened out
+    by ``math.isfinite`` first.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        kelvin = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(kelvin):
+        return None
+    return round(kelvin)
+
+
+def parse_kelvin_range(raw: Any) -> tuple[int, int] | None:
+    """Parse a colour-temperature range, or None if unusable.
+
+    Accepts the middleware's ``{"min": 2000, "max": 6000, ...}`` profile range
+    and the range state's ``[2000, 6000]`` value. Rejects non-numeric,
+    reversed, zero-width and implausible ranges — the light then keeps its
+    defaults.
+    """
+    if isinstance(raw, dict):
+        low, high = raw.get("min"), raw.get("max")
+    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
+        low, high = raw[0], raw[1]
+    else:
+        return None
+    low_k, high_k = _as_kelvin(low), _as_kelvin(high)
+    if low_k is None or high_k is None or low_k >= high_k:
+        return None
+    if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
+        return None
+    return low_k, high_k
+
+
+# The ``color_temperature`` state's constructor range
+# (`models/device_states/ColorTemperatureState.js:60`): what its profile says
+# until the middleware has bound the node's own range into it.
+GATEWAY_DEFAULT_KELVIN_RANGE = (2000, 6000)
+
+
+def _is_range_value(raw: Any) -> bool:
+    """Whether a ``color_temperature_range`` value is a read ``[min, max]``.
+
+    Unread it is the constructor's ``[]``; after enough failed requests the
+    middleware resets it to ``NaN`` (``onResponseFail``), which the api-server
+    serialises as ``null``.
+    """
+    return (
+        isinstance(raw, list)
+        and len(raw) == 2
+        and all(
+            not isinstance(end, bool)
+            and isinstance(end, (int, float))
+            and math.isfinite(end)
+            for end in raw
+        )
+    )
+
+
+def color_temp_range(
+    states: list[dict[str, Any]],
+) -> tuple[tuple[int, int] | None, bool]:
+    """Return the Kelvin window the gateway clamps a light's writes to.
+
+    That window is the ``color_temperature`` state's ``profile.range``: the
+    state's ``publishValue`` clamps every write to it
+    (`models/device_states/ColorTemperatureState.js:94-103`). The constructor
+    sets 2000-6000 K (`:60`), and once the middleware has read the node's
+    Light CTL Temperature Range (the ``color_temperature_range`` state,
+    `ColorTemperatureStateRange.js:101-120`) the state binding copies it in
+    (`services/device_state_service.js:664-687` ->
+    `fromState_ColorTemperatureRange`, `ColorTemperatureState.js:190-197`).
+    Neither reaches ``/functions/`` (``getDatapointTypeByState`` maps the range
+    state to no datapoint, `util/datapoint_helper_methods.js:97`), which is
+    why only this endpoint carries it.
+
+    The binding runs only when the range state is read — every state starts
+    dirty and the boot's first poll pass (`startup.js:165`,
+    ``boostPollStates``) reaches it seconds to minutes after a gateway start
+    — so until then the profile range is the constructor default, not the
+    node's. The profile is trusted when the range state holds a read
+    ``[min, max]``, when there is no range state (nothing can ever rebind the
+    default, so it is the clamp), or when it already differs from the
+    default (bound earlier; the range state's value is reset to ``NaN`` after
+    failed requests, the binding is not). Otherwise the window is unknown
+    and *pending*: the second element of the result, which makes the
+    periodic properties refresh re-read the device.
+    """
+    color_temperature: dict[str, Any] | None = None
+    range_state: dict[str, Any] | None = None
+    for state in states:
+        kind = state.get("state_type")
+        if kind == "color_temperature" and color_temperature is None:
+            color_temperature = state
+        elif kind == "color_temperature_range" and range_state is None:
+            range_state = state
+    if color_temperature is None:
+        return None, False
+    profile = color_temperature.get("profile")
+    if not isinstance(profile, dict):
+        return None, False
+    window = parse_kelvin_range(profile.get("range"))
+    if (
+        range_state is None
+        or _is_range_value(range_state.get("value"))
+        or window != GATEWAY_DEFAULT_KELVIN_RANGE
+    ):
+        return window, False
+    return None, True
+
+
 def parse_device_properties(document: Any) -> DeviceProperties | None:
     """Parse one verbose device object; None if it is not one."""
     if not isinstance(document, dict) or not isinstance(document.get("device_id"), str):
@@ -608,6 +805,7 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
     has_energy = False
     energy_wh: float | None = None
     revision: tuple[int, ...] | None = None
+    node_address: int | None = None
     for prop in _entries(document.get("property")):
         kind = prop.get("state_type")
         if kind == "total_device_energy_use":
@@ -615,6 +813,8 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
             energy_wh = _energy_wh(prop)
         elif kind == "software_revision":
             revision = _revision(prop.get("value"))
+            if isinstance(model := prop.get("model"), dict):
+                node_address = _decimal_int(model.get("address"))
     reachable: bool | None = None
     states = _entries(document.get("states"))
     if states:
@@ -623,11 +823,15 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
             and stats.get("reachable") is True
             for state in states
         )
+    kelvin_range, kelvin_range_pending = color_temp_range(states)
     return DeviceProperties(
         has_energy=has_energy,
         energy_wh=energy_wh,
         software_revision=revision,
         reachable=reachable,
+        color_temp_range=kelvin_range,
+        color_temp_range_pending=kelvin_range_pending,
+        node_address=node_address,
     )
 
 

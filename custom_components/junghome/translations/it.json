@@ -25,7 +25,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti il valore predefinito junghome.local funziona su molte reti, oppure usa l'indirizzo IP (ad esempio 192.168.1.50)."
+          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti sostituisci il valore predefinito junghome.local, che viene risolto solo su alcune reti, con l'indirizzo IP del gateway (ad esempio 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Password della chiave di rete"
         },
         "data_description": {
-          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti il valore predefinito junghome.local funziona su molte reti, oppure usa l'indirizzo IP (ad esempio 192.168.1.50).",
+          "host": "Indirizzo IP o nome host del gateway Jung Home. Viene compilato automaticamente quando il gateway viene rilevato; altrimenti sostituisci il valore predefinito junghome.local, che viene risolto solo su alcune reti, con l'indirizzo IP del gateway (ad esempio 192.168.1.50).",
           "password": "La password della chiave di rete del gateway Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Host"
         },
         "data_description": {
-          "host": "Indirizzo IP o nome host del gateway Jung Home (ad esempio 192.168.1.50 o junghome.local)."
+          "host": "Indirizzo IP o nome host del gateway Jung Home (ad esempio 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Frequenza" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Illuminamento" },
+      "input_power": { "name": "Potenza in ingresso del dispositivo" },
+      "load_power": { "name": "Potenza attiva (lato carico)" },
+      "output_current": { "name": "Corrente in uscita" },
+      "input_current": { "name": "Corrente in ingresso" },
+      "output_voltage": { "name": "Tensione in uscita" },
+      "ambient_temperature": { "name": "Temperatura ambiente" },
       "present_illuminance": { "name": "Illuminamento attuale" },
       "humidity": { "name": "Umidità" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "L'indirizzo risponde, ma appartiene a un gateway Jung Home diverso da questa voce. Usa Riconfigura per cambiare l'indirizzo."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Dispositivi Jung Home con nomi in conflitto",
+      "description": "Alcuni dispositivi del gateway Jung Home su {host} hanno nomi che Home Assistant non riesce a distinguere, perché differiscono solo per maiuscole/minuscole, spazi o punteggiatura:\n\n{labels}\n\nSolo un dispositivo per ogni gruppo ottiene entità in Home Assistant. Rinomina gli altri nell'app Jung Home. Questo problema scompare da solo non appena i nomi sono diversi."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Guasto Bluetooth del gateway Jung Home",
+      "description": "Il gateway Jung Home su {host} segnala che il suo chip Bluetooth non si è avviato, quindi non può raggiungere i tuoi dispositivi Jung Home. Riavvia il gateway scollegandolo brevemente dall'alimentazione. Se il problema persiste, ripristina il gateway e aggiungilo di nuovo al tuo progetto nell'app Jung Home. Questo problema scompare non appena il gateway si è riavviato senza l'errore."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Il gateway Jung Home ha esaurito i numeri di sequenza",
+      "description": "Il gateway Jung Home su {host} segnala di aver esaurito i numeri di sequenza Bluetooth Mesh, quindi potrebbe non riuscire più a inviare comandi ai tuoi dispositivi Jung Home. Se i dispositivi smettono di rispondere, ripristina il gateway e aggiungilo di nuovo al tuo progetto nell'app Jung Home. Questo problema scompare non appena il gateway si è riavviato senza l'errore."
+    },
+    "gateway_time_sync_failure": {
+      "title": "L'orologio del gateway Jung Home non è sincronizzato",
+      "description": "Il gateway Jung Home su {host} non è riuscito a sincronizzare il proprio orologio con un server orario per più di 24 ore. Verifica che il gateway abbia accesso a Internet. Questo problema scompare da solo non appena l'orologio è di nuovo sincronizzato."
+    },
+    "gateway_project_missing": {
+      "title": "Il gateway Jung Home non ha alcun progetto",
+      "description": "Il gateway Jung Home su {host} segnala di non aver ricevuto il progetto dall'app Jung Home, quindi non conosce i tuoi dispositivi. Apri l'app Jung Home sulla stessa rete locale del gateway, in modo che possa caricare di nuovo il progetto. Questo problema scompare non appena il gateway ha ricevuto un nuovo progetto."
+    },
+    "gateway_project_incomplete": {
+      "title": "Il progetto del gateway Jung Home è incompleto",
+      "description": "Il gateway Jung Home su {host} segnala che nel suo progetto mancano i dati dei dispositivi, quindi nomi dei dispositivi, stanze e scene potrebbero mancare o essere errati. Sincronizza il progetto manualmente nell'app Jung Home. Questo problema scompare non appena il gateway ha ricevuto un nuovo progetto."
     }
   }
 }

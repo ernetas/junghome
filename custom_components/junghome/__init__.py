@@ -22,13 +22,16 @@ from .const import (
     gateway_device_info,
 )
 from .coordinator import (
+    ISSUE_DUPLICATE_LABELS,
     ISSUE_PUSH_FAILURE,
     ISSUE_TLS_MISMATCH,
     JungHomeConfigEntry,
     JungHomeDataUpdateCoordinator,
     device_by_identifier,
+    entry_derived_issue_ids,
     function_anchors_store,
 )
+from .entity import entry_unloading
 from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,25 +51,28 @@ PLATFORMS: list[Platform] = [
 # every `coordinator.data_generation` bump) a device must be absent from before
 # it is pruned. The gateway occasionally returns a partial device list on a
 # single poll (notably right after a reload); pruning on the first miss would
-# delete a live device's entities — and because identity is label-derived, the
-# platform would then re-create them under whatever label the next poll
-# reports, losing the user's entity_id/customisations. Requiring persistence
-# rides out a transient blip.
+# delete a live device's entities — which then vanish from dashboards and
+# automations until the device is reported again (Home Assistant restores a
+# re-created device's custom name/area and its entities' entity_ids from its
+# deleted-registry rows, `test_pruned_device_reported_again_is_restored_*`, but
+# only for the same label-derived identity and only after the gap). Requiring
+# persistence rides out a transient blip.
 #
 # The threshold is deliberately generous (10 adoptions — at most about 10
 # minutes at the default 60 s interval, since the poll supplies one per
 # interval and each broadcast (WS connect, an app edit) adds another; the
 # window scales with the configured interval, up to 10 hours at the 1 h
-# ceiling). Removal is destructive and irreversible from the
-# user's side — it takes the entity registry entries with it, so custom names,
-# areas and entity_ids are lost and automations referencing them break — while
-# the cost of removing late is only that a device the user deleted in the app
-# lingers for a few extra polls.
+# ceiling). Removal is destructive from the user's side — it takes the entity
+# registry entries with it, so automations referencing them break and history
+# stops until the device returns under the same label (only then are its
+# custom name, area and entity_ids restored) — while the cost of removing late
+# is only that a device the user deleted in the app lingers for a few extra
+# adoptions.
 # Home Assistant core integrations that prune do so on the *first* miss, but
 # they trust their hub's device list; this gateway is documented above as
 # occasionally returning a partial one, so the same confidence isn't available.
 # (Verified against gateway firmware: the middleware maps every known device
-# into the function list with no `isOnline` filter — disk_dump sdc2
+# into the function list with no `isOnline` filter — disk_dump sdb2
 # `function_helper_methods.js`, `createFunctionListByDevices` — so an
 # unreachable BT-Mesh device is NOT omitted from `/functions/`; it just
 # reports stale/`"NaN"` values. Absence therefore means deleted/relabelled,
@@ -90,6 +96,60 @@ _MIGRATION_ERRORS = (
     ValueError,
     HomeAssistantError,
 )
+
+
+# Consecutive collision-free device-list adoptions that withdraw the
+# colliding-labels issue. One is not enough: a partial poll (the gateway
+# occasionally returns one, notably right after a reload — see the stale-device
+# pruner) can drop one label of a colliding pair, and withdrawing on it made the
+# next full list re-create the issue — re-announced, and un-ignored, because a
+# deleted issue loses its dismissal. Two is the capability watcher's window.
+LABEL_COLLISION_CLEAR_ADOPTIONS = 2
+
+
+def _sync_label_collision_issue(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    collisions: dict[str, list[str]],
+    collision_free_adoptions: int,
+) -> None:
+    """Raise, update or withdraw the entry's colliding-labels repair issue.
+
+    Two labels that slug identically share one device identity and the second
+    device gets no entities (`duplicate_slugs`) — invisible in the UI apart
+    from a log line, so it is a repair issue too. One issue per entry lists
+    every group; it goes away once ``LABEL_COLLISION_CLEAR_ADOPTIONS``
+    adoptions in a row carried no collision.
+
+    Nothing is written while the entry unloads: an adoption landing in that
+    window (a poll still in flight while ``stop()`` awaits the WebSocket
+    teardown — this listener is removed only after the unload returns) would
+    otherwise re-raise the issue a disabling unload has just withdrawn, for an
+    entry that no longer runs anything to withdraw it again.
+    """
+    if entry_unloading(entry):
+        return
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    if not collisions:
+        if collision_free_adoptions >= LABEL_COLLISION_CLEAR_ADOPTIONS:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    groups = sorted(
+        ", ".join(f'"{label}"' for label in sorted(labels))
+        for labels in collisions.values()
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_DUPLICATE_LABELS,
+        translation_placeholders={
+            "host": str(entry.data.get("host")),
+            "labels": "\n".join(f"- {group}" for group in groups),
+        },
+    )
 
 
 def _capability_signature(device: Device) -> tuple[str | None, frozenset[str]]:
@@ -157,6 +217,9 @@ def _register_capability_reload(
     # dropped, and "consecutive" means exactly that.
     pending_signatures: dict[str, tuple[str | None, frozenset[str]]] = {}
     warned_collisions: set[str] = set()
+    # Adoptions in a row without a colliding label (the issue's withdrawal
+    # window, LABEL_COLLISION_CLEAR_ADOPTIONS); an empty list counts neither way.
+    collision_free_adoptions = 0
     reload_scheduled = False
     # The last device-list adoption this watcher has fingerprinted, mirroring
     # the stale-device pruner's guard. Capability signatures key on datapoint
@@ -172,6 +235,7 @@ def _register_capability_reload(
     @callback
     def _reload_on_capability_change() -> None:
         nonlocal reload_scheduled, last_generation, pending_signatures
+        nonlocal collision_free_adoptions
         if reload_scheduled:
             return
         if coordinator.data_generation == last_generation:
@@ -191,6 +255,8 @@ def _register_capability_reload(
         # devices does it describe?), so drop any stale entry and skip it. If the
         # user renames one, the slug stops colliding and re-seeds cleanly.
         collisions = duplicate_slugs(coordinator.data)
+        collision_free_adoptions = 0 if collisions else collision_free_adoptions + 1
+        _sync_label_collision_issue(hass, entry, collisions, collision_free_adoptions)
         for slug, labels in collisions.items():
             capability_signatures.pop(slug, None)
             if slug not in warned_collisions:
@@ -581,12 +647,14 @@ def _migrate_to_stable_ids(
 
     The gateway's device ids are derived from each node's mesh UUID and element
     location (``models.function_id_for``), so they change whenever the app
-    re-provisions or re-enumerates a node — which app-driven firmware updates
-    did — and the ``functions`` list carries no hardware identifier to key on
-    instead. That previously caused Home Assistant to create duplicate
-    entities/devices (the old ones left greyed-out). This maps
-    the currently-registered entries onto the new stable scheme so existing
-    automations keep working and future firmware updates stop creating duplicates.
+    re-provisions or re-enumerates a node, moves a label to another element
+    or swaps the hardware (not on a device-firmware update: the measured
+    2.1.0 → 2.2.0 one changed no id) — and the ``functions`` list carries no
+    hardware identifier to key on instead. That previously caused Home
+    Assistant to create duplicate entities/devices (the old ones left
+    greyed-out). This maps the currently-registered entries onto the new
+    stable scheme so existing automations keep working and later id changes
+    stop creating duplicates.
 
     Returns ``True`` on clean completion and ``False`` if any item (or the whole
     pass) failed, so the caller only marks the migration done when it fully
@@ -629,7 +697,7 @@ def _migrate_to_stable_ids(
                 existing = ent_reg.async_get_entity_id(entity.domain, DOMAIN, new_uid)
                 if existing and existing != entity.entity_id:
                     # A stable-id entity already exists (e.g. a leftover duplicate
-                    # from a previous firmware update); drop the stale entry rather
+                    # from a previous id change); drop the stale entry rather
                     # than collide on the new unique id.
                     ent_reg.async_remove(entity.entity_id)
                 else:
@@ -816,18 +884,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     # stop() is idempotent; call it unconditionally so a failed platform unload
     # doesn't leak the WebSocket reconnect loop.
     await entry.runtime_data.stop()
+    # The health and colliding-label issues outlive a reload or an HA restart
+    # (the next setup re-derives them, and the registry keeps the user's
+    # "Ignore" only for an issue it still holds). A disabled entry sets up no
+    # more, so nothing would re-derive or withdraw them: they go with it.
+    # (`disabled_by` is set before HA unloads the entry.) After `stop()`, so a
+    # health read still in flight cannot re-raise one (its `_closing` guard),
+    # and the watcher writes nothing while the entry unloads.
+    if entry.disabled_by is not None:
+        for issue_id in entry_derived_issue_ids(entry.entry_id):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> None:
     """Withdraw the entry's repair issues and delete its store.
 
-    ``stop()`` deletes the issues on unload, but an entry removed while it sits
-    in SETUP_RETRY (a certificate mismatch keeps it there) never ran ``stop()``.
+    ``stop()`` deletes the certificate and push-failure issues on unload, but
+    an entry removed while it sits in SETUP_RETRY (a certificate mismatch keeps
+    it there) never ran ``stop()``; the health and colliding-label issues
+    outlive every unload short of a disable (``async_unload_entry``).
     """
     for issue_id in (
         f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
         f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+        *entry_derived_issue_ids(entry.entry_id),
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)
     await function_anchors_store(hass, entry.entry_id).async_remove()

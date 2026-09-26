@@ -25,7 +25,7 @@
           "host": "Gostitelj"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50)."
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeto vrednost junghome.local, ki se razreši le v nekaterih omrežjih, zamenjajte z naslovom IP prehoda (na primer 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Geslo omrežnega ključa"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeta vrednost junghome.local deluje v mnogih omrežjih, lahko pa uporabite naslov IP (na primer 192.168.1.50).",
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home. Izpolni se samodejno, ko je prehod odkrit; sicer privzeto vrednost junghome.local, ki se razreši le v nekaterih omrežjih, zamenjajte z naslovom IP prehoda (na primer 192.168.1.50).",
           "password": "Geslo omrežnega ključa prehoda Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Gostitelj"
         },
         "data_description": {
-          "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50 ali junghome.local)."
+          "host": "Naslov IP ali ime gostitelja prehoda Jung Home (na primer 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvenca" },
       "temperature": { "name": "Temperatura" },
       "illuminance": { "name": "Osvetljenost" },
+      "input_power": { "name": "Vhodna moč naprave" },
+      "load_power": { "name": "Delovna moč (stran bremena)" },
+      "output_current": { "name": "Izhodni tok" },
+      "input_current": { "name": "Vhodni tok" },
+      "output_voltage": { "name": "Izhodna napetost" },
+      "ambient_temperature": { "name": "Temperatura okolice" },
       "present_illuminance": { "name": "Trenutna osvetljenost" },
       "humidity": { "name": "Vlažnost" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "Naslov odgovarja, vendar pripada drugemu prehodu Jung Home kot ta vnos. Za spremembo naslova uporabite Znova konfiguriraj."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Naprave Jung Home s spornimi imeni",
+      "description": "Nekatere naprave na prehodu Jung Home na naslovu {host} imajo imena, ki jih Home Assistant ne more razlikovati, ker se razlikujejo le po velikih in malih črkah, presledkih ali ločilih:\n\n{labels}\n\nV Home Assistantu dobi entitete le ena naprava iz vsake skupine. Preimenujte ostale v aplikaciji Jung Home. Ta težava bo izginila sama, ko bodo imena različna."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Okvara Bluetootha na prehodu Jung Home",
+      "description": "Prehod Jung Home na naslovu {host} sporoča, da se njegov čip Bluetooth ni zagnal, zato ne more doseči vaših naprav Jung Home. Znova zaženite prehod tako, da ga za kratek čas odklopite z napajanja. Če težava ne izgine, ponastavite prehod in ga znova dodajte v projekt v aplikaciji Jung Home. Ta težava bo izginila, ko se bo prehod znova zagnal brez te napake."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Prehodu Jung Home je zmanjkalo zaporednih številk",
+      "description": "Prehod Jung Home na naslovu {host} sporoča, da mu je zmanjkalo zaporednih številk Bluetooth Mesh, zato morda ne more več pošiljati ukazov vašim napravam Jung Home. Če se naprave nehajo odzivati, ponastavite prehod in ga znova dodajte v projekt v aplikaciji Jung Home. Ta težava bo izginila, ko se bo prehod znova zagnal brez te napake."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Ura prehoda Jung Home ni sinhronizirana",
+      "description": "Prehod Jung Home na naslovu {host} že več kot 24 ur ne more sinhronizirati svoje ure s časovnim strežnikom. Preverite, ali ima prehod dostop do interneta. Ta težava bo izginila sama, ko bo ura znova sinhronizirana."
+    },
+    "gateway_project_missing": {
+      "title": "Prehod Jung Home nima projekta",
+      "description": "Prehod Jung Home na naslovu {host} sporoča, da ni prejel projekta iz aplikacije Jung Home, zato ne pozna vaših naprav. Odprite aplikacijo Jung Home v istem lokalnem omrežju kot prehod, da bo lahko znova naložila projekt. Ta težava bo izginila, ko bo prehod prejel nov projekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Projekt prehoda Jung Home je nepopoln",
+      "description": "Prehod Jung Home na naslovu {host} sporoča, da v njegovem projektu manjkajo podatki o napravah, zato imena naprav, prostori in scene morda manjkajo ali so napačni. Projekt ročno sinhronizirajte v aplikaciji Jung Home. Ta težava bo izginila, ko bo prehod prejel nov projekt."
     }
   }
 }

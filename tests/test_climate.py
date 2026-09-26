@@ -91,7 +91,7 @@ async def test_ambient_temperature_push_updates_current_temperature(
                 "id": "idrtr1-010",
                 "values": [
                     {"key": "quantity", "value": "22.5"},
-                    {"key": "quantity_label", "value": "Temperature "},
+                    {"key": "quantity_label", "value": "Present Ambient Temperature "},
                     {"key": "quantity_unit", "value": "°C"},
                 ],
             },

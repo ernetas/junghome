@@ -25,7 +25,7 @@
           "host": "Hostitel"
         },
         "data_description": {
-          "host": "IP adresa nebo název hostitele brány Jung Home. Vyplní se automaticky, když je brána nalezena; jinak výchozí hodnota junghome.local funguje v mnoha sítích, případně použijte IP adresu (například 192.168.1.50)."
+          "host": "IP adresa nebo název hostitele brány Jung Home. Vyplní se automaticky, když je brána nalezena; jinak nahraďte výchozí hodnotu junghome.local, která funguje jen v některých sítích, IP adresou brány (například 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Heslo síťového klíče"
         },
         "data_description": {
-          "host": "IP adresa nebo název hostitele brány Jung Home. Vyplní se automaticky, když je brána nalezena; jinak výchozí hodnota junghome.local funguje v mnoha sítích, případně použijte IP adresu (například 192.168.1.50).",
+          "host": "IP adresa nebo název hostitele brány Jung Home. Vyplní se automaticky, když je brána nalezena; jinak nahraďte výchozí hodnotu junghome.local, která funguje jen v některých sítích, IP adresou brány (například 192.168.1.50).",
           "password": "Heslo síťového klíče brány Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Hostitel"
         },
         "data_description": {
-          "host": "IP adresa nebo název hostitele brány Jung Home (například 192.168.1.50 nebo junghome.local)."
+          "host": "IP adresa nebo název hostitele brány Jung Home (například 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvence" },
       "temperature": { "name": "Teplota" },
       "illuminance": { "name": "Osvětlení" },
+      "input_power": { "name": "Příkon zařízení" },
+      "load_power": { "name": "Činný výkon (strana zátěže)" },
+      "output_current": { "name": "Výstupní proud" },
+      "input_current": { "name": "Vstupní proud" },
+      "output_voltage": { "name": "Výstupní napětí" },
+      "ambient_temperature": { "name": "Okolní teplota" },
       "present_illuminance": { "name": "Aktuální osvětlení" },
       "humidity": { "name": "Vlhkost" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "Adresa odpovídá, ale patří jiné bráně Jung Home než tomuto záznamu. Ke změně adresy použijte Překonfigurovat."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Zařízení Jung Home s kolidujícími názvy",
+      "description": "Některá zařízení na bráně Jung Home na adrese {host} mají názvy, které Home Assistant nedokáže rozlišit, protože se liší jen velikostí písmen, mezerami nebo interpunkcí:\n\n{labels}\n\nV Home Assistantu dostane entity jen jedno zařízení z každé skupiny. Přejmenujte ostatní v aplikaci Jung Home. Tento problém zmizí sám, jakmile budou názvy odlišné."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Porucha Bluetooth brány Jung Home",
+      "description": "Brána Jung Home na adrese {host} hlásí, že se nespustil její čip Bluetooth, takže nemůže komunikovat s vašimi zařízeními Jung Home. Restartujte bránu krátkým odpojením napájení. Pokud problém přetrvává, resetujte bránu a znovu ji přidejte do projektu v aplikaci Jung Home. Tento problém zmizí, jakmile se brána restartuje bez této chyby."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Bráně Jung Home došla sekvenční čísla",
+      "description": "Brána Jung Home na adrese {host} hlásí, že jí došla sekvenční čísla Bluetooth Mesh, takže už možná nedokáže odesílat příkazy vašim zařízením Jung Home. Pokud zařízení přestanou reagovat, resetujte bránu a znovu ji přidejte do projektu v aplikaci Jung Home. Tento problém zmizí, jakmile se brána restartuje bez této chyby."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Hodiny brány Jung Home nejsou synchronizované",
+      "description": "Brána Jung Home na adrese {host} nedokázala déle než 24 hodin synchronizovat své hodiny s časovým serverem. Zkontrolujte, zda má brána přístup k internetu. Tento problém zmizí sám, jakmile budou hodiny znovu synchronizované."
+    },
+    "gateway_project_missing": {
+      "title": "Brána Jung Home nemá žádný projekt",
+      "description": "Brána Jung Home na adrese {host} hlásí, že neobdržela projekt z aplikace Jung Home, takže nezná vaše zařízení. Otevřete aplikaci Jung Home ve stejné místní síti, ve které je brána, aby mohla projekt znovu nahrát. Tento problém zmizí, jakmile brána obdrží nový projekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Projekt brány Jung Home je neúplný",
+      "description": "Brána Jung Home na adrese {host} hlásí, že v jejím projektu chybí údaje o zařízeních, takže názvy zařízení, místnosti a scény mohou chybět nebo být nesprávné. Synchronizujte projekt ručně v aplikaci Jung Home. Tento problém zmizí, jakmile brána obdrží nový projekt."
     }
   }
 }

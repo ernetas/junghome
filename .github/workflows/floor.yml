@@ -1,17 +1,18 @@
 name: HA floor check
 
 # hacs.json declares the minimum Home Assistant version this integration
-# claims to support, but the test suite only ever runs against the pinned
-# current release — so the floor used to be an untested guess. This job
-# installs exactly the declared floor and imports every module of the
-# integration against it, catching an import of an API that does not exist
-# yet at the floor (the scheduled run also catches the floor aging out of
-# installability). It is deliberately not part of the release gate: a floor
-# break means "raise the floor in hacs.json", not "block the release" — or,
-# when the import is type-only, guard it (repairs.py's ``RepairsFlowResult``,
-# HA 2026.6+, shipped through eight betas unnoticed because this job ran on
-# `main` only and the integration branch never saw it). Hence every branch
-# and every pull request, not just `main`: one pip install per push.
+# claims to support, but the gating test suite only ever runs against the
+# pinned current release — so the floor used to be an untested guess. This job
+# installs exactly the declared floor, imports every module of the integration
+# against it (catching an import of an API that does not exist yet at the
+# floor), then runs the full test suite there (catching a floor-only behaviour
+# difference the import cannot see). The scheduled run also catches the floor
+# aging out of installability. It is deliberately not part of the release
+# gate: a floor break means "raise the floor in hacs.json", not "block the
+# release" — or, when the import is type-only, guard it (repairs.py's
+# ``RepairsFlowResult``, HA 2026.6+, shipped through eight betas unnoticed
+# because this job ran on `main` only and the integration branch never saw
+# it). Hence every branch and every pull request, not just `main`.
 
 on:
   workflow_dispatch:
@@ -21,18 +22,34 @@ on:
     paths:
       - "hacs.json"
       - "custom_components/**"
+      - "tests/**"
+      - "conftest.py"
+      - "pytest.ini"
+      - "requirements*.txt"
       - ".github/workflows/floor.yml"
   pull_request:
     paths:
       - "hacs.json"
       - "custom_components/**"
+      - "tests/**"
+      - "conftest.py"
+      - "pytest.ini"
+      - "requirements*.txt"
       - ".github/workflows/floor.yml"
 
 permissions: {}
 
+env:
+  # No pytest-homeassistant-custom-component release pins the floor exactly:
+  # 0.13.300 pins 2025.12.2 (the newest core at or below 2025.12.4; 0.13.301+
+  # are 2026.x), so install it and then force the floor core over its pin.
+  # Bump this together with hacs.json: the release pinning the nearest core
+  # at or below the new floor.
+  FLOOR_PHCC: "0.13.300"
+
 jobs:
-  floor-import:
-    name: Import against the hacs.json minimum HA
+  floor:
+    name: Import and test against the hacs.json minimum HA
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
@@ -43,14 +60,24 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install the floor Home Assistant
+      - name: Install the floor Home Assistant and the test stack
         # --only-binary litellm: newer litellm releases ship only an sdist
         # with a Rust extension; letting pip resolve to the newest wheel-only
-        # release keeps this job free of a Rust toolchain.
+        # release keeps this job free of a Rust toolchain. The second install
+        # overrides the phcc pin, so pip's "incompatible" warning is expected.
+        # The remaining test requirements (everything but the HA stack pins
+        # and the linters, which do not run here) come from the requirement
+        # files, so a new test dependency reaches this job too.
         run: |
           floor="$(python3 -c "import json;print(json.load(open('hacs.json'))['homeassistant'])")"
-          echo "hacs.json floor: homeassistant==${floor}"
+          echo "hacs.json floor: homeassistant==${floor}, phcc==${FLOOR_PHCC}"
+          grep -hvE '^(-r|homeassistant|pytest-homeassistant-custom-component|mypy|ruff)\b' \
+            requirements.txt requirements_test.txt > "${RUNNER_TEMP}/floor-extras.txt"
+          python3 -m pip install --only-binary litellm \
+            "pytest-homeassistant-custom-component==${FLOOR_PHCC}" \
+            -r "${RUNNER_TEMP}/floor-extras.txt"
           python3 -m pip install --only-binary litellm "homeassistant==${floor}"
+          python3 -c "import homeassistant.const as c; assert c.__version__ == '${floor}', c.__version__"
 
       - name: Import every integration module
         run: |
@@ -74,3 +101,28 @@ jobs:
               raise SystemExit(1)
           print("All modules import cleanly against the floor.")
           EOF
+
+      - name: Run the test suite against the floor
+        # The eight per-platform `test_all_*_entities` snapshot tests are
+        # deselected: the snapshots pinned on the current core cannot match
+        # the floor's core-owned output, and nothing in the integration
+        # causes the difference. Regenerated at 2025.12.4 they differ in
+        # exactly these (syrupy reports only the first, `aliases`): the
+        # registry entry's `aliases` (`list([None])` on newer cores,
+        # `set({})` at the floor) and its `object_id_base` (absent at the
+        # floor); state attribute keys (enum reprs such as
+        # `<EntityStateAttribute.DEVICE_CLASS: 'device_class'>` on newer
+        # cores, plain strings at the floor); the cover's `is_closed`
+        # attribute (absent at the floor); and the light's deprecated
+        # `min_mireds`/`max_mireds`/`color_temp` (present at the floor).
+        # Everything else must pass here.
+        run: |
+          python3 -m pytest -q \
+            --deselect tests/test_binary_sensor.py::test_all_binary_sensor_entities \
+            --deselect tests/test_climate.py::test_all_climate_entities \
+            --deselect tests/test_cover.py::test_all_cover_entities \
+            --deselect tests/test_event.py::test_all_event_entities \
+            --deselect tests/test_light.py::test_all_light_entities \
+            --deselect tests/test_scene.py::test_all_scene_entities \
+            --deselect tests/test_sensor.py::test_all_sensor_entities \
+            --deselect tests/test_switch.py::test_all_switch_entities

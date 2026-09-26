@@ -12,6 +12,7 @@ from custom_components.junghome.const import (
     device_slug,
     entry_anchor,
     entry_scope,
+    gateway_configuration_url,
     gateway_device_id,
     is_presence_quantity,
     stable_unique_id,
@@ -89,7 +90,7 @@ def test_stable_unique_id_combines_slug_suffix_and_qualifier():
 
 def test_stable_unique_id_is_independent_of_the_gateway_device_id():
     """Same label + datapoint suffix must yield the same id even after the
-    gateway regenerates the device id on a firmware update."""
+    gateway's device id changes (a re-provisioned or re-enumerated node)."""
     device = {"label": "Kitchen Light"}
     before = {"id": "idAAAA1111-010"}
     after = {"id": "idBBBB2222-010"}
@@ -138,7 +139,7 @@ def test_entry_anchor_prefers_frozen_anchor_then_unique_id_then_entry_id():
     """
     frozen = SimpleNamespace(
         data={"identity_anchor": "old-host.local"},
-        unique_id="0000000084fb4b1b",
+        unique_id="00000000c0ffee42",
         entry_id="eid",
     )
     assert entry_anchor(frozen) == "old-host.local"
@@ -157,3 +158,19 @@ def test_entry_anchor_prefers_frozen_anchor_then_unique_id_then_entry_id():
         data={"identity_anchor": ""}, unique_id="uid", entry_id="eid"
     )
     assert entry_anchor(blank) == "uid"
+
+
+def test_gateway_configuration_url_is_the_gateway_web_page():
+    """``https://<host>/``, as the integration reaches the gateway — or nothing.
+
+    The device registry raises on a URL without a host, so a stored host that
+    cannot make one must yield None rather than fail setup.
+    """
+    assert gateway_configuration_url("192.168.1.50") == "https://192.168.1.50/"
+    assert gateway_configuration_url(" junghome-02005ec0ffee.local ") == (
+        "https://junghome-02005ec0ffee.local/"
+    )
+    assert gateway_configuration_url("fe80::1") == "https://[fe80::1]/"
+    assert gateway_configuration_url("[fe80::1]") == "https://[fe80::1]/"
+    for bad in (None, 5, "", "  ", "@", "h:x"):
+        assert gateway_configuration_url(bad) is None, bad

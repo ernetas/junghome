@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceEntry
 
     from .coordinator import JungHomeConfigEntry
+    from .health import HealthEntry
     from .models import Device
 
 # The gateway token is a bearer credential; never include it in a downloadable
@@ -92,6 +93,41 @@ def _secrets(entry: JungHomeConfigEntry) -> list[str]:
     return sorted(
         (v for v in values if len(v) >= _MIN_SCRUBBABLE), key=lambda v: (-len(v), v)
     )
+
+
+# The gateway's health log quotes two kinds of personal data inside its fixed
+# texts, where no key exists to redact by: the myJUNG user name the gateway
+# was registered to (`cloud_connection_service.js:92`, appended to the text
+# unquoted, so everything after it goes) and the name of each API client
+# granted access
+# (`api_access_service.js:82,95`). Device labels (the unreachable/weak-signal
+# lists) stay, as everywhere else in the report.
+_HEALTH_PERSONAL_DATA = (
+    (re.compile(r"(myJUNG Account ).+", re.DOTALL), r"\1**REDACTED**"),
+    (re.compile(r'(with the name ")[^"]*(")'), r"\1**REDACTED**\2"),
+)
+
+
+def _health_log(
+    entries: tuple[HealthEntry, ...] | None, secrets: list[str]
+) -> list[dict[str, str | None]] | None:
+    """Return the health log as read (newest first), personal data masked."""
+    if entries is None:
+        return None
+    result: list[dict[str, str | None]] = []
+    for entry in entries:
+        details = entry.details
+        for pattern, replacement in _HEALTH_PERSONAL_DATA:
+            details = pattern.sub(replacement, details)
+        result.append(
+            {
+                "level": entry.level,
+                "time": entry.time,
+                "description": _scrub(entry.description, secrets),
+                "details": _scrub(details, secrets),
+            }
+        )
+    return result
 
 
 def _scrub(text: str | None, secrets: list[str]) -> str | None:
@@ -194,12 +230,19 @@ async def async_get_config_entry_diagnostics(
             for function_id, identity in coordinator.node_identities.items()
         },
         # Function id -> what the verbose device endpoint added (energy
-        # counter, firmware revision, reachability); empty on firmware
+        # counter, firmware revision, reachability, Kelvin range); empty on firmware
         # without it. No labels, no keys — the parser keeps only those fields.
         "device_properties": {
             function_id: asdict(props)
             for function_id, props in coordinator.device_properties.items()
         },
+        # The gateway's own health log (`GET /healthstatus/`, health.py) as
+        # last read — None until a read succeeded — and the conditions in it
+        # that are raised as repair issues. The log also carries what is
+        # deliberately not an issue, e.g. the middleware's unreachable-device
+        # list (push buttons read unreachable while working).
+        "health_status": _health_log(coordinator.health.entries, secrets),
+        "health_conditions": sorted(coordinator.health.conditions),
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...
         "recent_websocket_frames": [
@@ -229,8 +272,9 @@ async def async_get_device_diagnostics(
 
     ``matched`` is None when the HA device has no counterpart in the current
     poll, which is itself the useful signal: it means the gateway has stopped
-    reporting it (removed hardware, or a relabel rename following could not
-    pair) and it is on its way to being pruned.
+    reporting it (removed hardware, or a label that moved to another element —
+    a plain rename is followed and re-keys the device instead) and it is on its
+    way to being pruned.
     """
     coordinator = entry.runtime_data
     secrets = _secrets(entry)
@@ -268,5 +312,29 @@ async def async_get_device_diagnostics(
             asdict(identity)
             if matched and (identity := coordinator.node_identity_for(matched))
             else None
+        ),
+        # What the verbose device endpoint said about this function (see the
+        # entry dump's map) and the firmware revision resolved for its node —
+        # the one the device page and the duplicate-suppression exemption use,
+        # which differs from the function's own when that one is null.
+        "device_properties": (
+            asdict(props)
+            if matched and (props := coordinator.device_properties_for(matched))
+            else None
+        ),
+        "node_software_revision": (
+            coordinator.software_revision_for(matched) if matched else None
+        ),
+        # The rename-following anchor stored for this device's slug (function
+        # id, node MAC, element location — identities, not secrets, like
+        # `node_identity`). Present for a device the gateway stopped reporting
+        # too: it is what a rename in the app would be paired against.
+        "function_anchor": next(
+            (
+                asdict(anchor)
+                for slug in sorted(slugs)
+                if (anchor := coordinator.function_anchors.get(slug)) is not None
+            ),
+            None,
         ),
     }

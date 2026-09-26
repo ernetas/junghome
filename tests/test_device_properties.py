@@ -1,19 +1,23 @@
-"""The verbose device endpoint: energy counters, firmware revisions, reachability.
+"""The verbose device endpoint: energy, firmware, reachability, Kelvin range.
 
 ``GET /devices/?verbose=true`` (deprecated/experimental, live on 2.1.3) returns
 the middleware's raw device objects, keyed by the function id. The
 integration reads three things out of them: a metering socket's cumulative
 ``total_device_energy_use`` (the Energy Dashboard's sensor), every device's
 ``software_revision`` (a button on firmware older than 2.2.0 reports each tap
-once, so duplicate suppression is skipped for it — see ``test_event.py``), and
-per-state reachability (diagnostics). Shapes below mirror the 2026-09-16 probe.
+once, so duplicate suppression is skipped for it — see ``test_event.py``),
+per-state reachability (diagnostics), and a tunable-white light's effective
+colour-temperature window (``test_light.py``). Shapes below mirror the
+2026-09-16 probe.
 """
 
 import asyncio
 import copy
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -21,12 +25,13 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
 
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import DOMAIN, gateway_device_id
 from custom_components.junghome.coordinator import (
     DEVICE_PROPERTIES_REFRESH_INTERVAL,
     JungHomeDataUpdateCoordinator,
@@ -34,13 +39,22 @@ from custom_components.junghome.coordinator import (
 from custom_components.junghome.diagnostics import async_get_config_entry_diagnostics
 from custom_components.junghome.models import (
     DeviceProperties,
+    NodeIdentity,
     parse_device_properties,
     parse_devices_verbose,
+    parse_kelvin_range,
 )
-from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket, bare_coordinator
+from tests.conftest import (
+    PRISTINE_DEVICES,
+    _fake_run_websocket,
+    bare_coordinator,
+    find_device,
+)
 
 SOCKET = "idsock1"  # the fixture's metering socket ("Boiler")
 LIGHT = "idlight1"
+ROCKER = "idrock1"  # the fixture's push-button element ("Button A")
+NULL = object()  # a software_revision property whose value is null
 
 
 def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
@@ -51,8 +65,13 @@ def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
     energy_present: bool = True,
     revision: object = (2, 2, 0, 1),
     reachable: bool = True,
+    node_address: object = None,
 ) -> dict:
-    """One verbose device object, in the wire shape of the 2026-09-16 probe."""
+    """One verbose device object, in the wire shape of the 2026-09-16 probe.
+
+    ``revision=None`` omits the property; ``revision=NULL`` sends it with a
+    ``null`` value, as the probe's secondary functions of a node do.
+    """
     props: dict = {}
     if energy_present:
         props["total_device_energy_use"] = {
@@ -64,9 +83,20 @@ def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
     if revision is not None:
         props["software_revision"] = {
             "state_type": "software_revision",
-            "value": list(revision) if isinstance(revision, tuple) else revision,
+            "value": (
+                None
+                if revision is NULL
+                else list(revision)
+                if isinstance(revision, tuple)
+                else revision
+            ),
             "profile": {"unit": ""},
         }
+        if node_address is not None:
+            props["software_revision"]["model"] = {
+                "address": node_address,
+                "category": "property",
+            }
     return {
         "device_id": device_id,
         "device_type": device_type,
@@ -159,6 +189,161 @@ def test_parse_tolerates_every_shape_seen_or_plausible() -> None:
     }
 
 
+_READ = object()  # the range state holds the profile's own pair
+
+
+def _ct_light(
+    device_id: str, profile_range: object, range_value: object = _READ
+) -> dict:
+    """A tunable-white light's verbose object, as the 2026-09-16 probe shows it.
+
+    The probe's lights carried ``color_temperature.profile.range`` 2000-6000
+    next to a ``color_temperature_range`` state of ``[2000, 6000]`` (mode
+    ``"2000 - 6000"``); the profile range is what the gateway clamps to, the
+    range state's value only says whether the node's range has been read and
+    bound into it yet (``[]`` until then). ``range_value=None`` omits the
+    range state; by default it holds the profile's pair, as once bound.
+    """
+    doc = _verbose(device_id, energy_present=False, device_type="ColorLight")
+    doc["states"]["color_temperature"] = {
+        "state_id": f"{device_id}-004",
+        "state_type": "color_temperature",
+        "value": 2000,
+        "profile": {"index": 4, "range": profile_range, "unit": "Kelvin"},
+    }
+    if range_value is _READ:
+        range_value = (
+            [profile_range.get("min"), profile_range.get("max")]
+            if isinstance(profile_range, dict)
+            else [2000, 6000]
+        )
+    if range_value is not None:
+        doc["states"]["color_temperature_range"] = {
+            "state_id": f"{device_id}-02d",
+            "state_type": "color_temperature_range",
+            "value": range_value,
+            "mode": "",
+            "profile": {"index": 45, "range": {"min": 800, "max": 20000, "step": 1}},
+        }
+    return doc
+
+
+def test_parse_reads_the_light_kelvin_range_from_the_profile() -> None:
+    """``color_temperature.profile.range`` is the gateway's effective clamp."""
+    doc = _ct_light(LIGHT, {"min": 2700, "max": 6500, "step": 1})
+    assert parse_device_properties(doc).color_temp_range == (2700, 6500)
+    # The probe's lights: the constructor default, which is the device's too.
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1})
+    assert parse_device_properties(doc).color_temp_range == (2000, 6000)
+    assert parse_device_properties(doc).color_temp_range_pending is False
+    # A list-shaped `states` container works the same way.
+    doc["states"] = list(doc["states"].values())
+    assert parse_device_properties(doc).color_temp_range == (2000, 6000)
+    # Not a light / no profile / an unusable range: unknown, and not pending
+    # (a re-read would not change it).
+    assert parse_device_properties(_verbose(SOCKET)).color_temp_range is None
+    doc = _ct_light(LIGHT, {"min": 6500, "max": 2700})
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, False)
+    doc["states"]["color_temperature"]["profile"] = "nope"
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, False)
+
+
+@pytest.mark.parametrize(
+    "range_value",
+    [[], None, [None, None], [2000], [True, 6000], ["2000", "6000"], "2000 - 6000"],
+    ids=["unread", "nan", "nan-pair", "short", "bool", "strings", "mode-string"],
+)
+def test_parse_default_profile_before_the_range_is_read_is_pending(
+    range_value: object,
+) -> None:
+    """Right after a gateway boot the profile is the constructor default.
+
+    The range state is ``[]`` until the boot's first poll pass reads it (or
+    ``NaN`` — ``null`` on the wire — after failed requests); until then the
+    2000-6000 K profile says nothing about the node, so the window is unknown
+    and pending — the periodic refresh re-reads the device.
+    """
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1}, [])
+    doc["states"]["color_temperature_range"]["value"] = range_value
+    props = parse_device_properties(doc)
+    assert props.color_temp_range is None
+    assert props.color_temp_range_pending is True
+
+
+def test_parse_trusts_a_profile_the_range_state_cannot_contradict() -> None:
+    """A bound profile, or one nothing can ever rebind, is the clamp."""
+    # Bound earlier, range value since reset to NaN by failed requests: the
+    # binding is not reset with it.
+    doc = _ct_light(LIGHT, {"min": 2700, "max": 6500, "step": 1}, [])
+    doc["states"]["color_temperature_range"]["value"] = None
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (
+        (2700, 6500),
+        False,
+    )
+    # No range state at all: the default can never be rebound.
+    doc = _ct_light(LIGHT, {"min": 2000, "max": 6000, "step": 1}, None)
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (
+        (2000, 6000),
+        False,
+    )
+
+
+def test_parse_kelvin_range_rejects_bad_payloads() -> None:
+    """The range parser only trusts a well-formed, plausible pair of numbers."""
+    assert parse_kelvin_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
+    assert parse_kelvin_range([2700, 6500]) == (2700, 6500)
+    # The Mesh Model spec's own bounds, 0x0320-0x4E20, are accepted.
+    assert parse_kelvin_range({"min": 800, "max": 20000}) == (800, 20000)
+    for raw in (
+        None,
+        "2700-6500",
+        42,
+        {},  # no keys at all
+        {"min": 2700},  # half a range
+        {"min": "warm", "max": "cool"},  # non-numeric
+        {"min": None, "max": 6500},
+        {"min": {"nested": 1}, "max": 6500},  # not a scalar
+        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
+        {"min": 6500, "max": 2700},  # reversed
+        {"min": 4000, "max": 4000},  # zero-width
+        {"min": 799, "max": 6500},  # below the spec's range
+        {"min": 2700, "max": 0xFFFF},  # the spec's "unknown"
+        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
+        {"min": 2700, "max": float("inf")},  # ...and Infinity
+        [2700],  # wrong arity
+        [2000, 4000, 6500],
+    ):
+        assert parse_kelvin_range(raw) is None, raw
+
+
+def test_parse_kelvin_range_survives_unrepresentable_numbers() -> None:
+    """A huge JSON integer is rejected, not raised on.
+
+    ``json.loads`` parses integer literals at arbitrary precision, so a body
+    can hand the parser an ``int`` that ``float()`` cannot represent — which
+    raises ``OverflowError``, not ``ValueError``.
+    """
+    huge = json.loads("9" * 400)  # an int, not a float
+    assert isinstance(huge, int)
+    with pytest.raises(OverflowError):
+        float(huge)
+    for raw in (
+        {"min": 2700, "max": huge},
+        {"min": huge, "max": 6500},
+        [huge, 6500],
+        [2700, huge],
+        {"min": -huge, "max": huge},
+    ):
+        assert parse_kelvin_range(raw) is None, raw
+    # A huge *string* is representable (it becomes inf) and is rejected by the
+    # finiteness guard instead.
+    assert parse_kelvin_range({"min": 2700, "max": "9" * 400}) is None
+
+
 @asynccontextmanager
 async def _running(
     hass: HomeAssistant, verbose: object, unique_id: str = "1.2.3.4"
@@ -211,7 +396,11 @@ async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
 async def test_setup_reads_properties_and_creates_the_energy_sensor(
     hass: HomeAssistant,
 ) -> None:
-    """A socket with the counter gets a TOTAL_INCREASING Wh sensor; a light does not."""
+    """A socket with the counter gets a TOTAL_INCREASING sensor; a light does not.
+
+    The counter is Wh natively; a new registration displays it in kWh (the
+    suggested unit, stored in the entity registry at registration).
+    """
     async with _running(
         hass, [_verbose(SOCKET), _verbose(LIGHT, energy_present=False)]
     ) as entry:
@@ -219,10 +408,15 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
         assert coordinator.device_properties[SOCKET].energy_wh == 209655.0
         state = hass.states.get("sensor.boiler_total_energy")
         assert state is not None
-        assert state.state == "209655.0"
-        assert state.attributes["unit_of_measurement"] == "Wh"
+        assert state.state == "209.655"
+        assert state.attributes["unit_of_measurement"] == "kWh"
         assert state.attributes["device_class"] == "energy"
         assert state.attributes["state_class"] == "total_increasing"
+        # Displayed to 1 Wh: the precision derived for kWh, not a fixed 0 read
+        # in the suggested unit (whole kWh — 450 Wh shown as "0 kWh").
+        registered = er.async_get(hass).async_get("sensor.boiler_total_energy")
+        assert registered is not None
+        assert registered.options["sensor"] == {"suggested_display_precision": 2}
         assert hass.states.get("sensor.hall_light_total_energy") is None
         diag = await async_get_config_entry_diagnostics(hass, entry)
         assert diag["device_properties"][SOCKET] == {
@@ -230,7 +424,39 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
             "energy_wh": 209655.0,
             "software_revision": (2, 2, 0, 1),
             "reachable": True,
+            "color_temp_range": None,
+            "color_temp_range_pending": False,
+            "node_address": None,
         }
+
+
+async def test_counter_registered_before_the_kwh_suggestion_keeps_wh(
+    hass: HomeAssistant, entity_registry: er.EntityRegistry
+) -> None:
+    """The kWh suggestion reaches new registrations only.
+
+    Home Assistant stores a suggested unit when it registers the entity; a
+    counter an install registered while it had none stays in Wh (no
+    ``sensor.private`` option is written for it), so no dashboard or
+    statistic changes unit under the user.
+    """
+    entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "boiler_total_energy",
+        suggested_object_id="boiler_total_energy",
+        unit_of_measurement="Wh",
+    )
+    async with _running(hass, [_verbose(SOCKET)]):
+        state = hass.states.get("sensor.boiler_total_energy")
+        assert state is not None
+        assert state.state == "209655.0"
+        assert state.attributes["unit_of_measurement"] == "Wh"
+        registered = entity_registry.async_get("sensor.boiler_total_energy")
+        assert registered is not None
+        assert "sensor.private" not in registered.options
+        # Whole Wh — not the "209655.000 Wh" a fixed precision of 3 would give.
+        assert registered.options["sensor"] == {"suggested_display_precision": 0}
 
 
 async def test_counter_not_yet_polled_reads_unknown(hass: HomeAssistant) -> None:
@@ -259,7 +485,7 @@ async def test_periodic_refresh_re_reads_each_counter_on_its_own_endpoint(
             assert single.await_count == 1
             assert single.await_args.args[2] == SOCKET
             assert full.await_count == 0
-            assert hass.states.get("sensor.boiler_total_energy").state == "209700.0"
+            assert hass.states.get("sensor.boiler_total_energy").state == "209.7"
             last_updated = hass.states.get("sensor.boiler_total_energy").last_updated
 
             # Same value again: read, nothing dispatched.
@@ -276,7 +502,7 @@ async def test_periodic_refresh_re_reads_each_counter_on_its_own_endpoint(
             single.side_effect = None
             single.return_value = None
             await _tick(hass, freezer)
-            assert hass.states.get("sensor.boiler_total_energy").state == "209700.0"
+            assert hass.states.get("sensor.boiler_total_energy").state == "209.7"
             assert single.await_count == 4
     # Unloaded: the timer is gone.
     with patch.object(coordinator, "_fetch_device_verbose_from_api", single):
@@ -386,6 +612,93 @@ async def test_a_function_adopted_during_the_full_read_is_read_next_time(
             assert "idnewB" in coordinator.device_properties
 
 
+async def test_a_light_range_read_after_setup_reaches_the_entity(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Setup's read failed; the retry's range reaches the existing light.
+
+    The light already exists with the 2000-6000 K default when the retried
+    full read delivers its own window: the refresh dispatches the listeners
+    and the light publishes the new min/max without a reload.
+    """
+    async with _running(hass, None) as entry:
+        coordinator = entry.runtime_data
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2000
+        assert state.attributes["max_color_temp_kelvin"] == 6000
+        full = AsyncMock(
+            return_value=[
+                _ct_light("idcolor1", {"min": 2700, "max": 6500, "step": 1}),
+                *_everything_but("idcolor1"),
+            ]
+        )
+        with patch.object(coordinator, "_fetch_devices_verbose_from_api", full):
+            await _tick(hass, freezer)
+        assert full.await_count == 1
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2700
+        assert state.attributes["max_color_temp_kelvin"] == 6500
+
+
+async def test_a_range_unread_at_setup_is_re_read_until_known(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """HA set up right after a gateway boot, before the node's range was bound.
+
+    The setup-time list shows the light's constructor default with an unread
+    (``[]``) range state: the window is unknown, the light falls back to
+    2000-6000 K, and every interval re-reads that light alone (next to the
+    energy counter) — a pending answer again, then the bound 2700-6500 K,
+    which reaches the entity; once known it is not re-read.
+    """
+    default = {"min": 2000, "max": 6000, "step": 1}
+    unread = _ct_light("idcolor1", default, [])
+    initial = [_verbose(SOCKET), unread, *_everything_but(SOCKET, "idcolor1")]
+    async with _running(hass, initial) as entry:
+        coordinator = entry.runtime_data
+        props = coordinator.device_properties["idcolor1"]
+        assert props.color_temp_range is None
+        assert props.color_temp_range_pending is True
+        state = hass.states.get("light.strip")
+        assert state.attributes["min_color_temp_kelvin"] == 2000
+        assert state.attributes["max_color_temp_kelvin"] == 6000
+
+        answers = {"idcolor1": unread, SOCKET: _verbose(SOCKET)}
+        single = AsyncMock(side_effect=lambda _h, _t, device_id: answers[device_id])
+        full = AsyncMock(return_value=[])
+
+        def asked() -> list[str]:
+            return sorted(call.args[2] for call in single.await_args_list)
+
+        with (
+            patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+            patch.object(coordinator, "_fetch_devices_verbose_from_api", full),
+        ):
+            # Still unread: asked again, still the default.
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", SOCKET]
+            state = hass.states.get("light.strip")
+            assert state.attributes["max_color_temp_kelvin"] == 6000
+            # Bound now: the node's own window reaches the entity.
+            answers["idcolor1"] = _ct_light(
+                "idcolor1", {"min": 2700, "max": 6500, "step": 1}
+            )
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET]
+            state = hass.states.get("light.strip")
+            assert state.attributes["min_color_temp_kelvin"] == 2700
+            assert state.attributes["max_color_temp_kelvin"] == 6500
+            assert state.attributes["color_temp_kelvin"] == 2700
+            # Known: only the counter is re-read from now on.
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET, SOCKET]
+            assert full.await_count == 0
+        assert coordinator.device_properties["idcolor1"].color_temp_range == (
+            2700,
+            6500,
+        )
+
+
 async def test_an_empty_answer_keeps_the_properties(hass: HomeAssistant) -> None:
     """An answered-but-empty list is not "no properties": nothing is wiped."""
     async with _running(hass, [_verbose(SOCKET)]) as entry:
@@ -490,6 +803,82 @@ async def test_fetches_treat_non_200_and_odd_bodies_as_nothing(
     await coordinator.async_shutdown()
 
 
+@pytest.mark.real_device_properties_fetch
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"exc": aiohttp.ClientError()},
+        {"exc": TimeoutError()},
+        # A truncated body: `response.json()` raises JSONDecodeError — a
+        # ValueError, not a ClientError.
+        {"text": '[{"device_id": "idso'},
+    ],
+    ids=["unreachable", "timeout", "not-json"],
+)
+async def test_a_failed_read_leaves_the_properties(
+    hass: HomeAssistant, aioclient_mock, failure: dict
+) -> None:
+    """Each gateway failure is caught on both reads, and the properties stay.
+
+    On the full list (setup, membership change) and on the per-device counter
+    re-read alike, nothing propagates out of the best-effort enrichment.
+    """
+    coordinator = bare_coordinator(hass)
+    base = f"https://{coordinator.config['host']}/api/junghome/devices"
+    known = parse_devices_verbose([_verbose(SOCKET)])
+    coordinator.device_properties = MappingProxyType(known)
+    aioclient_mock.get(f"{base}/?verbose=true", **failure)
+    await coordinator.async_fetch_device_properties()
+    assert coordinator.device_properties == known
+    # Not answered: the next interval asks for the full list again.
+    assert coordinator._properties_listed_for is None
+
+    # Every live function listed: the interval re-reads the counter alone.
+    coordinator._properties_listed_for = frozenset()
+    aioclient_mock.get(f"{base}/{SOCKET}?verbose=true", **failure)
+    await coordinator._refresh_device_properties()
+    assert aioclient_mock.call_count == 2
+    assert coordinator.device_properties == known
+    await coordinator.async_shutdown()
+
+
+async def test_properties_refresh_notifies_only_on_a_change(
+    hass: HomeAssistant,
+) -> None:
+    """Listeners hear about a re-read only when it changed something.
+
+    Each notification rewrites every entity of the entry. An unchanged state
+    write leaves ``last_updated`` alone, so a state-based check cannot see a
+    spurious one; the listener calls are counted instead — on both paths, the
+    full list and the per-device counter re-read.
+    """
+    coordinator = bare_coordinator(hass)
+    calls: list[None] = []
+    unsub = coordinator.async_add_listener(lambda: calls.append(None))
+    full = AsyncMock(return_value=[_verbose(SOCKET)])
+    single = AsyncMock(return_value=_verbose(SOCKET))
+    with (
+        patch.object(coordinator, "_fetch_devices_verbose_from_api", full),
+        patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+    ):
+        # Nothing known yet: the full list, which teaches something.
+        await coordinator._refresh_device_properties()
+        assert (full.await_count, len(calls)) == (1, 1)
+        # The full list again (as after a membership change), same answer.
+        coordinator._properties_listed_for = None
+        await coordinator._refresh_device_properties()
+        assert (full.await_count, len(calls)) == (2, 1)
+        # Covered: the counter alone, unchanged, then changed.
+        await coordinator._refresh_device_properties()
+        assert (single.await_count, len(calls)) == (1, 1)
+        single.return_value = _verbose(SOCKET, energy=209700)
+        await coordinator._refresh_device_properties()
+        assert (single.await_count, len(calls)) == (2, 2)
+    assert coordinator.device_properties[SOCKET].energy_wh == 209700.0
+    unsub()
+    await coordinator.async_shutdown()
+
+
 async def test_energy_sensor_skips_another_devices_push(hass: HomeAssistant) -> None:
     """A per-datapoint push for the light does not rewrite the socket's counter."""
     async with _running(hass, [_verbose(SOCKET)]) as entry:
@@ -505,3 +894,155 @@ async def test_energy_sensor_skips_another_devices_push(hass: HomeAssistant) -> 
         )
         await hass.async_block_till_done()
         assert hass.states.get("sensor.boiler_total_energy").last_updated == before
+
+
+# --- Per-node firmware revision, and the device pages it reaches ------------
+#
+# The revision is a node property the gateway fills reliably only on the
+# function at the node's main element: in the 2026-09-16 probe 18 of 20
+# push-button functions read `null`, each carrying its revision state at the
+# address (the node's main-element unicast) of a function that read one.
+
+
+def test_parse_reads_the_revision_state_address() -> None:
+    """The revision state's `model.address` is the node's key; junk is None."""
+    doc = _verbose(ROCKER, energy_present=False, revision=NULL, node_address=562)
+    assert parse_device_properties(doc) == DeviceProperties(
+        software_revision=None, reachable=True, node_address=562
+    )
+    for bad in (None, "x", -1, True, 1.5):
+        doc["property"]["software_revision"]["model"]["address"] = bad
+        assert parse_device_properties(doc).node_address is None, bad
+    doc["property"]["software_revision"]["model"] = "nope"
+    assert parse_device_properties(doc).node_address is None
+
+
+def test_revision_resolves_through_the_node(hass: HomeAssistant) -> None:
+    """A null revision takes its node's: by revision address, or by node UUID."""
+    coordinator = bare_coordinator(hass)
+    coordinator.device_properties = MappingProxyType(
+        {
+            "main": DeviceProperties(software_revision=(2, 1, 4, 0), node_address=562),
+            "key": DeviceProperties(node_address=562),
+            "other": DeviceProperties(node_address=600),
+            "bare": DeviceProperties(),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "main"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "key"}) == (2, 1, 4, 0)
+    assert coordinator.button_reports_each_tap_once({"id": "key"})
+    # Another node, no address at all, nothing read: unknown.
+    for device_id in ("other", "bare", "unread"):
+        assert coordinator.software_revision_for({"id": device_id}) is None
+        assert not coordinator.button_reports_each_tap_once({"id": device_id})
+
+    # With the project export read, the node UUID joins them too — also for
+    # a function the verbose answer left out entirely.
+    coordinator.node_identities = MappingProxyType(
+        {
+            "main": NodeIdentity(uuid="NODE-A", location=1),
+            "bare": NodeIdentity(uuid="NODE-A", location=0x40),
+            "unread": NodeIdentity(uuid="NODE-A", location=0x41),
+            "lone": NodeIdentity(uuid="NODE-B", location=1),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "bare"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "unread"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "lone"}) is None
+
+    # Two revisions on one node (never observed): unknown, the safe default.
+    coordinator.device_properties = MappingProxyType(
+        {
+            **coordinator.device_properties,
+            "main2": DeviceProperties(software_revision=(2, 2, 0, 2), node_address=562),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "key"}) is None
+    assert not coordinator.button_reports_each_tap_once({"id": "key"})
+
+
+def test_sw_version_prefers_the_device_then_its_node_then_the_gateway(
+    hass: HomeAssistant,
+) -> None:
+    """The order ``device_info`` and the registry updater share."""
+    coordinator = bare_coordinator(hass)
+    coordinator.gateway_version = "2.1.3 (2840)"
+    coordinator.device_properties = MappingProxyType(
+        {
+            "main": DeviceProperties(software_revision=(2, 2, 0, 2), node_address=562),
+            "key": DeviceProperties(node_address=562),
+        }
+    )
+    assert coordinator.sw_version_for({"id": "key"}) == "2.2.0.2"
+    assert coordinator.sw_version_for({"id": "unread"}) == "2.1.3 (2840)"
+    assert coordinator.sw_version_for({"id": "key", "sw_version": "9"}) == "9"
+    coordinator.gateway_version = None
+    assert coordinator.sw_version_for({"id": "unread"}) is None
+
+
+def _node_of_two(revision: tuple[int, ...] = (2, 2, 0, 1)) -> list[dict]:
+    """The light at a node's main element with the revision, the rocker null."""
+    return [
+        _verbose(LIGHT, energy_present=False, revision=revision, node_address=302),
+        _verbose(ROCKER, energy_present=False, revision=NULL, node_address=302),
+    ]
+
+
+async def test_device_pages_show_the_node_firmware(hass: HomeAssistant) -> None:
+    """Each function's page shows its node's revision; the hub the gateway's.
+
+    The rocker's own revision is null, so the value is its node's; a function
+    whose revision nothing reports falls back to the gateway version, as every
+    device did before.
+    """
+
+    async def _version(_self, _host: str) -> dict[str, str]:
+        return {"version_release": "2.1.3", "version_build": "2840"}
+
+    verbose = [*_node_of_two(), _verbose(SOCKET, revision=None)]
+    with patch.object(
+        JungHomeDataUpdateCoordinator, "_fetch_version_from_api", _version
+    ):
+        async with _running(hass, verbose) as entry:
+            assert find_device(hass, "hall_light").sw_version == "2.2.0.1"
+            assert find_device(hass, "button_a").sw_version == "2.2.0.1"
+            assert find_device(hass, "boiler").sw_version == "2.1.3 (2840)"
+            hub = find_device(hass, gateway_device_id(entry))
+            assert hub.sw_version == "2.1.3 (2840)"
+
+
+async def test_revisions_read_after_the_pages_exist_reach_them(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Properties arriving after registration update the registry in place.
+
+    Setup found no endpoint, so the pages were registered without a revision;
+    the periodic retry reads the list and the rows follow — and a socket whose
+    own re-read reports a new revision (updated in the app) follows too.
+    """
+    async with _running(hass, None) as entry:
+        coordinator = entry.runtime_data
+        assert find_device(hass, "button_a").sw_version is None
+        verbose = [*_node_of_two(), _verbose(SOCKET, revision=(2, 2, 0, 1))]
+        with patch.object(
+            coordinator,
+            "_fetch_devices_verbose_from_api",
+            AsyncMock(return_value=verbose),
+        ):
+            await _tick(hass, freezer)
+        assert find_device(hass, "button_a").sw_version == "2.2.0.1"
+        assert find_device(hass, "boiler").sw_version == "2.2.0.1"
+
+        single = AsyncMock(return_value=_verbose(SOCKET, revision=(2, 2, 0, 3)))
+        with patch.object(coordinator, "_fetch_device_verbose_from_api", single):
+            await _tick(hass, freezer)
+        assert find_device(hass, "boiler").sw_version == "2.2.0.3"
+        # A counter-only change writes nothing to the registry.
+        single.return_value = _verbose(SOCKET, energy=1, revision=(2, 2, 0, 3))
+        with (
+            patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+            patch.object(coordinator, "_apply_device_info") as apply,
+        ):
+            await _tick(hass, freezer)
+        apply.assert_not_called()
+        assert coordinator.device_properties[SOCKET].energy_wh == 1.0

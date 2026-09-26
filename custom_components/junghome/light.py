@@ -19,19 +19,27 @@ _LOGGER = logging.getLogger(__name__)
 # Commands are cheap async WebSocket sends; don't serialise them.
 PARALLEL_UPDATES = 0
 
-# Colour-temperature range. This is the GATEWAY's limit, not a guess: the
-# middleware hard-codes 2000-6000 K for every tunable-white write — all three
-# ColorTemperature state classes declare `range: {min: 2000, max: 6000}` and
-# `publishValue` clamps to it (current firmware, disk_dump sdc2
-# `middleware/dist/models/device_states/ColorTemperatureState.js:94-104`; the
-# older build threw "new value is out of range" instead,
-# `btmesh_set_datapoint_service.js:51-53`). A wider ceiling here (this used to
-# say 6500) only offered users 500 K of slider the device can never reach: the
-# gateway silently capped the write at 6000 while the entity optimistically
-# displayed the requested value — and since HA never validates a requested
-# `color_temp_kelvin` against this range, writes are clamped to it as well
-# (`_clamp_kelvin`). (The `/types/datapoints` catalog advertises 2000-10000,
-# but the firmware enforces 2000-6000 — trust the enforcement.)
+# Colour-temperature range. The gateway clamps every tunable-white write to
+# the `color_temperature` state's `profile.range`
+# (`middleware/dist/models/device_states/ColorTemperatureState.js:94-103`, current
+# firmware sdb2), which starts at these 2000-6000 K (`:60`) and becomes the
+# node's own Light CTL Temperature Range once the middleware has read it
+# (`services/device_state_service.js:664-687`). The light reads that
+# effective window from the verbose device endpoint (`DeviceProperties.
+# color_temp_range`, `models.color_temp_range`) and uses these defaults only
+# until — or unless — it is known: firmware without the endpoint, a failed
+# read, a range that is not plausible, or a read taken before the gateway had
+# read the node's range after a boot (still the default profile next to an
+# unread range state — pending, and re-read by the coordinator's periodic
+# properties refresh until known). The range is looked up on every state
+# write, so one learned after the entity exists reaches it on that refresh's
+# listener dispatch. The defaults are the gateway's own
+# starting range — what it clamps to until it has read the node's — and the
+# range of every tunable-white light in the 2026-09-16 probe. (The
+# `/types/datapoints` catalog advertises 2000-10000; it is a descriptor, not
+# the enforcement.) HA does not validate a requested `color_temp_kelvin`
+# against the entity's range, so writes are clamped here too (`_clamp_kelvin`)
+# — the gateway would clamp them silently and confirm the clamped value.
 DEFAULT_MIN_KELVIN = 2000
 DEFAULT_MAX_KELVIN = 6000
 
@@ -132,26 +140,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             if self._has_brightness
             else None
         )
-        # The module defaults are authoritative. `coordinator.color_temp_range_for
-        # _device` can parse a per-group range out of the `groups` broadcast, but
-        # nothing is wired to it: no captured firmware sends a colour-temperature
-        # field on groups at all (see that method's docstring), so consuming it
-        # would be pure speculation. Two things have to be settled before it can
-        # drive an entity, and neither is answerable without a real capture:
-        #
-        #  - Whether the gateway clamps writes to the *group* range the way it
-        #    clamps them to 2000-6000 K. Both reads and writes here clamp to
-        #    `_clamp_kelvin` (Home Assistant does not validate `color_temp_kelvin`
-        #    against the declared range — the service schema is only
-        #    `cv.positive_int`), so a narrower range would be enforced on our
-        #    side before the value reaches the hardware; whether that matches
-        #    what the device would have done is the open question.
-        #  - A group range is a *group* property. Applying it per-fixture is only
-        #    right if every fixture in the group shares it.
-        self._min_kelvin, self._max_kelvin = DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN
-        if self._has_color_temp:
-            self._attr_min_color_temp_kelvin = self._min_kelvin
-            self._attr_max_color_temp_kelvin = self._max_kelvin
+        # The Kelvin window is NOT frozen here: it is read live from the
+        # coordinator's device properties (`_kelvin_range`), because the verbose
+        # read that carries it can land after this entity exists (a light added
+        # at runtime, a setup-time read that failed and is retried). The
+        # properties refresh dispatches the listeners, and the write that
+        # follows publishes the new min/max (HA updates the registry's
+        # capabilities with it).
         self._color_temp: int | None = (
             self._get_color_temp_from_datapoint(self._color_temp_datapoint)
             if self._has_color_temp
@@ -186,6 +181,23 @@ class JungHomeLight(JungHomeEntity, LightEntity):
     def color_temp_kelvin(self) -> int | None:
         """Return the color temperature in Kelvin (device-native)."""
         return self._color_temp
+
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        """Return the warmest colour temperature the gateway will set."""
+        return self._kelvin_range()[0]
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        """Return the coldest colour temperature the gateway will set."""
+        return self._kelvin_range()[1]
+
+    def _kelvin_range(self) -> tuple[int, int]:
+        """Return the device's own Kelvin window if known, else the default."""
+        props = self.coordinator.device_properties_for(self._device)
+        if props is not None and props.color_temp_range is not None:
+            return props.color_temp_range
+        return DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -306,12 +318,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
 
         One clamp for both directions: an out-of-range gateway *read* must not
         violate the declared min/max contract, and an out-of-range *write* must
-        not be sent as-is — the gateway silently clamps it to 2000-6000 K (see
-        `DEFAULT_MAX_KELVIN`) and confirms the clamped value, so sending the
-        raw request only meant the entity briefly showed a value above its own
-        `max_color_temp_kelvin`.
+        not be sent as-is — the gateway silently clamps it to the device's
+        window (see `DEFAULT_MAX_KELVIN`) and confirms the clamped value, so
+        sending the raw request only meant the entity briefly showed a value
+        outside its own `min/max_color_temp_kelvin`.
         """
-        return max(self._min_kelvin, min(self._max_kelvin, kelvin))
+        low, high = self._kelvin_range()
+        return max(low, min(high, kelvin))
 
     async def _set_brightness(self, brightness: int) -> None:
         """Set the brightness of the light."""

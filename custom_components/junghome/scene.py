@@ -82,7 +82,7 @@ async def async_setup_entry(
 
         Unlike the device platforms (which prune whole devices in __init__),
         scenes have no backing device, so they are added and removed here as the
-        gateway's ``scenes`` / ``scenes-deleted`` broadcasts change the list.
+        gateway's full-list ``scenes`` broadcasts change the list.
         """
         if entry_unloading(entry):
             return

@@ -1,6 +1,7 @@
 """Switch / socket platform tests for Jung Home."""
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -28,6 +29,28 @@ async def test_switch_and_socket_commands(
             "switch", "turn_off", {"entity_id": entity}, blocking=True
         )
     assert init_integration.runtime_data.websocket.send_str.called
+
+
+async def test_status_led_icon_follows_its_state(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The status LED's icon comes from icons.json via its translation key.
+
+    Lit by default, ``mdi:led-off`` while off — the frontend resolves it from
+    the entity's ``translation_key``, so the key and the file must agree.
+    """
+    entry = er.async_get(hass).async_get("switch.button_a_status_led")
+    assert entry is not None
+    assert entry.translation_key == "status_led"
+    icons = json.loads(
+        (
+            Path(__file__).parents[1] / "custom_components/junghome/icons.json"
+        ).read_text()
+    )
+    assert icons["entity"]["switch"][entry.translation_key] == {
+        "default": "mdi:led-on",
+        "state": {"off": "mdi:led-off"},
+    }
 
 
 async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:
@@ -285,7 +308,10 @@ async def test_push_restores_availability_of_other_devices_entities(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     assert hass.states.get("switch.boiler").state == "unavailable"
-    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        == "unavailable"
+    )
 
     # A push for the LIGHT (a different device) arrives and proves the gateway
     # alive again.
@@ -298,7 +324,10 @@ async def test_push_restores_availability_of_other_devices_entities(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.boiler").state != "unavailable"
-    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        != "unavailable"
+    )
 
 
 async def test_the_gateway_echo_still_updates_the_socket(
@@ -359,7 +388,10 @@ async def test_push_markers_do_not_survive_their_dispatch(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     assert hass.states.get("switch.boiler").state == "unavailable"
-    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        == "unavailable"
+    )
 
 
 async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
@@ -403,7 +435,7 @@ async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
                 "type": "quantity",
                 "values": [
                     {"key": "quantity", "value": "42.0"},
-                    {"key": "quantity_label", "value": "Power "},
+                    {"key": "quantity_label", "value": "Present Device Input Power "},
                     {"key": "quantity_unit", "value": "W"},
                 ],
             },

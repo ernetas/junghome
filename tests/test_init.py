@@ -7,6 +7,8 @@ import copy
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,7 +16,7 @@ import aiohttp
 import attr
 import pytest
 from homeassistant.components.cover import CoverEntityFeature
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import (
     CONF_HOST,
     CONF_TOKEN,
@@ -27,8 +29,11 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_component import DATA_INSTANCES
+from homeassistant.helpers.update_coordinator import REQUEST_REFRESH_DEFAULT_COOLDOWN
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_time_changed,
     flush_store,
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
@@ -51,11 +56,12 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import (
+    ISSUE_DUPLICATE_LABELS,
     ISSUE_PUSH_FAILURE,
     ISSUE_TLS_MISMATCH,
     NODE_IDENTITY_REFETCH_INTERVAL,
     JungHomeDataUpdateCoordinator,
-    _parse_color_temp_range,
+    entry_derived_issue_ids,
 )
 from custom_components.junghome.diagnostics import (
     _scrub,
@@ -86,9 +92,8 @@ async def test_all_entity_types_created(hass: HomeAssistant, init_integration) -
     assert hass.states.get("light.hall_light") is not None
     assert hass.states.get("light.strip").state == "on"
     assert hass.states.get("switch.boiler").state == "on"
-    assert hass.states.get("sensor.boiler_power").state == "5.0"
-    # Unknown unit ("?") -> unitless MEASUREMENT sensor (no unit) -> value floated.
-    assert hass.states.get("sensor.boiler_status").state == "42.0"
+    assert hass.states.get("sensor.boiler_present_device_input_power").state == "5.0"
+    assert hass.states.get("sensor.boiler_active_power_loadside").state == "42.0"
     assert hass.states.get("switch.button_a_status_led") is not None
     assert hass.states.get("event.button_a_up") is not None
     assert hass.states.get("event.button_a_down") is not None
@@ -640,6 +645,28 @@ async def test_host_change_triggers_reload(
     reload.assert_called_once_with(entry.entry_id)
 
 
+async def test_hub_configuration_url_follows_the_host(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The hub links the gateway's web page, and a moved host re-points it.
+
+    A reconfigure or an adopted discovery rewrites the stored host, which
+    reloads the entry; setup registers the hub again from the new host.
+    """
+    entry = init_integration
+    hub = find_device(hass, gateway_device_id(entry))
+    assert hub is not None
+    assert hub.configuration_url == "https://1.2.3.4/"
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_HOST: "9.9.9.9"}
+    )
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    hub = find_device(hass, gateway_device_id(entry))
+    assert hub is not None
+    assert hub.configuration_url == "https://9.9.9.9/"
+
+
 async def test_token_only_change_reloads_entry(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -919,7 +946,7 @@ async def test_entity_availability_tracks_connection(
         "switch.button_a_status_led",
         "event.button_a_up",
     )
-    read_only = ("sensor.boiler_power",)
+    read_only = ("sensor.boiler_present_device_input_power",)
 
     def states(entities: tuple[str, ...]) -> set[str]:
         return {
@@ -1348,9 +1375,8 @@ async def test_area_for_device_tolerates_malformed_gateway_json(
 ) -> None:
     """Malformed groups/parents must not raise out of the _assign_areas listener.
 
-    Same hardening contract as ``color_temp_range_for_device``: an unhashable
-    group id or parent entry (a list, a dict) raised ``TypeError`` from dict
-    construction/lookup inside a coordinator listener. HA contains a raising
+    An unhashable group id or parent entry (a list, a dict) raised
+    ``TypeError`` from dict construction/lookup inside a coordinator listener. HA contains a raising
     listener (each callback runs in its own try/except; the rest still
     dispatch), but that logs a full traceback for merely-malformed gateway
     data on every refresh, and area assignment silently stops for the device.
@@ -1372,158 +1398,19 @@ async def test_area_for_device_tolerates_malformed_gateway_json(
     assert coordinator.area_for_device({"id": "d", "parent_groups": ["g2"]}) is None
 
 
-async def test_color_temp_range_for_device_reads_group_metadata(
-    hass: HomeAssistant,
-) -> None:
-    """color_temp_range_for_device resolves the group's advertised Kelvin range."""
-    coordinator = bare_coordinator(hass)
-    device = {"id": "d", "parent_groups": ["g1"]}
-    # Both plausible encodings are accepted, and values may be strings.
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 6500}}
-    ]
-    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
-    coordinator.groups = [{"id": "g1", "color_temperature_range": ["2700", "6500"]}]
-    assert coordinator.color_temp_range_for_device(device) == (2700, 6500)
-    # No parent groups / an id that doesn't resolve / a group without a range.
-    assert coordinator.color_temp_range_for_device({"id": "d"}) is None
-    assert (
-        coordinator.color_temp_range_for_device({"id": "d", "parent_groups": ["gX"]})
-        is None
-    )
-    coordinator.groups = [{"id": "g1", "name": "Living room"}]
-    assert coordinator.color_temp_range_for_device(device) is None
-    # The first parent group advertising a usable range wins.
-    coordinator.groups = [
-        {"id": "g0", "name": "no range here"},
-        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 4000}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g0", "g1"]}
-    ) == (2200, 4000)
-
-
-def test_parse_color_temp_range_rejects_bad_payloads() -> None:
-    """The range parser only trusts a well-formed, plausible pair of numbers."""
-    assert _parse_color_temp_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
-    assert _parse_color_temp_range([2700, 6500]) == (2700, 6500)
-    for raw in (
-        None,
-        "2700-6500",
-        42,
-        {},  # no keys at all
-        {"min": 2700},  # half a range
-        {"min": "warm", "max": "cool"},  # non-numeric
-        {"min": None, "max": 6500},
-        {"min": {"nested": 1}, "max": 6500},  # not a scalar
-        {"min": True, "max": 6500},  # bool is an int subclass, but not a Kelvin
-        {"min": 6500, "max": 2700},  # reversed
-        {"min": 4000, "max": 4000},  # zero-width
-        {"min": 10, "max": 6500},  # implausibly low
-        {"min": 2700, "max": 999999},  # implausibly high
-        {"min": float("nan"), "max": float("nan")},  # json.loads accepts NaN
-        {"min": 2700, "max": float("inf")},  # ...and Infinity
-        [2700],  # wrong arity
-        [2000, 4000, 6500],
-    ):
-        assert _parse_color_temp_range(raw) is None, raw
-
-
-def test_parse_color_temp_range_survives_unrepresentable_numbers() -> None:
-    """A huge JSON integer is rejected, not raised on.
-
-    `json.loads` parses integer literals at arbitrary precision, so a frame can
-    hand us an `int` that `float()` cannot represent — which raises
-    `OverflowError`, not `ValueError`. This escaped the parser and propagated out
-    of `JungHomeLight.__init__`, so a single malformed frame removed every light
-    entity while the config entry still reported itself loaded.
-    """
-    huge = json.loads("9" * 400)  # an int, not a float
-    assert isinstance(huge, int)
-    with pytest.raises(OverflowError):
-        float(huge)
-    for raw in (
-        {"min": 2700, "max": huge},
-        {"min": huge, "max": 6500},
-        [huge, 6500],
-        [2700, huge],
-        {"min": -huge, "max": huge},
-    ):
-        assert _parse_color_temp_range(raw) is None, raw
-    # A huge *string* is representable (it becomes inf) and is rejected by the
-    # finiteness guard instead.
-    assert _parse_color_temp_range({"min": 2700, "max": "9" * 400}) is None
-
-
-def test_color_temp_range_for_device_survives_malformed_groups(
-    hass: HomeAssistant,
-) -> None:
-    """Non-scalar ids and a non-list parent_groups are rejected, not raised on.
-
-    Both would otherwise raise `TypeError` out of a constructor: an unhashable
-    id blows up the lookup dict, and a non-iterable `parent_groups` blows up the
-    loop.
-    """
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
-    )
-    good = {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}
-    coordinator.groups = [good]
-    for device in (
-        {"id": "d", "parent_groups": 5},  # not iterable
-        {"id": "d", "parent_groups": "g1"},  # a bare string, not a list
-        {"id": "d", "parent_groups": [{"id": "g1"}]},  # unhashable member
-        {"id": "d", "parent_groups": [["g1"]]},
-        {"id": "d", "parent_groups": [None]},
-    ):
-        assert coordinator.color_temp_range_for_device(device) is None, device
-    # Unhashable / malformed group entries are skipped rather than raising.
-    coordinator.groups = [{"id": ["g1"]}, "not a dict", None, good]  # type: ignore[list-item]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1"]}
-    ) == (2700, 4000)
-
-
-def test_color_temp_range_for_device_first_group_wins(hass: HomeAssistant) -> None:
-    """When two parent groups disagree, the first in `parent_groups` wins.
-
-    Order-dependent by construction, which is only tolerable because nothing
-    consumes the result yet. Pinned so a future caller finds the behaviour
-    documented rather than discovering it.
-    """
-    coordinator = JungHomeDataUpdateCoordinator(
-        hass, {"host": "h", "token": "t"}, MockConfigEntry(domain=DOMAIN)
-    )
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
-        {"id": "g2", "color_temperature_range": {"min": 2200, "max": 6500}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1", "g2"]}
-    ) == (2700, 4000)
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g2", "g1"]}
-    ) == (2200, 6500)
-    # Duplicate ids resolve to the first occurrence, matching the docstring.
-    coordinator.groups = [
-        {"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}},
-        {"id": "g1", "color_temperature_range": {"min": 2200, "max": 6500}},
-    ]
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d", "parent_groups": ["g1"]}
-    ) == (2700, 4000)
-
-
 async def test_async_fetch_groups_is_best_effort(hass: HomeAssistant) -> None:
-    """A gateway-side groups failure leaves groups empty and never raises."""
+    """A gateway-side groups failure leaves groups empty and never raises.
+
+    Unreachable, slow, or a body that is not JSON (``response.json()`` raises
+    JSONDecodeError, a ValueError) — each is the gateway's failure.
+    """
     coordinator = bare_coordinator(hass)
-    with patch.object(
-        coordinator,
-        "_fetch_groups_from_api",
-        AsyncMock(side_effect=aiohttp.ClientError),
-    ):
-        await coordinator.async_fetch_groups()
-    assert coordinator.groups == []
+    for err in (aiohttp.ClientError(), TimeoutError(), ValueError("not json")):
+        with patch.object(
+            coordinator, "_fetch_groups_from_api", AsyncMock(side_effect=err)
+        ):
+            await coordinator.async_fetch_groups()
+        assert coordinator.groups == []
     with patch.object(
         coordinator,
         "_fetch_groups_from_api",
@@ -2279,7 +2166,7 @@ def test_scrub_masks_secrets_but_ignores_tiny_ones() -> None:
     deliberately not swept.
     """
     token = "eyJhbGciOiJIUzI1NiJ9.secret-token-value"
-    host = "junghome-0022d1059602.local"
+    host = "junghome-02005ec0ffee.local"
     secrets = _secrets(
         SimpleNamespace(data={CONF_TOKEN: token, CONF_HOST: host})  # type: ignore[arg-type]
     )
@@ -2414,6 +2301,244 @@ def test_duplicate_slugs_reports_only_collisions() -> None:
     assert duplicate_slugs([]) == {}
 
 
+def _collision_entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _colliding_pairs() -> list[dict]:
+    """Two colliding groups, the one sorting last listed first (and within it)."""
+    devices = copy.deepcopy(DEVICES)[:4]
+    devices[0]["label"] = "lamp_1"
+    devices[1]["label"] = "Lamp 1"
+    devices[2]["label"] = "Hall-Light"
+    devices[3]["label"] = "Hall Light"
+    return devices
+
+
+async def _adopt(
+    hass: HomeAssistant, entry: MockConfigEntry, fetch: AsyncMock, devices: list[dict]
+) -> None:
+    fetch.return_value = copy.deepcopy(devices)
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+
+async def test_colliding_labels_raise_a_repair_issue_until_renamed(
+    hass: HomeAssistant,
+) -> None:
+    """The losing device of a slug collision is invisible; the issue names it.
+
+    Raised by the capability watcher's pass over each adopted list, listing
+    every colliding group (sorted, whatever order the gateway lists them in);
+    withdrawn once two adoptions in a row carried no collision (the user
+    renamed one in the app) — a single one may be a partial poll.
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = _colliding_pairs()
+    fetch = AsyncMock(return_value=copy.deepcopy(devices))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == ISSUE_DUPLICATE_LABELS
+        assert issue.severity is ir.IssueSeverity.WARNING
+        assert not issue.is_fixable
+        assert issue.translation_placeholders == {
+            "host": "1.2.3.4",
+            "labels": '- "Hall Light", "Hall-Light"\n- "Lamp 1", "lamp_1"',
+        }
+
+        # One group renamed apart: the issue now lists the other only.
+        renamed = copy.deepcopy(devices)
+        renamed[0]["label"] = "Lamp 2"
+        await _adopt(hass, entry, fetch, renamed)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Hall Light", "Hall-Light"'
+        )
+
+        # Both resolved: kept on the first clean list, withdrawn on the second.
+        renamed[2]["label"] = "Hall Lamp"
+        await _adopt(hass, entry, fetch, renamed)
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await _adopt(hass, entry, fetch, renamed)
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+        # A collision again: raised on the first sighting.
+        await _adopt(hass, entry, fetch, devices)
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_a_partial_poll_keeps_an_ignored_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """A list missing one label of a pair must not withdraw the issue.
+
+    Withdrawing on it made the next full list re-create the issue:
+    re-announced, and un-ignored (a deleted issue loses its dismissal).
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = _colliding_pairs()
+    partial = [devices[0], devices[2]]
+    fetch = AsyncMock(return_value=copy.deepcopy(devices))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        # Partial polls, each followed by the full list: never two clean in a row.
+        for _ in range(2):
+            await _adopt(hass, entry, fetch, partial)
+            await _adopt(hass, entry, fetch, devices)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.dismissed_version is not None
+        # An empty list confirms nothing either way.
+        await _adopt(hass, entry, fetch, partial)
+        await _adopt(hass, entry, fetch, [])
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await _adopt(hass, entry, fetch, partial)
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_an_ignored_collision_issue_survives_a_reload_and_goes_with_a_disable(
+    hass: HomeAssistant,
+) -> None:
+    """Unload keeps the issue (and its dismissal); disabling the entry withdraws it."""
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    fetch = AsyncMock(side_effect=lambda *_: _colliding_pairs())
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.active
+        assert issue.dismissed_version is not None
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def _unload_during_a_poll(
+    hass: HomeAssistant, unload: Callable[[MockConfigEntry], Awaitable[object]]
+) -> tuple[MockConfigEntry, list[str]]:
+    """Set up clean, then unload while a poll that returns a collision is in flight.
+
+    The poll lands while ``stop()`` awaits the WebSocket teardown: the
+    capability watcher is removed only after the unload returns, so it still
+    sees that adoption. Returns the entry and the order things happened in.
+    """
+    entry = _collision_entry(hass)
+    clean = copy.deepcopy(DEVICES)[:4]
+    gate = asyncio.Event()
+    calls = 0
+    order: list[str] = []
+
+    async def fetch(
+        self: JungHomeDataUpdateCoordinator, host: str, token: str
+    ) -> list[dict]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return copy.deepcopy(clean)
+        await gate.wait()  # a poll in flight when the unload starts
+        order.append("poll")
+        return _colliding_pairs()
+
+    async def ws(self: JungHomeDataUpdateCoordinator) -> None:
+        try:
+            await _fake_run_websocket(self)
+        except asyncio.CancelledError:
+            # stop() is awaiting this task: the poll lands now.
+            gate.set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            order.append("ws closed")
+            raise
+
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(JungHomeDataUpdateCoordinator, "_run_websocket", ws),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        entry.async_create_background_task(
+            hass, entry.runtime_data.async_refresh(), name="poll in flight"
+        )
+        await asyncio.sleep(0)
+        await unload(entry)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert calls == 2
+    return entry, order
+
+
+async def test_a_poll_landing_during_unload_raises_no_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """The watcher writes nothing while the entry unloads (as the health read does)."""
+    entry, order = await _unload_during_a_poll(
+        hass, lambda e: hass.config_entries.async_unload(e.entry_id)
+    )
+    assert order == ["poll", "ws closed"]  # the poll did land mid-stop()
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_a_poll_landing_during_a_disable_leaves_no_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """A disabled entry re-derives nothing: no issue may be stranded on it."""
+    entry, order = await _unload_during_a_poll(
+        hass,
+        lambda e: hass.config_entries.async_set_disabled_by(
+            e.entry_id, ConfigEntryDisabler.USER
+        ),
+    )
+    assert order == ["poll", "ws closed"]
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_user_can_delete_a_device_the_gateway_dropped(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -2526,6 +2651,7 @@ async def test_device_registry_entries(
                 "manufacturer": device.manufacturer,
                 "model": device.model,
                 "sw_version": device.sw_version,
+                "configuration_url": device.configuration_url,
                 "area_id": device.area_id,
                 "entry_type": device.entry_type,
                 # Hardware identity from the project export; the fixture setup
@@ -2575,7 +2701,7 @@ async def test_gateway_software_version_reaches_every_device_page(
 
     End-to-end counterpart to the coordinator's unit tests: `device_info` is
     only read when an entity is first added, so the value has to be known
-    before the platforms run (setup fetches it) and `_apply_gateway_version`
+    before the platforms run (setup fetches it) and `_apply_device_info`
     has to carry it into rows already written.
     """
     entry = MockConfigEntry(
@@ -2830,6 +2956,29 @@ async def test_node_identity_reaches_the_device_registry(hass: HomeAssistant) ->
     await hass.async_block_till_done()
 
 
+async def test_device_model_is_the_product_behind_the_function(
+    hass: HomeAssistant,
+) -> None:
+    """``model`` names the node's product (``pid``); the function type is the fallback.
+
+    Every function of a node shares its product — the load and the rocker of
+    one 2-gang push button both read ``PushButton2gang`` — and a function the
+    export does not cover, or a product id the gateway's table does not name,
+    keeps the function type it always showed.
+    """
+    export = _project_export()
+    cdb = json.loads(base64.b64decode(export["network"]))
+    cdb["nodes"][1]["pid"] = "00FE"  # the socket's node: not in the table
+    export["network"] = base64.b64encode(json.dumps(cdb).encode()).decode()
+    entry = await _setup_with_export(hass, export)
+    assert _device(hass, "Hall Light").model == "PushButton2gang"
+    assert _device(hass, "Hall Button").model == "PushButton2gang"
+    assert _device(hass, "Desk Socket").model == "Socket"
+    assert _device(hass, "Orphan").model == "OnOff"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_node_identity_fetch_is_best_effort(hass: HomeAssistant) -> None:
     """No export (older firmware), a failed read, or garbage: setup still loads."""
     for export in (None, [], "not a dict", {"network": "@@@"}):
@@ -2857,6 +3006,31 @@ async def test_node_identity_fetch_is_best_effort(hass: HomeAssistant) -> None:
         pytest.raises(RuntimeError),
     ):
         await coordinator.async_fetch_node_identities()
+
+
+async def test_identical_export_re_read_writes_nothing(hass: HomeAssistant) -> None:
+    """A re-read that resolves the same identities leaves the registry alone.
+
+    ``apply_node_identities`` walks every device of the entry; the debounced
+    re-read (a function without an identity) usually learns nothing new.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    identities = coordinator.node_identities
+    assert identities
+    with (
+        patch.object(
+            coordinator,
+            "_fetch_project_export_from_api",
+            AsyncMock(return_value=_project_export()),
+        ),
+        patch.object(coordinator, "apply_node_identities") as apply,
+    ):
+        await coordinator.async_fetch_node_identities()
+    apply.assert_not_called()
+    assert coordinator.node_identities is identities
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 @pytest.mark.real_project_fetch
@@ -2951,6 +3125,73 @@ async def test_diagnostics_carry_identities_but_never_keys(
     await hass.async_block_till_done()
 
 
+async def test_device_diagnostics_carry_properties_and_the_anchor(
+    hass: HomeAssistant,
+) -> None:
+    """A device's report: its verbose properties, its node's revision, its anchor.
+
+    The button's own revision is null — the gateway fills it on the node's
+    main-element function only — so the resolved node revision differs from
+    the raw one, which is exactly what the report must show. The anchor
+    (function id, node MAC, element location) is an identity like
+    ``node_identity``, not a secret, and a function the export does not cover
+    has an id-only one.
+    """
+
+    def _verbose(device_id: str, revision: list[int] | None) -> dict:
+        return {
+            "device_id": device_id,
+            "states": {},
+            "property": {
+                "software_revision": {
+                    "state_type": "software_revision",
+                    "value": revision,
+                    "model": {"address": 0xCF, "category": "property"},
+                }
+            },
+        }
+
+    verbose = [_verbose(HALL_LIGHT_ID, [2, 2, 0, 2]), _verbose(HALL_BUTTON_ID, None)]
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_verbose_from_api",
+        AsyncMock(return_value=verbose),
+    ):
+        entry = await _setup_with_export(hass, _project_export())
+    button = _device(hass, "Hall Button")
+    assert button.sw_version == "2.2.0.2"
+    device_diag = await async_get_device_diagnostics(hass, entry, button)
+    assert device_diag["device_properties"] == {
+        "has_energy": False,
+        "energy_wh": None,
+        "software_revision": None,
+        "reachable": None,
+        "color_temp_range": None,
+        "color_temp_range_pending": False,
+        "node_address": 0xCF,
+    }
+    assert device_diag["node_software_revision"] == (2, 2, 0, 2)
+    assert device_diag["function_anchor"] == {
+        "id": HALL_BUTTON_ID,
+        "mac": MAC_A,
+        "location": 0x40,
+    }
+
+    orphan_diag = await async_get_device_diagnostics(
+        hass, entry, _device(hass, "Orphan")
+    )
+    assert orphan_diag["device_properties"] is None
+    assert orphan_diag["node_software_revision"] is None
+    assert orphan_diag["function_anchor"] == {
+        "id": "idorphan",
+        "mac": None,
+        "location": None,
+    }
+    assert "1.2.3.4" not in json.dumps(device_diag, default=str)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_unidentified_function_triggers_a_debounced_refetch(
     hass: HomeAssistant,
 ) -> None:
@@ -2964,6 +3205,7 @@ async def test_unidentified_function_triggers_a_debounced_refetch(
     entry = await _setup_with_export(hass, export=None)
     coordinator = entry.runtime_data
     assert _device(hass, "Hall Light").serial_number is None
+    assert _device(hass, "Hall Light").model == "OnOff"
     fetch = AsyncMock(return_value=_project_export())
     with patch.object(coordinator, "_fetch_project_export_from_api", fetch):
         broadcast = json.dumps({"type": "functions", "data": _identified_devices()})
@@ -2993,6 +3235,9 @@ async def test_unidentified_function_triggers_a_debounced_refetch(
         assert _device(hass, "Hall Button").serial_number == MAC_A
         assert _device(hass, "Hall Button").connections == set()
         assert _device(hass, "Orphan").serial_number is None
+        # The product names reach the pages registered with the fallback.
+        assert _device(hass, "Hall Light").model == "PushButton2gang"
+        assert _device(hass, "Orphan").model == "OnOff"
 
         # The orphan is still unidentified, but the clock was just reset.
         coordinator._dispatch_text_frame(broadcast)
@@ -3849,17 +4094,62 @@ async def test_a_refresh_outliving_the_removal_leaves_no_store(
 ) -> None:
     """A refresh still fetching when the entry is removed must not save afterwards.
 
-    The refresh a new device's first push requests is not an entry task, so
-    removal does not cancel it; its list always changes the anchors (a new
-    device), and saving from the stopped coordinator re-created the store.
+    The refresh a new device's first push requests is an entry task, but it
+    only asks the request debouncer: inside the cooldown of an earlier request
+    the refresh runs later from the debouncer's timer, as a plain
+    ``hass.async_create_task`` (helpers/debounce.py ``_on_debounce``) that
+    neither the unload nor the coordinator's shutdown cancels once it runs.
+    Its list always changes the anchors (a new device), and saving from the
+    stopped coordinator re-created the store after the removal deleted it —
+    ``follow_renames`` returns while closing.
     """
     entry = await _setup_with_export(hass, _project_export())
     coordinator = entry.runtime_data
     await flush_store(coordinator._anchor_store)
-    coordinator._debounced_refresh.async_cancel()
     gate = asyncio.Event()
     started = asyncio.Event()
-    with_new = [
+
+    async def slow_fetch(*_args: object) -> list[dict]:
+        started.set()
+        await gate.wait()
+        return _with_a_new_lamp()
+
+    with patch.object(
+        coordinator,
+        "_fetch_devices_from_api",
+        AsyncMock(return_value=_identified_devices()),
+    ):
+        # Any requested refresh: it runs at once and starts the cooldown.
+        await coordinator.async_request_refresh()
+    with patch.object(coordinator, "_fetch_devices_from_api", slow_fetch):
+        # A new device's first push, inside that cooldown: deferred to the
+        # debouncer's timer, so the entry task that asked ends at once.
+        coordinator._handle_datapoint_push(
+            {"type": "datapoint"},
+            {"id": "idnewlamp-001", "values": [{"key": "switch", "value": "1"}]},
+        )
+        await hass.async_block_till_done()
+        assert not started.is_set()
+        async_fire_time_changed(
+            hass, dt_util.utcnow() + timedelta(seconds=REQUEST_REFRESH_DEFAULT_COOLDOWN)
+        )
+        await asyncio.wait_for(started.wait(), 1)
+        with contextlib.ExitStack() as stack:
+            for stub in _gateway_stubs(None, _project_export()):
+                stack.enter_context(stub)
+            await hass.config_entries.async_remove(entry.entry_id)
+        assert _anchors_key(entry) not in hass_storage
+        gate.set()
+        await hass.async_block_till_done()
+    # The timer's refresh did run to the end: it adopted the new device's list.
+    assert any(d["id"] == "idnewlamp" for d in coordinator.data)
+    await flush_store(coordinator._anchor_store)
+    assert _anchors_key(entry) not in hass_storage
+
+
+def _with_a_new_lamp() -> list[dict]:
+    """The device list with a function the app has just added."""
+    return [
         *_identified_devices(),
         {
             "id": "idnewlamp",
@@ -3875,27 +4165,47 @@ async def test_a_refresh_outliving_the_removal_leaves_no_store(
         },
     ]
 
-    async def slow_fetch(*_args: object) -> list[dict]:
-        started.set()
-        await gate.wait()
-        return with_new
 
-    with patch.object(coordinator, "_fetch_devices_from_api", slow_fetch):
-        # A new device's first push, before any poll knows it.
-        coordinator._handle_datapoint_push(
-            {"type": "datapoint"},
-            {"id": "idnewlamp-001", "values": [{"key": "switch", "value": "1"}]},
-        )
-        await asyncio.wait_for(started.wait(), 1)
-        with contextlib.ExitStack() as stack:
-            for stub in _gateway_stubs(None, _project_export()):
-                stack.enter_context(stub)
-            await hass.config_entries.async_remove(entry.entry_id)
-        assert _anchors_key(entry) not in hass_storage
-        gate.set()
-        await hass.async_block_till_done()
-    await flush_store(coordinator._anchor_store)
-    assert _anchors_key(entry) not in hass_storage
+async def test_unmatched_push_refresh_is_cancelled_with_the_entry(
+    hass: HomeAssistant,
+) -> None:
+    """The discovery refresh an unknown push requests is an entry task.
+
+    A plain hass task outlived the unload and adopted its list into the
+    stopped coordinator.
+    """
+    entry = await _setup_with_export(hass, _project_export())
+    coordinator = entry.runtime_data
+    coordinator._debounced_refresh.async_cancel()  # no cooldown: runs at once
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_fetch(host: str, token: str) -> list[dict]:
+        started.set()
+        try:
+            await gate.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return _with_a_new_lamp()
+
+    coordinator._fetch_devices_from_api = slow_fetch
+    coordinator._handle_websocket_message(
+        {
+            "type": "datapoint",
+            "data": {
+                "id": "idnewlamp-001",
+                "values": [{"key": "switch", "value": "1"}],
+            },
+        }
+    )
+    await asyncio.wait_for(started.wait(), 1)
+    await hass.config_entries.async_unload(entry.entry_id)
+    was_cancelled = cancelled.is_set()
+    gate.set()  # let an escaped refresh finish instead of hanging teardown
+    await hass.async_block_till_done()
+    assert was_cancelled
 
 
 def _awning(label: str = "Patio Awning", function_id: str = "idawning") -> dict:
@@ -4490,7 +4800,9 @@ async def test_setup_survives_one_malformed_device_from_the_gateway(
         assert entry.state is ConfigEntryState.LOADED
         assert hass.states.get("light.strip").state == "on"
         assert hass.states.get("climate.living_room") is not None
-        assert hass.states.get("sensor.boiler_power").state == "5.0"
+        assert (
+            hass.states.get("sensor.boiler_present_device_input_power").state == "5.0"
+        )
         assert hass.states.get("event.button_a_up") is not None
         assert hass.states.get("binary_sensor.jung_home_gateway_connection") is not None
         assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -4512,30 +4824,33 @@ async def test_removing_an_entry_that_never_loaded_withdraws_its_issues(
 ) -> None:
     """A certificate mismatch keeps an entry in SETUP_RETRY; deleting it must not leave the issue behind.
 
-    ``stop()`` deletes the coordinator's issues on unload, but an entry that never loaded never ran it.
+    ``stop()`` deletes the certificate and push-failure issues on unload, but an
+    entry that never loaded never ran it (and the health and colliding-label
+    issues outlive an unload anyway).
     """
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"})
     entry.add_to_hass(hass)
     registry = ir.async_get(hass)
-    for key in (ISSUE_TLS_MISMATCH, ISSUE_PUSH_FAILURE):
+    issue_ids = [
+        f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
+        f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+        # The gateway-health and colliding-label issues.
+        *entry_derived_issue_ids(entry.entry_id),
+    ]
+    assert len(issue_ids) == 8
+    for issue_id in issue_ids:
         ir.async_create_issue(
             hass,
             DOMAIN,
-            f"{key}_{entry.entry_id}",
+            issue_id,
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
-            translation_key=key,
+            translation_key=issue_id.removesuffix(f"_{entry.entry_id}"),
         )
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
-    assert (
-        registry.async_get_issue(DOMAIN, f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}")
-        is None
-    )
-    assert (
-        registry.async_get_issue(DOMAIN, f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}")
-        is None
-    )
+    for issue_id in issue_ids:
+        assert registry.async_get_issue(DOMAIN, issue_id) is None, issue_id
 
 
 async def test_an_empty_export_re_read_keeps_the_known_identities(

@@ -25,7 +25,7 @@
           "host": "Hôte"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50)."
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, remplacez la valeur par défaut junghome.local, qui n'est résolue que sur certains réseaux, par l'adresse IP de la passerelle (par exemple 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Mot de passe de la clé réseau"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, la valeur par défaut junghome.local fonctionne sur de nombreux réseaux, ou utilisez l'adresse IP (par exemple 192.168.1.50).",
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home. Ce champ est rempli automatiquement lorsque la passerelle est découverte ; sinon, remplacez la valeur par défaut junghome.local, qui n'est résolue que sur certains réseaux, par l'adresse IP de la passerelle (par exemple 192.168.1.50).",
           "password": "Le mot de passe de la clé réseau de la passerelle Jung Home."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Hôte"
         },
         "data_description": {
-          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50 ou junghome.local)."
+          "host": "Adresse IP ou nom d'hôte de la passerelle Jung Home (par exemple 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Fréquence" },
       "temperature": { "name": "Température" },
       "illuminance": { "name": "Éclairement" },
+      "input_power": { "name": "Puissance d'entrée de l'appareil" },
+      "load_power": { "name": "Puissance active (côté charge)" },
+      "output_current": { "name": "Courant de sortie" },
+      "input_current": { "name": "Courant d'entrée" },
+      "output_voltage": { "name": "Tension de sortie" },
+      "ambient_temperature": { "name": "Température ambiante" },
       "present_illuminance": { "name": "Éclairement actuel" },
       "humidity": { "name": "Humidité" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "L'adresse répond, mais elle appartient à une autre passerelle Jung Home que cette entrée. Utilisez plutôt Reconfigurer pour changer l'adresse."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Appareils Jung Home aux noms en conflit",
+      "description": "Certains appareils de la passerelle Jung Home à l'adresse {host} portent des noms que Home Assistant ne peut pas distinguer, car ils ne diffèrent que par la casse, les espaces ou la ponctuation :\n\n{labels}\n\nUn seul appareil de chaque groupe obtient des entités dans Home Assistant. Renommez les autres dans l'application Jung Home. Ce problème disparaît de lui-même dès que les noms sont distincts."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Panne Bluetooth de la passerelle Jung Home",
+      "description": "La passerelle Jung Home à l'adresse {host} signale que sa puce Bluetooth n'a pas démarré ; elle ne peut donc pas joindre vos appareils Jung Home. Redémarrez la passerelle en la débranchant brièvement. Si le problème persiste, réinitialisez la passerelle et ajoutez-la de nouveau à votre projet dans l'application Jung Home. Ce problème disparaît dès que la passerelle a redémarré sans l'erreur."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "La passerelle Jung Home n'a plus de numéros de séquence",
+      "description": "La passerelle Jung Home à l'adresse {host} signale qu'elle a épuisé ses numéros de séquence Bluetooth Mesh ; elle ne peut donc peut-être plus envoyer de commandes à vos appareils Jung Home. Si les appareils ne répondent plus, réinitialisez la passerelle et ajoutez-la de nouveau à votre projet dans l'application Jung Home. Ce problème disparaît dès que la passerelle a redémarré sans l'erreur."
+    },
+    "gateway_time_sync_failure": {
+      "title": "L'horloge de la passerelle Jung Home n'est pas synchronisée",
+      "description": "La passerelle Jung Home à l'adresse {host} n'a pas pu synchroniser son horloge avec un serveur de temps depuis plus de 24 heures. Vérifiez que la passerelle a accès à Internet. Ce problème disparaît de lui-même dès que l'horloge est de nouveau synchronisée."
+    },
+    "gateway_project_missing": {
+      "title": "La passerelle Jung Home n'a pas de projet",
+      "description": "La passerelle Jung Home à l'adresse {host} signale qu'elle n'a pas reçu le projet de l'application Jung Home ; elle ne connaît donc pas vos appareils. Ouvrez l'application Jung Home sur le même réseau local que la passerelle pour qu'elle puisse de nouveau transférer le projet. Ce problème disparaît dès que la passerelle a reçu un nouveau projet."
+    },
+    "gateway_project_incomplete": {
+      "title": "Le projet de la passerelle Jung Home est incomplet",
+      "description": "La passerelle Jung Home à l'adresse {host} signale qu'il manque des informations sur les appareils dans son projet ; des noms d'appareils, des pièces et des scènes peuvent donc manquer ou être erronés. Synchronisez le projet manuellement dans l'application Jung Home. Ce problème disparaît dès que la passerelle a reçu un nouveau projet."
     }
   }
 }

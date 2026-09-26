@@ -16,12 +16,15 @@ is required.
 ## What works
 
 - **Lights** — on/off switch actuators (e.g. BT S1 B2 U) and dimmers
-  (DALI, etc.) with brightness and colour *temperature* (tunable white; the
-  gateway supports 2000–6000 K). Full RGB colour is not exposed by the
-  gateway.
-- **Sockets** — on/off plus their live meter readings (power, current, …)
-  and, on gateway firmware 2.1.x+, the socket's **cumulative energy counter**
-  as a `total_increasing` sensor — add it to the Energy Dashboard directly.
+  (DALI, etc.) with brightness and colour *temperature* (tunable white,
+  within the fixture's own range as the gateway reads it — 2000–6000 K until
+  that is known). Full RGB colour is not exposed by the gateway.
+- **Sockets** — on/off plus their live meter readings (input power,
+  load-side power, output current) and, on gateway firmware 2.1.x+, the
+  socket's **cumulative energy counter** as a `total_increasing` sensor —
+  add it to the Energy Dashboard directly. It is shown in kWh when first
+  added (a counter set up by an earlier version keeps showing Wh — pick kWh
+  in the entity's settings if you prefer it).
 - **Blinds / shutters (covers)** — open/close/stop, position, and slat tilt.
   Covers that expose slat tilt show up as blinds; position-only ones as roller
   shutters, with the matching icons and controls.
@@ -57,6 +60,9 @@ Feedback and issue reports are welcome — see
 [Filing a bug](#troubleshooting).
 
 ## Installation
+
+Requires **Home Assistant 2025.12.4 or newer** (the minimum declared in
+`hacs.json`, which HACS checks before downloading).
 
 ### HACS (recommended)
 
@@ -111,8 +117,11 @@ Either way you then pick **how to connect**:
   in the Jung Home app.
 
 The gateway address is filled in for you when it was discovered; otherwise it
-defaults to `junghome.local` (which works on many networks) and you can change
-it to your gateway's IP (e.g. `192.168.1.50`) if that name doesn't resolve.
+defaults to `junghome.local` (the name on the gateway's certificate). That
+name resolves only on networks whose DNS happens to serve it — the gateway
+itself announces `junghome-<mac>.local` (its MAC address without colons) —
+so change it to that name or to your gateway's IP (e.g. `192.168.1.50`) if it
+doesn't resolve.
 
 The issued token is stored in the config entry. Devices added or removed in
 the Jung Home app afterwards are picked up automatically. The entry is keyed
@@ -281,9 +290,10 @@ entity IDs — Home Assistant will flag them as unavailable until you edit them.
 ## Troubleshooting
 
 **The gateway isn't discovered / `junghome.local` doesn't resolve.**
-mDNS doesn't cross VLANs or most VPNs. Add the integration manually with
-**Add Integration → Jung Home** and type the gateway's IP (e.g.
-`192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
+`junghome.local` is not a name the gateway announces (it announces
+`junghome-<mac>.local`), and mDNS doesn't cross VLANs or most VPNs. Add the
+integration manually with **Add Integration → Jung Home** and type the
+gateway's IP (e.g. `192.168.1.50`). A fixed DHCP lease for the gateway is worth setting up.
 
 **Setup times out waiting for approval.**
 The gateway only holds the request open for about three minutes. Open the Jung
@@ -302,9 +312,19 @@ commands and button presses only travel over the WebSocket. It clears itself onc
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
-**Voltage, current and frequency sensors are missing.**
-They register disabled by default on new installs (they are noisy diagnostics);
-enable them from the device page. Existing installs keep them as they were.
+**A socket's current sensor is missing.**
+A metering socket's *Present Output Current* registers disabled by default
+when the socket is first added (it is a noisy diagnostic); enable it from the
+device page. A socket set up by an earlier version keeps it exactly as it was
+— enabled — since Home Assistant never re-disables a registered entity. The socket's output
+voltage and input current exist in the gateway but are hidden by the
+gateway itself, so they never show up at all.
+
+**Sensor names.** The gateway names each reading with its Bluetooth SIG
+property name (*Present Device Input Power*, *Active Power Loadside*,
+*Present Ambient Temperature*, *Present Illuminance*, …). English installs
+show exactly that; every other language gets a translated name. Only a
+label the integration does not know keeps its raw English name.
 
 **Devices show a serial number.**
 On gateway firmware 2.1.x+ (API 1.5.0) each device carries its node's
@@ -343,8 +363,10 @@ on connect and on every change — so at most about ten minutes at the default
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
 device is still installed, make sure it is powered and in range of the mesh;
-it is re-added automatically once the gateway reports it again, though any
-custom name, area or `entity_id` you had set is not restored. You can also
+it is re-added automatically once the gateway reports it again under the
+same name, and Home Assistant brings back the custom name, area and
+`entity_id` you had set (it keeps those for removed devices and entities), so
+only automations that fired while it was gone notice the gap. You can also
 remove a stale device yourself from its device page (**⋮ → Delete**); Home
 Assistant refuses this while the gateway is still reporting the device, since
 it would simply come straight back.
@@ -369,9 +391,11 @@ handshake presents it).
   gateway's function list carries a socket's instantaneous readings only; the
   cumulative Wh counter lives in the device's *properties*, which only the
   `/devices/?verbose=true` endpoint (marked deprecated/experimental in the
-  gateway's own API spec) exposes. It works on 2.1.3 and is re-read every
-  five minutes — the gateway's own cadence — but a future firmware could drop
-  it, in which case the sensor simply disappears and the Riemann-sum
+  gateway's own API spec) exposes. It works on 2.1.3. The gateway reads the
+  counter from the socket only about **once an hour**, so the sensor rises in
+  hourly steps (the integration re-reads the gateway every five minutes, so
+  a step shows up within minutes of the gateway's read). A future firmware
+  could drop the endpoint, in which case the sensor simply disappears and the Riemann-sum
   [Integration helper](https://www.home-assistant.io/integrations/integration/)
   on the power sensor is the fallback. Firmware without the endpoint shows no
   energy sensor at all.
@@ -381,12 +405,16 @@ handshake presents it).
   [Button automations](#button-automations-rocker-switches)).
 - The rocker **status-LED colour** can't be set from here (on/off only);
   colour is configured in the JUNG app or over BT-Mesh.
-- **Colour temperature tops out at 6000 K** — the gateway itself clamps every
-  tunable-white command to 2000–6000 K, regardless of the fixture.
+- **Colour temperature follows the gateway's range for each fixture** — the
+  gateway clamps every tunable-white command to the range it read from the
+  fixture (2000–6000 K until it has one). The integration reads that range
+  from the gateway's deprecated verbose device endpoint (gateway firmware
+  2.1.x+); where it cannot, the slider stays at 2000–6000 K.
 - The **puck** isn't supported/validated yet.
 - **Thermostat temperature moves in 0.5 °C steps, a few times an hour.** That
   is the device's reporting (the BT-Mesh temperature property it publishes
-  has 0.5 °C resolution and the gateway polls it every five minutes), not
+  has 0.5 °C resolution, and the gateway re-reads it only when it has heard
+  nothing for five minutes), not
   something the integration can refine.
 - **Two devices with the same label collide.** The gateway's device ids are
   derived from each node's mesh identity and location, so they change when a

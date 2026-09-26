@@ -49,7 +49,10 @@ linked to the data partition.)
 > per the 2026-09-15 audit a function id is `"id"` + `md5(node UUID +
 > hex(location))[:15]` and a scene id is `"id"` + hex(scene number), so an id
 > moves when a node is re-provisioned or its location/element mapping is
-> re-enumerated — which those updates did. The integration's stable-ID
+> re-enumerated, a label is moved to another element, or the hardware is
+> swapped. Across the one measured device-firmware update (app 2.1.0 → 2.2.0)
+> no surviving node's id changed; every id that moved belonged to a label moved
+> or hardware swapped in the app in that window. The integration's stable-ID
 > handling (`const.py`, `__init__.py`) keys on the label regardless.
 
 ## Service components (`/opt`)
@@ -145,8 +148,14 @@ their events there.
   plus the vendor property servers `0x05271011/12/13` and client `0x05271015`)
   and subscribes them to **every element group the devices publish to**
   (`:104-158,279-346`; the June log shows 221 desired / 202 current
-  subscriptions), **and** it polls every device state with a Get every 15 s
-  (`config.json` `btmesh.device_state_poll_interval_sec`). Because acked Sets
+  subscriptions), **and** it re-reads stale states with Gets: a sweep every
+  120 s (`device_state_service.js:41-46`) over only the states that are
+  dirty — untouched by any report or request for `dirtyAfterSeconds ×
+  2^retries`, at most 3600 s (`models/device-states.js:364-388`; 300 s for
+  most states) — one Get every 15 s (`config.json`
+  `btmesh.device_state_poll_interval_sec` is the pause between Gets, not a
+  per-state period; details in [bt-mesh-direct.md](bt-mesh-direct.md)).
+  Because acked Sets
   to JUNG devices are answered only by the group publication (see
   [bt-mesh-direct.md](bt-mesh-direct.md)), the subscription is also what
   confirms commands.

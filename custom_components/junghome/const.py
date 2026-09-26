@@ -1,9 +1,12 @@
 """Constants and firmware-stable identity helpers for Jung Home."""
 
+import ipaddress
 from typing import TYPE_CHECKING
 
+from homeassistant.const import CONF_HOST
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import slugify
+from yarl import URL
 
 from .models import Datapoint, Device
 
@@ -126,8 +129,9 @@ CONF_INVERTED_COVERS = "inverted_covers"
 #   more often than a single fetch can take turns the backstop into
 #   near-continuous load on a slow gateway.
 # - The ceiling (1 h) keeps the pruner's debounce meaningful: it counts
-#   STALE_DEVICE_PRUNE_MISSES *polls*, so the stale-device window scales
-#   linearly with this interval.
+#   STALE_DEVICE_PRUNE_MISSES *device-list adoptions* — one per poll, plus one
+#   per WS `functions` broadcast (connect, app edits) — so the stale-device
+#   window scales linearly with this interval at most.
 CONF_POLL_INTERVAL = "poll_interval"
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 30
@@ -344,7 +348,41 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     # legacy entry that predates serial discovery.
     if serial := entry.data.get(CONF_SERIAL):
         info["serial_number"] = str(serial)
+    # The gateway's own web page ("Visit" on the device page). Built from the
+    # entry's host on every setup, so a reconfigure or a discovery that moves
+    # the host — both reload the entry — re-points it.
+    if url := gateway_configuration_url(entry.data.get(CONF_HOST)):
+        info["configuration_url"] = url
     return info
+
+
+def gateway_configuration_url(host: object) -> str | None:
+    """Return ``https://<host>/``, the gateway's web page, or None.
+
+    nginx proxies every path but ``/ws`` to the api-server
+    (``etc/nginx/generate_nginx_sites.sh``, ``location /``), which serves its
+    webview at ``/`` (``api.route_webviews`` in ``const/config.json``, mounted
+    unconditionally in ``server.js``): the "JUNG HOME Gateway" landing page
+    with the software version. The host is used exactly as the integration
+    reaches the gateway — nginx answers only its own IP and mDNS name, which
+    are what an entry stores. A bare IPv6 address is bracketed; a host that
+    still does not make a URL with a host part yields None, because the
+    device registry raises on an invalid ``configuration_url`` and a cosmetic
+    link must not fail setup.
+    """
+    if not isinstance(host, str) or not (host := host.strip()):
+        return None
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            host = f"[{host}]"
+    except ValueError:
+        pass  # a hostname, or an address with a port: used as is
+    url = f"https://{host}/"
+    try:
+        valid = bool(URL(url).host)
+    except ValueError:
+        return None
+    return url if valid else None
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
@@ -410,8 +448,11 @@ def device_slug(device: Device) -> str:
     The device ``id`` is not random — it is ``"id"`` + the first 15 hex digits
     of ``md5(node UUID + element location)`` (``models.function_id_for``,
     verified against the firmware) — but it changes whenever the app
-    re-provisions a node or re-enumerates its elements, which is what the
-    observed app-driven firmware updates did. The user-facing label survives
+    re-provisions a node or re-enumerates its elements, when a label is moved
+    to another element, or when the hardware is swapped (the one measured
+    app-driven device-firmware update, 2.1.0 → 2.2.0, changed no id; the ids
+    that moved around it were labels moved or hardware swapped in the app).
+    The user-facing label survives
     all of that, so it is the identity anchor; it also reads well in entity
     ids, which a hash never would. Falls back to the volatile id only if the
     label is missing or unsluggable.

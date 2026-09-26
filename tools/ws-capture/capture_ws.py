@@ -9,20 +9,22 @@ you through a scripted set of button gestures so the recording is
 self-describing.
 
 Why it exists: the captures in `disk_dump/ws-capture*/` are raw frame dumps with
-**no timestamps**, so they cannot answer the two questions still open in this
-repo's backlog:
+**no timestamps**, so they could not answer how buttons and covers behave in
+time. With it, the button question is settled and one stays open:
 
-  * rockers — what edges does a real press/double/hold actually produce, on
-    which channel, and with what timing? (what the integration's hold
-    threshold and duplicate window rest on). The mechanism is now
-    established (docs/cross-repo-analysis.md §1.1): the gateway synthesises the
-    release, so a tap is a ~0.4 to 0.5 s pulse; device firmware 2.2.0.2 publishes
-    every event twice ~1 s apart, so a tap arrives as TWO pairs and a hold as
+  * buttons — what edges does a real press/double/hold produce, on which
+    channel, and with what timing? (what the integration's hold threshold and
+    duplicate window rest on). Settled: the mechanism is established
+    (docs/cross-repo-analysis.md §1.1 — the gateway synthesises the release,
+    so a tap is a ~0.4 to 0.5 s pulse; device firmware 2.2.0.2 publishes every
+    event twice ~1 s apart, so a tap arrives as TWO pairs and a rocker hold as
     ONE; the second copy lands on the SAME channel on a rocker half and on the
-    OTHER channel on a single-key element (the gateway toggles the side per
-    reception — not an "echo"). What a capture still adds: the numbers for
-    your firmware, and a single-key element has never been measured.
-  * covers — does a moving blind stream intermediate `level` values, or only
+    OTHER channel on a single-key element — the gateway toggles the side per
+    reception, not an "echo"), and it was verified on rocker and single-key
+    elements with this tool on 2026-09-16 (docs/gateway-websocket.md, "Live
+    verification"). A capture still adds the numbers for your firmware, e.g.
+    to tell whether a button reports each tap once or twice.
+  * covers (still open) — does a moving blind stream intermediate `level` values, or only
     report the endpoint? (blocks the cover travel-state backlog item). Drive
     the blind from its WALL BUTTON, not from Home Assistant and not from the
     app: a move commanded through the gateway's API has `level` report the

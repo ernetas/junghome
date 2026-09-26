@@ -406,6 +406,59 @@ async def test_hold_timer_landing_while_unavailable_fires_nothing(
     assert bus_events == [("up", "pressed"), ("up", "depressed")]
 
 
+async def test_press_abandoned_in_an_outage_is_no_longer_down(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """An abandoned press is forgotten by the device's tracker too.
+
+    Kept as "down", a tap on the other side 0.6-2.5 s after it — once the
+    socket is back — read as the firmware's copy of a hold and was dropped.
+    """
+    coordinator = rocker.coordinator
+    await rocker.edge(UP, "1")
+    coordinator.ws_connected = False
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    await rocker.edge(DOWN, "1", after=1.5)
+    await rocker.edge(DOWN, "0", after=TAP_PULSE)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("down", "pressed"),
+        ("down", "depressed"),
+        ("down", "click"),
+    ]
+
+
+async def test_outage_forgets_a_hold_copy_marker(
+    hass: HomeAssistant, rocker: _Rocker, bus_events
+) -> None:
+    """A copy taken before a drop does not route a release seen after it.
+
+    Both sides abandon their gesture: the release that follows on the copy's
+    side is an edge on that side (as after any abandoned press), not a
+    silent completion of the other side's abandoned hold.
+    """
+    coordinator = rocker.coordinator
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    await rocker.edge(DOWN, "1", after=0.4)  # the copy of the hold
+    coordinator.ws_connected = False
+    coordinator._notify_websocket_closed()
+    await hass.async_block_till_done()
+    coordinator.ws_connected = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    await rocker.edge(DOWN, "0", after=0.5)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "hold_start"),
+        ("down", "depressed"),
+    ]
+
+
 async def test_hold_end_is_owed_across_an_outage(
     hass: HomeAssistant, rocker: _Rocker, bus_events
 ) -> None:
@@ -460,7 +513,10 @@ async def test_event_unavailable_while_websocket_down(
     assert coordinator.last_update_success is True
     assert hass.states.get("event.button_a_up").state == "unavailable"
     # A pure state reader on the same REST signal is unaffected.
-    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        != "unavailable"
+    )
 
     # Reconnect (the real connect path refreshes, which re-dispatches).
     coordinator.ws_connected = True
@@ -600,13 +656,15 @@ async def test_duplicate_window_boundary_is_inclusive() -> None:
 
     The window covers the measured 1.03 s worst case with margin; the bound
     itself is inclusive (``<=``), so a press exactly on it is still the copy,
-    and the first instant past it is a genuine press.
+    and the first instant past it is a genuine press. The click is noted at
+    0.0 so the difference is exactly the window: ``(10.0 + 1.2) - 10.0`` is
+    ``1.1999999999999993`` in floating point, which a strict ``<`` passed too.
     """
     tracker = ButtonGestureTracker(suppress_duplicates=True)
-    tracker.note_click(10.0)
-    assert tracker.is_duplicate_press(10.0 + BUTTON_DUPLICATE_WINDOW)
-    tracker.note_click(10.0)
-    assert not tracker.is_duplicate_press(10.0 + BUTTON_DUPLICATE_WINDOW + 0.001)
+    tracker.note_click(0.0)
+    assert tracker.is_duplicate_press(BUTTON_DUPLICATE_WINDOW)
+    tracker.note_click(0.0)
+    assert not tracker.is_duplicate_press(BUTTON_DUPLICATE_WINDOW + 0.001)
 
 
 # --- The firmware's copy of a HOLD on a single-key element (2026-09-16) ------
@@ -666,6 +724,25 @@ async def test_hold_copy_marker_does_not_outlive_the_hold(
     bus_events.clear()
     await rocker.tap(first=DOWN, copy=DOWN)
     assert bus_events == [("down", "pressed"), ("down", "depressed"), ("down", "click")]
+
+
+async def test_hold_copy_marker_is_spent_by_its_release(
+    rocker: _Rocker, bus_events
+) -> None:
+    """The copy's release ends the hold once; a later stray release is an edge.
+
+    The gateway re-sends a value on a mode-only change, so a release with no
+    press can follow on the copy's side; it re-fires as that side's edge like
+    any other (``test_release_without_a_press_is_an_edge_only``) instead of
+    being routed to the finished hold again and swallowed.
+    """
+    await rocker.edge(UP, "1")
+    await rocker.advance(1.0)
+    await rocker.edge(DOWN, "1", after=0.4)  # the copy
+    await rocker.edge(DOWN, "0", after=1.15)  # the finger, copy's side
+    bus_events.clear()
+    await rocker.edge(DOWN, "0", after=0.5)
+    assert bus_events == [("down", "depressed")]
 
 
 async def test_hold_copy_release_after_the_hold_ended_is_nothing(
@@ -737,6 +814,30 @@ async def test_other_side_pressed_during_a_tap_is_a_genuine_press(
     ]
 
 
+async def test_other_side_tap_after_a_completed_tap_is_genuine(
+    rocker: _Rocker, bus_events
+) -> None:
+    """A released side is forgotten: a later other-side tap is not a hold copy.
+
+    The release that completes a click clears the device's "side down" record
+    (``note_up``). Kept, a tap on the other side landing 0.6-2.5 s after the
+    first PRESS — here 2.05 s, past the 1.2 s click window — read as the
+    firmware's copy of a hold on the released side and was dropped whole.
+    """
+    await rocker.edge(UP, "1")
+    await rocker.edge(UP, "0", after=0.45)
+    await rocker.edge(DOWN, "1", after=1.6)
+    await rocker.edge(DOWN, "0", after=TAP_PULSE)
+    assert bus_events == [
+        ("up", "pressed"),
+        ("up", "depressed"),
+        ("up", "click"),
+        ("down", "pressed"),
+        ("down", "depressed"),
+        ("down", "click"),
+    ]
+
+
 async def test_hold_copy_is_not_looked_for_with_suppression_off(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, bus_events
 ) -> None:
@@ -773,7 +874,7 @@ def test_hold_copy_target_window() -> None:
     ("revision", "clicks"),
     [
         ([2, 1, 4, 0], 2),  # pre-2.2.0: exempt, two pairs are two clicks
-        ([2, 2, 0, 2], 1),  # what every real button reports: the copy is dropped
+        ([2, 2, 0, 2], 1),  # current button firmware (where read): copy dropped
     ],
 )
 async def test_suppression_follows_the_button_firmware(
@@ -802,6 +903,53 @@ async def test_suppression_follows_the_button_firmware(
             },
         }
     ]
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_verbose_from_api",
+        AsyncMock(return_value=firmware),
+    ):
+        entry = await _setup_with_options(hass, {})
+    await _Rocker(hass, freezer, entry.runtime_data).tap()
+    assert (
+        bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * clicks
+    )
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("revision", "clicks"),
+    [([2, 1, 4, 0], 2), ([2, 2, 0, 2], 1)],
+)
+async def test_suppression_follows_the_firmware_of_the_buttons_node(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    bus_events,
+    revision: list[int],
+    clicks: int,
+) -> None:
+    """A button whose own revision is null takes its node's.
+
+    The gateway fills the node-wide revision only on the function at the
+    node's main element (18 of 20 buttons read ``null`` in the 2026-09-16
+    probe); every function carries the revision state at that element's
+    address, which is how the button finds its node's value.
+    """
+
+    def _function(device_id: str, value: list[int] | None) -> dict:
+        return {
+            "device_id": device_id,
+            "device_type": "PushButton",
+            "states": {},
+            "property": {
+                "software_revision": {
+                    "state_type": "software_revision",
+                    "value": value,
+                    "model": {"address": 562, "category": "property"},
+                }
+            },
+        }
+
+    firmware = [_function("idlight1", revision), _function("idrock1", None)]
     with patch.object(
         JungHomeDataUpdateCoordinator,
         "_fetch_devices_verbose_from_api",

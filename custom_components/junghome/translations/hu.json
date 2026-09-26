@@ -25,7 +25,7 @@
           "host": "Kiszolgáló"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50)."
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként cseréld le az alapértelmezett junghome.local értéket, amely csak egyes hálózatokon oldható fel, az átjáró IP-címére (például 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Hálózatikulcs-jelszó"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként az alapértelmezett junghome.local sok hálózaton működik, vagy használd az IP-címet (például 192.168.1.50).",
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve. Automatikusan kitöltésre kerül, amikor a rendszer megtalálja az átjárót; egyébként cseréld le az alapértelmezett junghome.local értéket, amely csak egyes hálózatokon oldható fel, az átjáró IP-címére (például 192.168.1.50).",
           "password": "A Jung Home átjáró hálózatikulcs-jelszava."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Kiszolgáló"
         },
         "data_description": {
-          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50 vagy junghome.local)."
+          "host": "A Jung Home átjáró IP-címe vagy gazdagépneve (például 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Frekvencia" },
       "temperature": { "name": "Hőmérséklet" },
       "illuminance": { "name": "Megvilágítás" },
+      "input_power": { "name": "Az eszköz bemeneti teljesítménye" },
+      "load_power": { "name": "Hatásos teljesítmény (terhelésoldal)" },
+      "output_current": { "name": "Kimeneti áramerősség" },
+      "input_current": { "name": "Bemeneti áramerősség" },
+      "output_voltage": { "name": "Kimeneti feszültség" },
+      "ambient_temperature": { "name": "Környezeti hőmérséklet" },
       "present_illuminance": { "name": "Aktuális megvilágítás" },
       "humidity": { "name": "Páratartalom" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "A cím válaszol, de egy másik Jung Home átjáróhoz tartozik, mint ez a bejegyzés. A cím módosításához használja az Újrakonfigurálás lehetőséget."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Ütköző nevű Jung Home eszközök",
+      "description": "A(z) {host} címen lévő Jung Home átjáró egyes eszközeinek olyan neve van, amelyeket a Home Assistant nem tud megkülönböztetni, mert csak kis- és nagybetűkben, szóközökben vagy írásjelekben térnek el:\n\n{labels}\n\nMinden csoportból csak egy eszköz kap entitásokat a Home Assistantban. Nevezd át a többit a Jung Home alkalmazásban. Ez a probléma magától megszűnik, amint a nevek eltérőek lesznek."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "A Jung Home átjáró Bluetooth-hibája",
+      "description": "A(z) {host} címen lévő Jung Home átjáró azt jelzi, hogy a Bluetooth-chipje nem indult el, így nem éri el a Jung Home eszközeidet. Indítsd újra az átjárót úgy, hogy rövid időre áramtalanítod. Ha a probléma továbbra is fennáll, állítsd vissza az átjárót, és add hozzá újra a projektedhez a Jung Home alkalmazásban. Ez a probléma megszűnik, amint az átjáró a hiba nélkül újraindult."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "A Jung Home átjáró kifogyott a sorszámokból",
+      "description": "A(z) {host} címen lévő Jung Home átjáró azt jelzi, hogy kifogyott a Bluetooth Mesh sorszámokból, így lehet, hogy már nem tud parancsokat küldeni a Jung Home eszközeidnek. Ha az eszközök nem reagálnak, állítsd vissza az átjárót, és add hozzá újra a projektedhez a Jung Home alkalmazásban. Ez a probléma megszűnik, amint az átjáró a hiba nélkül újraindult."
+    },
+    "gateway_time_sync_failure": {
+      "title": "A Jung Home átjáró órája nincs szinkronizálva",
+      "description": "A(z) {host} címen lévő Jung Home átjáró több mint 24 órája nem tudta szinkronizálni az óráját egy időszerverrel. Ellenőrizd, hogy az átjáró hozzáfér-e az internethez. Ez a probléma magától megszűnik, amint az óra ismét szinkronizálva van."
+    },
+    "gateway_project_missing": {
+      "title": "A Jung Home átjárónak nincs projektje",
+      "description": "A(z) {host} címen lévő Jung Home átjáró azt jelzi, hogy nem kapta meg a projektet a Jung Home alkalmazásból, így nem ismeri az eszközeidet. Nyisd meg a Jung Home alkalmazást ugyanazon a helyi hálózaton, amelyen az átjáró van, hogy újra feltölthesse a projektet. Ez a probléma megszűnik, amint az átjáró új projektet kapott."
+    },
+    "gateway_project_incomplete": {
+      "title": "A Jung Home átjáró projektje hiányos",
+      "description": "A(z) {host} címen lévő Jung Home átjáró azt jelzi, hogy a projektjéből hiányoznak az eszközadatok, így eszköznevek, helyiségek és jelenetek hiányozhatnak vagy hibásak lehetnek. Szinkronizáld a projektet kézzel a Jung Home alkalmazásban. Ez a probléma megszűnik, amint az átjáró új projektet kapott."
     }
   }
 }

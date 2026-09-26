@@ -130,7 +130,7 @@ async def test_scene_reresolves_id_after_firmware_change(
         {"type": "scenes", "data": [{"id": "old", "label": "Movie Night"}]}
     )
     await hass.async_block_till_done()
-    # Firmware update regenerates the scene id under the same label.
+    # The scene id changes under the same label (a new mesh scene number).
     coordinator._handle_websocket_message(
         {"type": "scenes", "data": [{"id": "new", "label": "Movie Night"}]}
     )
@@ -214,11 +214,21 @@ async def test_scenes_exist_without_the_websocket(
 
 
 @pytest.mark.real_scenes_fetch
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"status": 500},
+        {"exc": TimeoutError()},
+        # A truncated body: JSONDecodeError, a ValueError.
+        {"text": '[{"id": "id0001", "la'},
+    ],
+    ids=["http-error", "timeout", "not-json"],
+)
 async def test_scene_fetch_failure_is_not_fatal(
-    hass: HomeAssistant, aioclient_mock
+    hass: HomeAssistant, aioclient_mock, failure: dict
 ) -> None:
-    """A scene list is not worth failing setup over."""
-    aioclient_mock.get("https://1.2.3.4/api/junghome/scenes/", status=500)
+    """A scene list is not worth failing setup over, however the read fails."""
+    aioclient_mock.get("https://1.2.3.4/api/junghome/scenes/", **failure)
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="1.2.3.4",

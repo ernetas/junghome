@@ -48,14 +48,23 @@ In order:
 | `functions` | array | Full list of functions (sent on connect and on change). |
 | `datapoint` | object | A single datapoint changed (broadcast to all clients), **or** the reply to a client `datapoint` command. |
 | `scene` | object | A scene was recalled. |
-| `groups` / `groups-new` / `groups-deleted` | array | Full groups list / added / removed. |
-| `scenes` / `scenes-new` / `scenes-deleted` | array | Full scenes list / added / removed. |
+| `groups` / `groups-new` / `groups-deleted` | array | Full groups list (objects) / ids added / ids removed. |
+| `scenes` / `scenes-new` / `scenes-deleted` | array | Full scenes list (objects) / ids added / ids removed. |
 | `devices-new` / `devices-deleted` | array | Lower-level device ids added / removed. (A full `devices` list type exists in the server too, but its emit call is commented out on current firmware — only the deltas can arrive.) |
 | `config` | object | Configuration (currently not emitted). |
 
 The `*-new` / `*-deleted` variants are how the gateway signals that nodes,
 groups, or scenes were added or removed at runtime (e.g. provisioning a new
-device in the app).
+device in the app). **Their `data` is a list of id strings, never objects**
+— e.g. `{"type":"scenes-new","data":["id0003"]}` — computed by diffing the
+new list's ids against the cached one (`jung-scenes-service.js:165-170`,
+`jung-group-service.js:166-170`, `jung-device-service.js:287-291`; a device
+delta carries the middleware `device_id`). Each is sent only when non-empty,
+and a scene or group delta only ever **follows** the full list it was diffed
+from, in one burst: `scenes`, then `scenes-new`, then `scenes-deleted`
+(`websocket-server-service.js:356-388`; groups `:392-424`). A client that
+adopts the full list therefore gains nothing from the deltas. On connect only
+the full lists are sent (`:162-168`), no deltas.
 
 A pushed `datapoint` frame carries the updated datapoint object, e.g.:
 
@@ -215,8 +224,11 @@ Common `values` keys by device type:
 > middleware routes any present `temperature_ctrl_preset` value to the preset
 > publisher, which throws "does not set a valid preset" for anything but
 > `frost`/`eco`/`comfort` — including `"none"` (`ip_event_handler.js` +
-> `SetPointState.publishMode`); the retry loop then re-throws after 3 attempts
-> and the client sees only an uncorrelated `error:` frame. **Reads**: a preset
+> `SetPointState.publishMode`); the mode path wraps the error into a plain
+> string, which drops any HTTP status, so the retry loop runs all 3 attempts
+> 3 s apart and the client sees only a generic `error:` frame (`error
+> publish`, or the api-server's own 6 s timeout text — see "Errors" below),
+> after any reasonable client timeout. **Reads**: a preset
 > is a *derived* fact — `getRTRTemperatureMode` compares the target temperature
 > against the device's three configured thresholds and returns the matching
 > name or the **empty string** (`property_helper_methods.js`; its own JSDoc
@@ -321,10 +333,12 @@ service-wide `_prevButtonType`, so the two copies of one click land on
 0/1) the event byte carries the side, so both copies repeat the same channel
 — the "same channel, not alternating" verdict of the 2026-08-02 capture (a
 rocker) and the alternating pattern the sibling captured on key elements are
-both right, per element type. A *hold* on a single-key element has not been
-captured through the gateway; by the code its second event-6 copy lands on
-the other datapoint (a value change, so not suppressed), so expect a different
-shape there. Upstream report material: a one-line counter dedupe in
+both right, per element type. A *hold* on a single-key element is different:
+its second event-6 copy lands on the other datapoint (a value change, so not
+suppressed) while the first side is still down — captured live on 2026-09-16
+(1 of 4 holds, table below) and in the middleware log on 10 of 25 key-element
+holds after the device update (0 of 38 before; regression section below).
+Upstream report material: a one-line counter dedupe in
 `btmesh_property_service.js` would fix all of it.
 
 Three facts follow, and they set the design space for any gesture logic:
@@ -377,22 +391,53 @@ is still down, and the finger's release (event 4, `prevButtonType`) then
 lands there too. `event.py` treats a press on the other side of a device
 whose one side has been down for 0.6–2.5 s as that copy and completes the
 hold with the copy's release (`BUTTON_HOLD_COPY_AFTER` /
-`BUTTON_HOLD_COPY_WINDOW`). Why three of four holds carried no copy is
+`BUTTON_HOLD_COPY_WINDOW`). The gateway's own log shows the same shape on
+10 of 25 key-element holds after the device update (regression section
+below), so it is common, not a fluke. Why the other holds carried no copy is
 unknown (mesh loss, or the device re-publishing the *current* key state
 rather than the message — the simultaneous mesh capture in
 `docs/cross-repo-analysis.md` §5 would tell).
 
-**This is a regression, and the gateway's own logs prove it.** The gateway
-middleware logs every button state change, and the 2026-08-01 dump carries an
-archived support snapshot with logs from 2026-06-20 → 2026-07-28 (~900
-events, ~450 press bursts): **1.00 presses per burst** throughout — including
-the very button measured above, clean single pairs on every click. Between
-2026-07-29 and 2026-08-02 something changed it to 2.00. The gateway firmware
-did not change (the June and August dumps are byte-identical builds); the
-JUNG app went 2.1.0 → 2.2.0 in that window, and app 2.2.x updates *device*
-firmware (issue #66) — the double publication above is that device firmware's
-behaviour. Gesture logic must tolerate BOTH reporting styles: one pair per
-tap (pre-2.2.0.x device firmware) and two (current).
+**This is a regression, and the gateway's own log dates it.** The 2026-08-01
+dump carries an archived support snapshot of the middleware log
+(`sdb4/board_ctrl/snapshot/start_error/middleware.log*`, 2026-06-20 →
+2026-07-29, one middleware start on 06-20, gateway firmware unchanged
+throughout — the June and August dumps are byte-identical builds). The
+middleware logs every state *change*, including each button edge and each
+device's `software_revision`:
+
+- **The device firmware update is in the log.** All 53 functions' revisions
+  were read as v2.0.0.4 at the 06-20 start. One of them, a button, left the
+  project on 06-28 (`devices_service.js`: `found 53 devices` on 06-20 20:24,
+  `found 52 devices` on 06-28 11:38; the button's last line is 11:38:03).
+  All 52 still in the project then change to v2.2.0.x — 2.2.0.2 on all 23
+  buttons and most lights, 2.2.0.1 on seven on/off actuators and sockets —
+  in two waves: 16 functions on 2026-07-25 23:11 → 07-27 00:01, the rest on
+  2026-07-27 09:26–10:30. The timestamps are when the
+  gateway's hourly re-read (`SoftwareRevisionState.js`, `POLL_60MIN`) saw
+  the new value, so the update itself can precede them by up to ~1 h. App
+  2.2.x is what pushes device firmware (issue #66).
+- **Presses per burst double at that point, per button.** Counting `is
+  pushed: 1` lines per function, a burst ending at a > 2 s gap (the log has
+  1 s resolution) and each button split at its own first 2.2.x read:
+  **1.13 presses/burst before** (268 presses in 237 bursts, 06-22 → 07-27;
+  89 % single presses, the rest genuine multi-taps) and **2.53 after** (86
+  in 34, 07-26 → 07-28; not one single press). A 3 s split gives 1.18 →
+  2.97; the before/after contrast does not depend on it. Every button edge
+  in the log is a **single-key** event — its 900 edge lines carry only the
+  modes `pushed`/`held`/`released` (events 5/6/4,
+  `btmesh_property_service.js:212-221`), never the rocker modes
+  `pushed_up`/`pushed_down`/`held_*` (events 0–3) — so these figures date
+  the change on single-key elements; the rocker side rests on the
+  2026-08-02 and 2026-09-16 captures.
+- **The copied single-key hold is in the log too, and common.** A `held: 1`
+  on the other side of the same function within 2 s of the first, whose
+  release then lands on the copy's side (the 2026-09-16 shape): 10 of the 25
+  holds after the update, 0 of the 38 before.
+
+So the double publication above is the new device firmware's behaviour.
+Gesture logic must tolerate BOTH reporting styles: one pair per tap
+(device firmware before 2.2.0.x) and two (current).
 
 Note also that a rocker's press datapoints are **read-only**
 (`writeable: false`, `UserPermission.ReadOnly` in `PushedUpState.js`) — nothing
@@ -410,11 +455,64 @@ the device or the mesh, never from a client.
 
 ### Errors
 
-Any failure is returned as a `message` frame:
+Any failure is returned as a `message` frame, sent only to the socket that
+carried the command (`socket.send` in the handler's `catch`), and **without
+the command's `message_id`** — only the `datapoint` success reply echoes it:
 
 ```json
 { "type": "message", "data": "error: could not set datapoint (id...-001) value, ..." }
 ```
+
+Every datapoint set is answered by exactly one frame on its session: the
+`datapoint` reply or this error. A failed set's text is built in three layers
+(all v2.1.3, `sdb2/opt`):
+
+1. `api-server/dist/services/websocket-server-service.js:213-215` —
+   `"could not set datapoint (" + datapoint.id + ") value, " + err.message`,
+   prefixed `"error: "` by the catch at `:236-239`. The id is echoed verbatim
+   from the request — **this is the only correlation a rejection carries**.
+2. `api-server/dist/services/jung-function-service.js` `updateDatapointValues`
+   — `err.message` is `"JungFunctionService: Error during publish request: "`
+   + the middleware's reply `message`.
+3. `middleware/dist/handler/ip_event_handler.js:187-259` (the `Publish`
+   handler) — that `message`:
+
+| middleware `message` | status | cause | arrives |
+|---|---|---|---|
+| `Device is locked` | 423 | `enforced_output` is `active`/`locked`/`frozen`/`windalarm` (`device_state_service.js` `checkIfLocked`) | at once |
+| `RTR controlled datapoint` | 423 | a `switch` whose `SwitchOperationMode` is 1 (the `lockedReason`) | at once |
+| `Unprocessable Entity` | 422 | value outside the state's range/type (`models/device-states.js` `validate`) — value path only; the mode path drops the status and retries (last row) | at once |
+| `Conflict with newer request` | 409 | superseded by a newer set for the same datapoint (below) | at once |
+| `error publish` | — | anything else without a status: an unknown datapoint id (`getState` "no state found") at once; an invalid preset only after its three attempts 3 s apart, racing the next row | at once / ~6 s |
+| `Command with id '<hex>' timed out!` | — | the api-server's own bound on the middleware call (`adapter/mesh-middleware-connection.js` `_sendRequest`, `middleware.command_timeout_ms` = 6000) — any set the middleware has not answered by then, e.g. an unreachable node (each attempt waits out the 3 s mesh response timeout, then 3 s before the next) | at 6 s |
+
+So a full rejection reads e.g. `error: could not set datapoint
+(id5f09764942a70ce-001) value, JungFunctionService: Error during publish
+request: Device is locked`. (Errors that are not about a set carry no id:
+`invalid message format, could not find id` / `could not find type` /
+`message type is unknown`, the `not implemented yet` rejections, and a JSON
+parse error.)
+
+**Superseded sets (409).** Every Generic, Property and scene publish goes
+through one gateway-wide lock, `MutexID` in `middleware/dist/util/mutex.js`
+(`util/device_state_helper.js` `sendIntervalGenericClientSet`,
+`sendPropertySet`, `sendGenericPropertySet`, `sendSceneRecall`), keyed by the
+state id — which *is* the datapoint id (`device_state_service.js`
+`getState(state_id)`, called with the datapoint id) — or, for a scene
+recall, the scene id. The status LED's user message (`sendKeyStatus`,
+`device_state_helper.js:274-290`, from `StatusLedState.js:85`) takes no
+lock, so an LED set is never superseded and never gets a 409. The lock is
+global (one locked publish at a time);
+the key only matters for the waiting queue, which holds at most one request
+per id: when a set arrives while the lock is held and a set for the **same
+datapoint** is already *waiting*, the waiting one is rejected with `deferred
+request <id> was replaced by a newer request` (`mutex.js:55-60`) and the
+newer one takes its place. The set that is currently *publishing* is never
+superseded. The `Publish` handler does not retry that rejection and maps it
+to 409 (`ip_event_handler.js:217-219`), so the older command's client gets
+`... Conflict with newer request` straight away while the newer one proceeds
+and is confirmed normally. The newer request can come from any client (the
+app, another HA instance); the error goes only to the older one's socket.
 
 ## Notes for the integration
 
@@ -424,10 +522,26 @@ Any failure is returned as a `message` frame:
   instead of firing and forgetting, so a rejected command now surfaces as a
   real service error and the confirmed re-read value — not just an
   optimistic guess — lands before the awaiting service call returns. A
-  rejection itself is not correlatable (see "Errors" above), so it surfaces
-  as a timeout rather than the gateway's own error text.
-- The coordinator consumes the `scenes` / `scenes-new` / `scenes-deleted`
-  broadcasts to populate the scene platform (recall is REST-only), and the
+  rejection carries no `message_id` but names the datapoint (see "Errors"
+  above), and the coordinator correlates on that id alone, never on timing
+  (`_attribute_set_error`): it counts every set still owed an outcome frame
+  on the session — including sets that already timed out locally, whose
+  6 s api-server error comes after the integration's 5 s timeout — and fails
+  a command with the gateway's text (`command_rejected`) only when exactly
+  one set for that datapoint is outstanding. Two or more is ambiguous and
+  falls back to the timeout, with one exception: a 409 `Conflict with newer
+  request` while two or more of ours are outstanding means our set sent
+  just before the newest was the *waiting* one the mutex replaced (the one
+  publishing never is), so that one returns quietly and its slot is
+  retired, the newest reports its own outcome, and an older, publishing set
+  reports through its own reply. (If another client superseded our *newest*
+  set, that one times out and the one before it returns early — its
+  confirmation is still merged when it arrives.) A 409 on our only set for
+  the datapoint — another client overrode it — is a rejection like any
+  other.
+- The coordinator consumes the full-list `scenes` broadcasts to populate the
+  scene platform (recall is REST-only; the `scenes-new` / `scenes-deleted` id
+  deltas that follow each one are not consumed), and the
   `groups` broadcasts for room→area assignment and diagnostics. The singular
   `scene` recall frame is re-emitted as a `junghome_scene_recalled` HA event.
 - Reconnect on drop: the gateway sends the full `functions`/`groups`/`scenes`

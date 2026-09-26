@@ -163,7 +163,7 @@
           },
           {
             "key": "quantity_label",
-            "value": "Temperature "
+            "value": "Present Ambient Temperature "
           },
           {
             "key": "quantity_unit",
@@ -198,7 +198,7 @@
           },
           {
             "key": "quantity_label",
-            "value": "Power "
+            "value": "Present Device Input Power "
           },
           {
             "key": "quantity_unit",
@@ -216,11 +216,11 @@
           },
           {
             "key": "quantity_label",
-            "value": "Status "
+            "value": "Active Power Loadside "
           },
           {
             "key": "quantity_unit",
-            "value": "?"
+            "value": "W"
           }
         ]
       }
@@ -241,7 +241,7 @@
           },
           {
             "key": "quantity_label",
-            "value": "Illuminance "
+            "value": "Present Illuminance "
           },
           {
             "key": "quantity_unit",

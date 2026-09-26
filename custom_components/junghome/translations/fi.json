@@ -25,7 +25,7 @@
           "host": "Isäntä"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50)."
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa korvaa oletusarvo junghome.local, joka toimii vain joissakin verkoissa, yhdyskäytävän IP-osoitteella (esimerkiksi 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Verkkoavaimen salasana"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa oletusarvo junghome.local toimii monissa verkoissa, tai käytä IP-osoitetta (esimerkiksi 192.168.1.50).",
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi. Se täytetään automaattisesti, kun yhdyskäytävä löytyy; muussa tapauksessa korvaa oletusarvo junghome.local, joka toimii vain joissakin verkoissa, yhdyskäytävän IP-osoitteella (esimerkiksi 192.168.1.50).",
           "password": "Jung Home -yhdyskäytävän verkkoavaimen salasana."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Isäntä"
         },
         "data_description": {
-          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50 tai junghome.local)."
+          "host": "Jung Home -yhdyskäytävän IP-osoite tai isäntänimi (esimerkiksi 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Taajuus" },
       "temperature": { "name": "Lämpötila" },
       "illuminance": { "name": "Valaistusvoimakkuus" },
+      "input_power": { "name": "Laitteen ottoteho" },
+      "load_power": { "name": "Pätöteho (kuorman puoli)" },
+      "output_current": { "name": "Lähtövirta" },
+      "input_current": { "name": "Tulovirta" },
+      "output_voltage": { "name": "Lähtöjännite" },
+      "ambient_temperature": { "name": "Ympäristön lämpötila" },
       "present_illuminance": { "name": "Nykyinen valaistusvoimakkuus" },
       "humidity": { "name": "Kosteus" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "Osoite vastaa, mutta se kuuluu eri Jung Home -yhdyskäytävälle kuin tämä merkintä. Muuta osoite sen sijaan Määritä uudelleen -toiminnolla."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home -laitteilla on ristiriitaiset nimet",
+      "description": "Joillakin Jung Home -yhdyskäytävän ({host}) laitteilla on nimet, joita Home Assistant ei pysty erottamaan toisistaan, koska ne eroavat vain kirjainkoon, välilyöntien tai välimerkkien osalta:\n\n{labels}\n\nVain yksi laite kustakin ryhmästä saa entiteetit Home Assistantissa. Nimeä muut uudelleen Jung Home -sovelluksessa. Tämä ongelma poistuu itsestään, kun nimet ovat erilaiset."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Jung Home -yhdyskäytävän Bluetooth-vika",
+      "description": "Jung Home -yhdyskäytävä osoitteessa {host} ilmoittaa, että sen Bluetooth-piiri ei käynnistynyt, joten se ei tavoita Jung Home -laitteitasi. Käynnistä yhdyskäytävä uudelleen irrottamalla se hetkeksi virtalähteestä. Jos ongelma jatkuu, palauta yhdyskäytävän tehdasasetukset ja lisää se uudelleen projektiisi Jung Home -sovelluksessa. Tämä ongelma poistuu, kun yhdyskäytävä on käynnistynyt uudelleen ilman virhettä."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home -yhdyskäytävän järjestysnumerot ovat loppuneet",
+      "description": "Jung Home -yhdyskäytävä osoitteessa {host} ilmoittaa, että sen Bluetooth Mesh -järjestysnumerot ovat loppuneet, joten se ei ehkä enää pysty lähettämään komentoja Jung Home -laitteillesi. Jos laitteet lakkaavat vastaamasta, palauta yhdyskäytävän tehdasasetukset ja lisää se uudelleen projektiisi Jung Home -sovelluksessa. Tämä ongelma poistuu, kun yhdyskäytävä on käynnistynyt uudelleen ilman virhettä."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Jung Home -yhdyskäytävän kello ei ole synkronoitu",
+      "description": "Jung Home -yhdyskäytävä osoitteessa {host} ei ole pystynyt synkronoimaan kelloaan aikapalvelimen kanssa yli 24 tuntiin. Tarkista, että yhdyskäytävällä on internetyhteys. Tämä ongelma poistuu itsestään, kun kello on taas synkronoitu."
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home -yhdyskäytävällä ei ole projektia",
+      "description": "Jung Home -yhdyskäytävä osoitteessa {host} ilmoittaa, ettei se ole saanut projektia Jung Home -sovelluksesta, joten se ei tunne laitteitasi. Avaa Jung Home -sovellus samassa lähiverkossa yhdyskäytävän kanssa, jotta se voi ladata projektin uudelleen. Tämä ongelma poistuu, kun yhdyskäytävä on saanut uuden projektin."
+    },
+    "gateway_project_incomplete": {
+      "title": "Jung Home -yhdyskäytävän projekti on puutteellinen",
+      "description": "Jung Home -yhdyskäytävä osoitteessa {host} ilmoittaa, että sen projektista puuttuu laitetietoja, joten laitteiden nimiä, huoneita ja tilanteita voi puuttua tai ne voivat olla virheellisiä. Synkronoi projekti manuaalisesti Jung Home -sovelluksessa. Tämä ongelma poistuu, kun yhdyskäytävä on saanut uuden projektin."
     }
   }
 }

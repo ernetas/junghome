@@ -196,8 +196,11 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
     coordinator.data = []  # the device is not known yet
     fetch_started = asyncio.Event()
     release_fetch = asyncio.Event()
+    fetches = 0
 
     async def _slow_fetch(host: str, token: str) -> list[dict]:
+        nonlocal fetches
+        fetches += 1
         fetch_started.set()
         await release_fetch.wait()
         return [_switch_device("0")]
@@ -211,6 +214,9 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
                 "data": {"id": "dp-1", "values": [{"key": "switch", "value": "1"}]},
             }
         )
+        # The requested refresh (an eagerly started entry task) has already
+        # joined the shared overlay while the first fetch is in flight.
+        assert coordinator._polls_in_flight == 2
         release_fetch.set()
         result = await poll
 
@@ -219,6 +225,7 @@ async def test_push_for_a_device_the_poll_discovers_survives_it(
     # so its timer doesn't linger into teardown. The second refresh is the
     # last poll out, so it closes the shared overlay.
     await hass.async_block_till_done()
+    assert fetches == 2
     assert coordinator._poll_push_overlay is None
     assert coordinator._polls_in_flight == 0
     await coordinator.async_shutdown()
@@ -335,10 +342,10 @@ async def test_a_superseded_poll_does_not_re_flag_id_churn(
 ) -> None:
     """The superseded poll must skip the id-churn check, not just the adoption.
 
-    On a firmware update the `functions` broadcast carries regenerated ids: it
+    When nodes are re-provisioned the `functions` broadcast carries new ids: it
     detects the churn, schedules the reload and rewrites `_device_ids` to the
-    NEW ids. A poll whose fetch was already in flight returns the PRE-update
-    list; running the churn check on it would detect "churn" a second time —
+    NEW ids. A poll whose fetch was already in flight returns the OLD list;
+    running the churn check on it would detect "churn" a second time —
     scheduling a redundant reload AND clobbering `_device_ids` back to the
     stale ids, because the check overwrites the map with whatever list it is
     handed.
@@ -449,7 +456,7 @@ async def test_no_reload_when_duplicate_slug_order_flips(hass: HomeAssistant) ->
     Two devices whose labels slug identically share one key in the slug->id
     map; the gateway's list order decides which id "wins". Without the
     duplicate_slugs guard, a mere order change between polls read as "the id
-    changed (firmware update?)" and scheduled a reload — on every flip,
+    changed" and scheduled a reload — on every flip,
     forever. A non-colliding device's genuine id change must still reload.
     """
     coordinator = _coordinator(hass)
@@ -563,10 +570,10 @@ async def test_command_times_out_when_gateway_never_replies(
 ) -> None:
     """A command the gateway silently drops surfaces as a real service error.
 
-    Firmware-verified: a rejected datapoint set produces only an uncorrelated
-    `error:` message frame (websocket-server-service.js), so there is nothing
-    to await besides a timeout. Before this, the send was fire-and-forget and
-    a rejected command looked identical to a successful one.
+    With no reply and no attributable `error:` frame (websocket-server-service.js
+    sends one or the other; either may come too late) there is nothing to
+    await besides a timeout. Before this, the send was fire-and-forget and a
+    rejected command looked identical to a successful one.
     """
     coordinator = _coordinator(hass)
     ws = AsyncMock()
@@ -668,6 +675,8 @@ async def test_correlated_error_frame_rejects_the_pending_command(
     assert exc_info.value.translation_key == "command_rejected"
     assert exc_info.value.translation_placeholders == {"error": reason}
     assert coordinator._pending_replies == {}
+    # The frame was the set's outcome, so its slot goes with it.
+    assert coordinator._outstanding_sets == {}
     assert f"Jung Home gateway reported an error: {text}" in caplog.text
 
 
@@ -695,6 +704,428 @@ async def test_correlated_error_frame_for_a_settled_command_is_a_no_op(
 
     assert done.result() == {}  # untouched
     coordinator._pending_replies.clear()
+
+
+# Wire-shaped datapoint ids ("id" + md5 prefix + "-" + hex suffix) and the
+# exact text websocket-server-service.js builds for a failed set: its
+# `could not set datapoint (<id>) value, ` wrapper around JungFunctionService's
+# `Error during publish request: ` wrapper around the middleware's reply
+# message (ip_event_handler.js Publish handler).
+_DP_A = "id5f09764942a70ce-001"
+_DP_B = "id5f09764942a70ce-010"
+
+
+def _set_error(datapoint_id: str, detail: str) -> dict:
+    return {
+        "type": "message",
+        "data": (
+            f"error: could not set datapoint ({datapoint_id}) value, "
+            f"JungFunctionService: Error during publish request: {detail}"
+        ),
+    }
+
+
+def _two_switch_coordinator(
+    hass: HomeAssistant,
+) -> tuple[JungHomeDataUpdateCoordinator, list[str]]:
+    """A coordinator whose socket accepts sends silently; returns the ids sent."""
+    coordinator = _coordinator(hass)
+    sent_ids: list[str] = []
+    ws = AsyncMock()
+    ws.closed = False
+    ws.send_str.side_effect = lambda raw: sent_ids.append(json.loads(raw)["message_id"])
+    coordinator.websocket = ws
+    coordinator.data = [
+        {
+            "id": "id5f09764942a70ce",
+            "label": "L",
+            "datapoints": [
+                {
+                    "id": dp_id,
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "0"}],
+                }
+                for dp_id in (_DP_A, _DP_B)
+            ],
+        }
+    ]
+    return coordinator, sent_ids
+
+
+def _confirm(
+    coordinator: JungHomeDataUpdateCoordinator, datapoint_id: str, message_id: str
+) -> None:
+    coordinator._dispatch_text_frame(
+        json.dumps(
+            {
+                "type": "datapoint",
+                "data": {
+                    "id": datapoint_id,
+                    "values": [{"key": "switch", "value": "1"}],
+                },
+                "message_id": message_id,
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        # 423, enforced_output lock (HttpErrorMessages[423]).
+        "Device is locked",
+        # 423 with lockedReason: an RTR-controlled switch.
+        "RTR controlled datapoint",
+        # 422, a value outside the state's range (device-states.js validate).
+        "Unprocessable Entity",
+        # No status: e.g. an unknown datapoint id ("no state found").
+        "error publish",
+    ],
+)
+async def test_set_error_naming_the_datapoint_rejects_that_command_at_once(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, detail: str
+) -> None:
+    """The gateway's uncorrelated rejection names the datapoint it concerns.
+
+    With exactly one set outstanding for that datapoint the frame can only be
+    its outcome, so the command fails now with the gateway's own reason (the
+    middleware's message, without the api-server's wrapper) instead of
+    waiting out COMMAND_REPLY_TIMEOUT — and the WARNING keeps the full text.
+    """
+    coordinator, _ = _two_switch_coordinator(hass)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    frame = _set_error(_DP_A, detail)
+    with caplog.at_level(logging.WARNING):
+        coordinator._dispatch_text_frame(json.dumps(frame))
+    # No COMMAND_REPLY_TIMEOUT patch: the frame itself must settle the await.
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(task, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    assert exc_info.value.translation_placeholders == {"error": detail}
+    assert coordinator._pending_replies == {}
+    assert coordinator._outstanding_sets == {}
+    assert f"Jung Home gateway reported an error: {frame['data']}" in caplog.text
+
+
+async def test_set_error_fails_only_the_command_for_its_datapoint(
+    hass: HomeAssistant,
+) -> None:
+    """Two concurrent sets on different datapoints: the error names one.
+
+    Attribution is by datapoint id, never by timing, so the rejection of the
+    SECOND command sent must fail that one and leave the first pending.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    task_a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    task_b = asyncio.ensure_future(coordinator.turn_on_switch(_DP_B))
+    await asyncio.sleep(0)
+
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_B, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(task_b, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    await asyncio.sleep(0)
+    assert not task_a.done()
+
+    _confirm(coordinator, _DP_A, sent_ids[0])
+    await task_a
+    assert coordinator._pending_replies == {}
+    assert coordinator._outstanding_sets == {}
+    await coordinator.async_shutdown()
+
+
+async def test_set_error_for_a_datapoint_with_two_sets_is_not_attributed(
+    hass: HomeAssistant,
+) -> None:
+    """Two sets outstanding for the same datapoint: the error could be either.
+
+    Nothing in the frame says which, so neither is failed by it — both keep
+    today's behaviour and settle on COMMAND_REPLY_TIMEOUT.
+    """
+    coordinator, _ = _two_switch_coordinator(hass)
+    with patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.05):
+        first = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+        second = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+        await asyncio.sleep(0)
+        coordinator._dispatch_text_frame(
+            json.dumps(_set_error(_DP_A, "Device is locked"))
+        )
+        results = await asyncio.gather(first, second, return_exceptions=True)
+    assert [getattr(r, "translation_key", r) for r in results] == [
+        "command_timeout",
+        "command_timeout",
+    ]
+
+
+async def test_superseded_set_ends_quietly_when_a_newer_one_is_in_flight(
+    hass: HomeAssistant,
+) -> None:
+    """A 409 "newer request" rejection of our own older set is no failure.
+
+    The publish mutex rejects a queued set when a newer one for the same
+    state arrives (mutex.js MutexID.lock -> ip_event_handler.js 409 ->
+    "Conflict with newer request"). The user's own later command superseded
+    it, so the older command returns normally and the newer one still waits
+    for — and gets — its own confirmation.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    older = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    newer = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    await asyncio.wait_for(older, timeout=1)  # no exception
+    assert not newer.done()
+
+    _confirm(coordinator, _DP_A, sent_ids[1])
+    await newer
+    assert coordinator._pending_replies == {}
+    assert coordinator._outstanding_sets == {}
+    await coordinator.async_shutdown()
+
+
+async def test_superseded_set_without_a_newer_one_of_ours_is_rejected(
+    hass: HomeAssistant,
+) -> None:
+    """A 409 on our only set for the datapoint: another client overrode it.
+
+    Nothing of ours carries the user's intent any more, so it is a real
+    rejection and surfaces with the gateway's text.
+    """
+    coordinator, _ = _two_switch_coordinator(hass)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(task, timeout=1)
+    assert exc_info.value.translation_placeholders == {
+        "error": "Conflict with newer request"
+    }
+
+
+async def test_superseded_set_is_the_waiting_one_not_the_publishing_one(
+    hass: HomeAssistant,
+) -> None:
+    """Three sets on one datapoint: the 409 is about the middle one.
+
+    mutex.js ``MutexID.lock`` queues at most one request per datapoint and a
+    newer one rejects that WAITING request — never the one already holding
+    the lock. With A publishing, B waiting and C arriving, B gets the 409 at
+    once while A's reply comes later (it waits for the mesh). So B ends
+    quietly, A still reports through its own reply, and once A's and C's
+    replies are in no slot is left — a stale one blocked attribution of the
+    next genuine rejection on that datapoint for COMMAND_OUTCOME_WINDOW
+    (retiring the oldest slot did exactly that; the gateway log shows the
+    shape: three patches of one datapoint in a second, one 409).
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    c = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    await asyncio.wait_for(b, timeout=1)  # superseded: no exception
+    assert not a.done()
+    assert not c.done()
+    assert list(coordinator._outstanding_sets) == [sent_ids[0], sent_ids[2]]
+
+    _confirm(coordinator, _DP_A, sent_ids[0])  # A's own reply, after the 409
+    _confirm(coordinator, _DP_A, sent_ids[2])
+    await asyncio.gather(a, c)
+    assert coordinator._outstanding_sets == {}
+
+    # Attribution is clean again: the next rejection fails its set at once.
+    d = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(d, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    await coordinator.async_shutdown()
+
+
+async def test_two_409s_landing_late_retire_both_superseded_sets(
+    hass: HomeAssistant,
+) -> None:
+    """Both frames arrive after our newest set went out: still no stale slot.
+
+    A waits (the gateway-wide lock is busy elsewhere), B replaces A, C
+    replaces B. If both 409s land only after C was sent, the first retires B
+    (then just before our newest) and the second A — the right two slots
+    between them, both sets ending quietly, C left to its own reply.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    c = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+
+    for _ in range(2):
+        coordinator._dispatch_text_frame(
+            json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+        )
+    await asyncio.wait_for(asyncio.gather(a, b), timeout=1)
+    assert list(coordinator._outstanding_sets) == [sent_ids[2]]
+    assert not c.done()
+    _confirm(coordinator, _DP_A, sent_ids[2])
+    await c
+    assert coordinator._outstanding_sets == {}
+    await coordinator.async_shutdown()
+
+
+async def test_correlated_error_retires_its_set_for_attribution(
+    hass: HomeAssistant,
+) -> None:
+    """An `error:` frame WITH our message_id is that set's outcome.
+
+    Its slot must go, or the next uncorrelated rejection on the datapoint
+    would see two outstanding sets and be left to the timeout.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    first = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(
+            {"type": "message", "data": "error: rejected", "message_id": sent_ids[0]}
+        )
+    )
+    with pytest.raises(HomeAssistantError):
+        await asyncio.wait_for(first, timeout=1)
+    assert coordinator._outstanding_sets == {}
+
+    second = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(second, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    await coordinator.async_shutdown()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A frame without an id at all (the handler's own format checks).
+        "error: invalid message format, could not find id",
+        # Truncated before the detail: not the set-failure shape.
+        f"error: could not set datapoint ({_DP_A})",
+        # Parentheses inside the id: not a datapoint id this client sent.
+        f"error: could not set datapoint (({_DP_A})) value, error publish",
+    ],
+    ids=["no-id", "truncated", "nested-parens"],
+)
+async def test_unparseable_set_error_leaves_the_command_to_its_timeout(
+    hass: HomeAssistant, text: str
+) -> None:
+    """Only the exact set-failure shape is attributed; anything else times out."""
+    coordinator, _ = _two_switch_coordinator(hass)
+    with patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.05):
+        task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+        await asyncio.sleep(0)
+        coordinator._dispatch_text_frame(json.dumps({"type": "message", "data": text}))
+        with pytest.raises(HomeAssistantError) as exc_info:
+            await task
+    assert exc_info.value.translation_key == "command_timeout"
+
+
+async def test_late_error_of_a_timed_out_set_is_not_pinned_on_a_newer_one(
+    hass: HomeAssistant,
+) -> None:
+    """A set that timed out locally still owns the error frame that follows.
+
+    The api-server gives up on a stuck middleware call only after 6 s, past
+    COMMAND_REPLY_TIMEOUT, and its "timed out" error names the datapoint. A
+    newer set for that datapoint sent in between must not be failed by it:
+    the timed-out set stays counted, so the frame is ambiguous. Once its
+    outcome window has passed the slot is dropped and attribution resumes.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    with (
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.turn_on_switch(_DP_A)
+    assert list(coordinator._outstanding_sets) == [sent_ids[0]]
+
+    newer = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Command with id '1f' timed out!"))
+    )
+    await asyncio.sleep(0)
+    assert not newer.done()
+    _confirm(coordinator, _DP_A, sent_ids[1])
+    await newer
+
+    # The stale slot expires; the next rejection is attributed again.
+    coordinator._outstanding_sets[sent_ids[0]] = (_DP_A, time.monotonic() - 1)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(task, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    assert coordinator._outstanding_sets == {}
+    await coordinator.async_shutdown()
+
+
+async def test_late_error_consumes_the_timed_out_set_it_belongs_to(
+    hass: HomeAssistant,
+) -> None:
+    """The one outstanding slot is a timed-out set: the frame retires it.
+
+    Nothing is left to fail (its caller already got the timeout), and the
+    datapoint is clean again — the next rejection is attributed at once.
+    """
+    coordinator, _ = _two_switch_coordinator(hass)
+    with (
+        patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.01),
+        pytest.raises(HomeAssistantError),
+    ):
+        await coordinator.turn_on_switch(_DP_A)
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Command with id '1f' timed out!"))
+    )
+    assert coordinator._outstanding_sets == {}
+
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(json.dumps(_set_error(_DP_A, "Device is locked")))
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(task, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+
+
+async def test_outstanding_sets_are_session_scoped(hass: HomeAssistant) -> None:
+    """No socket, no slot; a session's end forgets its slots.
+
+    A send that cannot leave produces no outcome frame, and the frames for a
+    dead session's sets can never arrive on the next one — a slot kept in
+    either case would only block attribution for nothing.
+    """
+    coordinator = _coordinator(hass)
+    with pytest.raises(HomeAssistantError):
+        await coordinator.turn_on_switch(_DP_A)  # no websocket at all
+    assert coordinator._outstanding_sets == {}
+
+    coordinator, _ = _two_switch_coordinator(hass)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    assert len(coordinator._outstanding_sets) == 1
+    coordinator._fail_pending_replies()  # the reader loop's finally
+    assert coordinator._outstanding_sets == {}
+    with pytest.raises(HomeAssistantError):
+        await task
 
 
 @pytest.mark.parametrize(
@@ -866,21 +1297,45 @@ async def test_concurrent_commands_do_not_cross_resolve(hass: HomeAssistant) -> 
     await task_a
 
 
-async def test_scenes_broadcast_full_new_deleted(hass: HomeAssistant) -> None:
-    """scenes / scenes-new / scenes-deleted maintain the cached scene list."""
+async def test_scenes_broadcast_full_list_then_id_deltas(hass: HomeAssistant) -> None:
+    """The full ``scenes`` list is adopted; the id-string deltas are not consumed.
+
+    Wire order per change (`websocket-server-service.js:356-359`): the full
+    list first, then ``scenes-new`` / ``scenes-deleted`` carrying only the
+    added / removed ids as strings (`jung-scenes-service.js:165-170`).
+    """
     coordinator = _coordinator(hass)
-    coordinator._handle_scenes_broadcast(
-        "scenes", [{"id": "id1", "label": "A"}, {"id": "id2", "label": "B"}]
+    coordinator._handle_websocket_message(
+        {
+            "type": "scenes",
+            "data": [
+                {"id": "id0001", "label": "A", "value": "0001"},
+                {"id": "id0002", "label": "B", "value": "0002"},
+            ],
+        }
     )
-    assert {s["id"] for s in coordinator.scenes} == {"id1", "id2"}
+    assert [s["id"] for s in coordinator.scenes] == ["id0001", "id0002"]
 
-    coordinator._handle_scenes_broadcast("scenes-new", [{"id": "id3", "label": "C"}])
-    assert {s["id"] for s in coordinator.scenes} == {"id1", "id2", "id3"}
+    # A scene added in the app.
+    added = [
+        {"id": "id0001", "label": "A", "value": "0001"},
+        {"id": "id0002", "label": "B", "value": "0002"},
+        {"id": "id0003", "label": "C", "value": "0003"},
+    ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": added})
+    coordinator._handle_websocket_message({"type": "scenes-new", "data": ["id0003"]})
+    assert coordinator.scenes == added
 
-    coordinator._handle_scenes_broadcast(
-        "scenes-deleted", [{"id": "id1", "label": "A"}]
+    # A scene deleted in the app.
+    remaining = [
+        {"id": "id0002", "label": "B", "value": "0002"},
+        {"id": "id0003", "label": "C", "value": "0003"},
+    ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": remaining})
+    coordinator._handle_websocket_message(
+        {"type": "scenes-deleted", "data": ["id0001"]}
     )
-    assert {s["id"] for s in coordinator.scenes} == {"id2", "id3"}
+    assert coordinator.scenes == remaining
 
 
 class _FakeResponse:
@@ -993,33 +1448,29 @@ async def test_unexpected_error_in_frame_handler_is_contained(
     )
 
 
-async def test_scenes_new_dedupes_by_label_keeping_newest(
+async def test_scenes_new_delta_keeps_the_full_list_order(
     hass: HomeAssistant,
 ) -> None:
-    """A scenes-new delta re-keying a label to a new id drops the old entry.
+    """A ``scenes-new`` delta must not reshuffle the adopted full list.
 
-    Scene identity is the label; after a firmware update regenerates ids, the
-    old and new entries would otherwise sit side by side and activation could
-    resolve the dead id. Unlabeled scenes are kept (diagnostics only).
+    Two scenes may share a label; recall (`activate_scene`) and the scene
+    platform both resolve the FIRST label match in the full list. The delta
+    handler used to "dedupe by label, newest wins", which on any delta kept
+    the LAST duplicate and dropped the first — the scene recall resolves —
+    without the delta (a list of id strings) contributing anything.
     """
     coordinator = _coordinator(hass)
-    coordinator.scenes = [
-        {"id": "old-id", "label": "Movie Night"},
-        {"id": "keep-id", "label": "Dinner"},
+    full = [
+        {"id": "id0001", "label": "Movie Night", "value": "0001"},
+        {"id": "id0002", "label": "Dinner", "value": "0002"},
+        {"id": "id0003", "label": "Movie Night", "value": "0003"},
+        {"id": "id0004", "value": "0004"},
     ]
+    coordinator._handle_websocket_message({"type": "scenes", "data": full})
     coordinator._handle_websocket_message(
-        {
-            "type": "scenes-new",
-            "data": [
-                {"id": "new-id", "label": "Movie Night"},
-                {"id": "no-label"},
-            ],
-        }
+        {"type": "scenes-new", "data": ["id0003", "id0004"]}
     )
-    by_label = {s.get("label"): s.get("id") for s in coordinator.scenes}
-    assert by_label["Movie Night"] == "new-id"
-    assert by_label["Dinner"] == "keep-id"
-    assert {"id": "no-label"} in coordinator.scenes
+    assert coordinator.scenes == full
 
 
 async def test_scene_recall_without_id_is_ignored(hass: HomeAssistant) -> None:
@@ -1627,14 +2078,13 @@ async def test_fuzz_dispatch_never_raises_or_corrupts(hass: HomeAssistant) -> No
     assert coordinator._poll_push_overlay is None
     assert coordinator._pending_replies == {}
     # The storm may have stored arbitrary garbage in groups/scenes; the
-    # resolvers must still tolerate it together with malformed devices.
+    # resolver must still tolerate it together with malformed devices.
     for device in (
         {"id": "d", "parent_groups": ["g1", ["x"], {"y": 1}, True]},
         {"id": "d", "parent_groups": "not-a-list"},
         {"id": "d"},
     ):
         coordinator.area_for_device(device)
-        coordinator.color_temp_range_for_device(device)
     await coordinator.async_shutdown()
 
 
@@ -1753,25 +2203,29 @@ async def test_gateway_version_tolerates_missing_or_unread_fields(
     await coordinator.async_fetch_gateway_version()
     assert coordinator.gateway_version == "2.1.3"
 
-    # A transport failure, a non-200 and a non-object body each leave the
-    # previously known value in place.
+    # A transport failure, a non-200, a non-object body and a body that is not
+    # JSON each leave the previously known value in place.
     for fail in (
         {"exc": aiohttp.ClientError()},
+        {"exc": TimeoutError()},
         {"status": 404},
         {"json": "2.1.3"},
         {"json": {"version_release": 213}},
+        # Truncated: `response.json()` raises JSONDecodeError, a ValueError
+        # rather than a ClientError.
+        {"text": '{"version_release": "2.1.'},
     ):
         aioclient_mock.clear_requests()
         aioclient_mock.get(url, **fail)
         await coordinator.async_fetch_gateway_version()
         assert coordinator.gateway_version == "2.1.3"
 
-    # Re-reading the same version writes nothing: `_apply_gateway_version`
+    # Re-reading the same version writes nothing: `_apply_device_info`
     # walks every registry row, and the stable-session hook calls this on
     # every reconnect.
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
-    with patch.object(coordinator, "_apply_gateway_version") as apply:
+    with patch.object(coordinator, "_apply_device_info") as apply:
         await coordinator.async_fetch_gateway_version()
     apply.assert_not_called()
     assert coordinator.gateway_version == "2.1.3"

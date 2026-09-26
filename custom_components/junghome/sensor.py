@@ -47,17 +47,20 @@ _TOTAL = SensorStateClass.TOTAL_INCREASING
 class JungHomeQuantityDescription(SensorEntityDescription):
     """Describes one quantity the gateway reports on a ``quantity`` datapoint.
 
-    A ``quantity`` datapoint carries a free-text ``quantity_label`` and a
+    A ``quantity`` datapoint carries a ``quantity_label`` and a
     ``quantity_unit``; a description matches on both, normalised (stripped,
-    lowercased). ``gateway_units`` are the unit spellings the description
-    covers (they pick the classes and the Home Assistant unit);
-    ``gateway_label`` is the English label the gateway attaches to the quantity
-    and decides whether the entity is *named* by ``translation_key`` — the
-    English translation is that very label, so an English install reads the
-    same as before, while every other locale gets a translated name. A
-    ``None`` label marks a unit-only description: the classes apply, but the
-    raw label stays the name (it may be anything, and there is nothing correct
-    to translate it to).
+    lowercased). The label is not user text: the gateway looks the sensor
+    state's Bluetooth SIG property id up in its own
+    ``const/bt_mesh_properties.json`` (``util/datapoint_helper_methods.js:52-56``
+    — every name there ends in a space) and sends the literal ``unknown`` for
+    an id the table lacks. ``gateway_units`` are the unit spellings the
+    description covers (they pick the classes and the Home Assistant unit);
+    ``gateway_label`` is the label the gateway attaches to the quantity and
+    decides whether the entity is *named* by ``translation_key`` — the English
+    translation is that very label, so an English install reads the same as
+    before, while every other locale gets a translated name. A ``None`` label
+    marks a unit-only description: the classes apply, but the raw label stays
+    the name.
 
     ``entity_registry_enabled_default=False`` on the electrical diagnostics
     (voltage, current, frequency — chatty values that mostly clutter the
@@ -75,7 +78,99 @@ class JungHomeQuantityDescription(SensorEntityDescription):
 # accepts a bare "c" for the ambient reading, so it is accepted here too —
 # "lux"/"lx") one description covers both; where the *scale* differs (W/kW,
 # Wh/kWh) each scale is its own description under the same translation key.
+#
+# The first block is the firmware's whole quantity vocabulary (v2.1.3 build
+# 2840; v2.0.0 builds the label the same way from the same table): the
+# `category: "sensor"` states in `models/device_sensor_states/*State.js`, each
+# label the SIG name of the state's `model.kind`, each unit its `profile.unit`.
+# A metering socket (`JungHome_SocketEnergy`) carries input power, load-side
+# power, output current, output voltage and input current — the last two are
+# `visible: false`, so `/functions/` leaves them out, but they are described
+# should a build show them; a thermostat its ambient temperature; a presence
+# detector its illuminance (and "Presence Detected", which binary_sensor.py
+# claims). Captured verbatim: the three visible socket labels (live WS
+# sessions, the verbose device dump) and the detector's "Present Illuminance "
+# in "lux" (a user's diagnostics). One description per label, so two readings
+# of one device never share a translated name.
 QUANTITY_DESCRIPTIONS: tuple[JungHomeQuantityDescription, ...] = (
+    JungHomeQuantityDescription(
+        key="input_power",
+        translation_key="input_power",
+        gateway_label="present device input power",
+        gateway_units=frozenset({"w"}),
+        device_class=SensorDeviceClass.POWER,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_display_precision=1,
+    ),
+    JungHomeQuantityDescription(
+        key="load_power",
+        translation_key="load_power",
+        gateway_label="active power loadside",
+        gateway_units=frozenset({"w"}),
+        device_class=SensorDeviceClass.POWER,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        suggested_display_precision=1,
+    ),
+    JungHomeQuantityDescription(
+        key="output_current",
+        translation_key="output_current",
+        gateway_label="present output current",
+        gateway_units=frozenset({"a"}),
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        suggested_display_precision=2,
+        entity_registry_enabled_default=False,
+    ),
+    JungHomeQuantityDescription(
+        key="input_current",
+        translation_key="input_current",
+        gateway_label="present input current",
+        gateway_units=frozenset({"a"}),
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        suggested_display_precision=2,
+        entity_registry_enabled_default=False,
+    ),
+    JungHomeQuantityDescription(
+        key="output_voltage",
+        translation_key="output_voltage",
+        gateway_label="present output voltage",
+        gateway_units=frozenset({"v"}),
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        suggested_display_precision=0,
+        entity_registry_enabled_default=False,
+    ),
+    JungHomeQuantityDescription(
+        key="ambient_temperature",
+        translation_key="ambient_temperature",
+        gateway_label="present ambient temperature",
+        gateway_units=frozenset({"°c", "c"}),
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=_MEAS,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        suggested_display_precision=1,
+    ),
+    JungHomeQuantityDescription(
+        key="present_illuminance",
+        translation_key="present_illuminance",
+        gateway_label="present illuminance",
+        gateway_units=frozenset({"lux", "lx"}),
+        device_class=SensorDeviceClass.ILLUMINANCE,
+        state_class=_MEAS,
+        native_unit_of_measurement=LIGHT_LUX,
+        suggested_display_precision=0,
+    ),
+    # Generic labels. No known firmware emits any of them (none is a name in
+    # the SIG table); they stay so an entity that ever matched one keeps its
+    # translated name, and they are the unit-only base an unknown label on
+    # these units falls back to (energy, frequency and humidity have no
+    # firmware sensor state at all).
     JungHomeQuantityDescription(
         key="power",
         translation_key="power",
@@ -163,21 +258,6 @@ QUANTITY_DESCRIPTIONS: tuple[JungHomeQuantityDescription, ...] = (
         key="illuminance",
         translation_key="illuminance",
         gateway_label="illuminance",
-        gateway_units=frozenset({"lux", "lx"}),
-        device_class=SensorDeviceClass.ILLUMINANCE,
-        state_class=_MEAS,
-        native_unit_of_measurement=LIGHT_LUX,
-        suggested_display_precision=0,
-    ),
-    # The BWM presence detector labels its ambient reading "Present
-    # Illuminance" (next to the "Presence Detected" flag the binary_sensor
-    # platform claims). Same quantity, its own translation key, so the
-    # English name stays the gateway's label and other locales get a
-    # translation instead of the raw English.
-    JungHomeQuantityDescription(
-        key="present_illuminance",
-        translation_key="present_illuminance",
-        gateway_label="present illuminance",
         gateway_units=frozenset({"lux", "lx"}),
         device_class=SensorDeviceClass.ILLUMINANCE,
         state_class=_MEAS,
@@ -418,13 +498,21 @@ class JungHomeEnergyTotal(JungHomeEntity, SensorEntity):
     without a Riemann-sum helper on the power reading. Unknown until the
     middleware has polled the counter (its value is ``null`` before that).
     Firmware without the endpoint creates no such entity.
+
+    Native Wh, displayed in kWh: Home Assistant stores the suggested unit in
+    the entity registry only when it registers the entity (or re-derives
+    every sensor's after a unit-system change), so a counter registered
+    before the suggestion keeps showing Wh until its user picks a unit.
+    No suggested display precision: Home Assistant reads one in the
+    *suggested* unit (0 would show 450 Wh as "0 kWh") and otherwise derives
+    its own per unit — 2 decimals in kWh, whole Wh for a row kept in Wh.
     """
 
     _attr_translation_key = "total_energy"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = _TOTAL
     _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
-    _attr_suggested_display_precision = 0
+    _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
 
     def __init__(
         self, coordinator: JungHomeDataUpdateCoordinator, device: Device

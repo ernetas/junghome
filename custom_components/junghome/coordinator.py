@@ -3,8 +3,8 @@
 import asyncio
 import json
 import logging
-import math
 import random
+import re
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -40,7 +40,19 @@ from .const import (
     WEBSOCKET_OUTAGE_REPAIR_AFTER,
     device_slug,
     duplicate_slugs,
+    gateway_device_id,
     scene_unique_id,
+)
+from .health import (
+    HEALTH_CONDITIONS,
+    HEALTH_STATUS_REFRESH_INTERVAL,
+    ISSUE_TIME_SYNC,
+    TIME_ERROR_PARAMETER,
+    HealthCondition,
+    HealthState,
+    active_health_conditions,
+    health_issue_ids,
+    parse_health_status,
 )
 from .models import (
     DOUBLED_BUTTON_FIRMWARE,
@@ -53,6 +65,7 @@ from .models import (
     parse_devices_verbose,
     parse_function_anchors,
     parse_project_export,
+    product_name,
     sanitize_devices,
 )
 from .tls import (
@@ -109,12 +122,40 @@ WS_SEND_TIMEOUT = 10
 # middleware's own retry loop (3 attempts, 3 s apart) means a set that did not
 # succeed on the first mesh attempt cannot answer inside that bound either —
 # so every reply that will ever arrive does so within ~3.5 s. A rejected set
-# produces only an uncorrelated `error:` message frame (no message_id to match
-# against — see `_dispatch_text_frame`), so a rejection surfaces here as a
-# timeout rather than the gateway's specific error text. (Were the firmware
-# ever to echo the message_id on that frame, `_reject_pending_reply` fails
-# the command at once instead.)
+# produces an `error:` message frame with no message_id, but its text names
+# the datapoint (`could not set datapoint (<id>) value, ...`), so
+# `_attribute_set_error` fails the command at once when that id identifies
+# exactly one outstanding set; anything ambiguous still surfaces here as a
+# timeout. The error frames that need the mesh (offline node, retries) arrive
+# only when the api-server gives up at 6 s — after this timeout, which is why
+# timed-out sets stay counted in `_outstanding_sets` (see
+# COMMAND_OUTCOME_WINDOW).
 COMMAND_REPLY_TIMEOUT = 5
+# How long a sent set stays counted as "its outcome frame may still arrive"
+# for the uniqueness guard of `_attribute_set_error`. Every set is answered by
+# exactly one frame on its session — the `datapoint` reply or the `error:`
+# message (websocket-server-service.js) — and the api-server answers a stuck
+# middleware call after `middleware.command_timeout_ms` = 6000 ms at the
+# latest, so a slot older than this can only be one whose frame was consumed
+# without being matched to it (an ambiguous error). Expiring it merely lets
+# attribution resume on that datapoint; a slot that lingers only makes the
+# guard more cautious, never less.
+COMMAND_OUTCOME_WINDOW = 30
+# The WS handler's wrapper around a failed set (websocket-server-service.js
+# `_on_client_message`), around the api-server's own wrapper of the
+# middleware's reply (`JungFunctionService.updateDatapointValues`). The id is
+# the one the client sent — the integration's own `"id" + hex` datapoint ids,
+# which never contain parentheses.
+_SET_ERROR_RE = re.compile(
+    r"error: could not set datapoint \((?P<datapoint_id>[^()]+)\) value, "
+    r"(?P<detail>.*)",
+    re.DOTALL,
+)
+_SET_ERROR_DETAIL_PREFIX = "JungFunctionService: Error during publish request: "
+# The middleware's text for a set its publish mutex replaced with a newer set
+# for the same datapoint (`HttpErrorMessages[409]`, ip_event_handler.js on
+# `mutex.js` MutexID's "replaced by a newer request").
+_SET_SUPERSEDED_DETAIL = "Conflict with newer request"
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # Repair-issue translation key for "the gateway presents a certificate other
@@ -122,6 +163,12 @@ ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # flow in repairs.py re-learns the fingerprint, but only once the user has
 # confirmed the gateway was reset or replaced — never silently.
 ISSUE_TLS_MISMATCH = "tls_certificate_changed"
+# Repair-issue translation key for "two or more gateway labels resolve to the
+# same device slug, so only one of them gets entities" (`duplicate_slugs`).
+# Raised and withdrawn by the capability watcher in __init__.py, which already
+# computes the collisions on every device-list adoption; not fixable here —
+# only a rename in the JUNG HOME app resolves it.
+ISSUE_DUPLICATE_LABELS = "duplicate_device_labels"
 
 # Minimum spacing, in seconds, between two reads of the gateway's project
 # export (`GET /project/junghome`) after the one at setup. The export is read
@@ -140,8 +187,10 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # re-read from the deprecated verbose device endpoint (`GET /devices/{id}?
 # verbose=true`, ~8 KB per device — probed 2026-09-16): a metering socket's
 # cumulative energy counter, every device's firmware revision, reachability.
-# The middleware itself re-polls a device's properties every five minutes
-# (`profile.dirtyAfterSeconds` 300), so reading more often buys nothing. Only
+# The middleware re-reads the energy counter from the device only hourly
+# (`TotalDeviceEnergyUse.js:65`, `dirtyAfterSeconds` POLL_60MIN = 3600 s;
+# `software_revision` likewise), so the sensor moves in hourly steps; this
+# cheap 5-minute re-read only bounds how late a step shows up here. Only
 # the devices with an energy counter are re-read each interval; the full list
 # (~190 KB on 49 devices) is read once at setup and again only when a function
 # appears that the last answer did not list (one the endpoint omits is not
@@ -216,13 +265,6 @@ def _truncate_frame(raw: str) -> str:
     return raw
 
 
-# Sanity bounds for a gateway-advertised colour-temperature range. Anything
-# outside this is not a plausible tunable-white range and is treated as an
-# unrecognised payload rather than trusted (a bogus range would otherwise be
-# declared to Home Assistant, which enforces it against the user).
-MIN_PLAUSIBLE_KELVIN = 1000
-MAX_PLAUSIBLE_KELVIN = 20000
-
 # The gateway state DB's declared defaults for the `version` topic: the
 # middleware ships these until the board controller has answered
 # `MSG_SW_VERSION_IND`, so they mean "not known yet", not "version 0".
@@ -266,66 +308,18 @@ def poll_interval_from_options(options: Mapping[str, Any]) -> int:
     return max(MIN_POLL_INTERVAL_SECONDS, min(MAX_POLL_INTERVAL_SECONDS, seconds))
 
 
-def _as_kelvin(raw: Any) -> int | None:
-    """Coerce one end of a gateway range to Kelvin, or None if it isn't a number.
+def entry_derived_issue_ids(entry_id: str) -> list[str]:
+    """Return the ids of the entry's repair issues re-derived from gateway state.
 
-    Gateway numerics arrive as strings as often as numbers, so ``"2700"`` and
-    ``2700`` are both accepted. ``bool`` is rejected explicitly (it is an ``int``
-    subclass, and ``True`` is not a temperature).
-
-    Every conversion below can raise on untrusted JSON, and none of them raise
-    only ``ValueError``:
-
-    - ``float()`` on a huge ``int`` raises ``OverflowError``. ``json.loads``
-      parses integer literals at arbitrary precision, so a frame carrying a
-      400-digit integer reaches this function as an ``int`` Python cannot
-      represent as a float. (A huge *string* is safe — it becomes ``inf``.)
-    - ``json.loads`` also accepts the bare ``NaN`` / ``Infinity`` literals, and
-      ``round()`` rejects both: ``ValueError`` for NaN, ``OverflowError`` for
-      infinity. ``math.isfinite`` screens them out first so the intent is
-      explicit rather than incidental.
-
-    Catching the union keeps a malformed frame a no-op here instead of an
-    exception escaping into ``JungHomeLight.__init__`` and taking down the whole
-    light platform.
+    The health issues (one per ``health.HEALTH_CONDITIONS``) and the
+    colliding-label issue. ``stop()`` deliberately leaves them: a reload or an
+    HA restart keeps the issue registry entry, and with it the user's
+    "Ignore" (``dismissed_version`` — a deleted issue comes back un-ignored),
+    while the next setup re-derives each one from the gateway anyway. They go
+    with the entry instead: ``async_remove_entry``, and an unload that
+    disables it (``async_unload_entry``).
     """
-    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
-        return None
-    try:
-        kelvin = float(raw)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not math.isfinite(kelvin):
-        return None
-    try:
-        return round(kelvin)
-    except (ValueError, OverflowError):  # pragma: no cover - isfinite guards it
-        return None
-
-
-def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
-    """Parse a gateway colour-temperature range, or None if unusable.
-
-    Accepts ``{"min": 2700, "max": 6500}`` and ``[2700, 6500]``. Rejects
-    non-numeric, reversed, zero-width and implausible ranges — the caller then
-    falls back to the light platform's defaults.
-    """
-    if isinstance(raw, dict):
-        low, high = raw.get("min"), raw.get("max")
-    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
-        low, high = raw[0], raw[1]
-    else:
-        return None
-    low_k, high_k = _as_kelvin(low), _as_kelvin(high)
-    if low_k is None or high_k is None:
-        return None
-    # Reversed and zero-width ranges are both nonsense; Home Assistant would
-    # reject (or mis-render) a min >= max colour-temperature entity.
-    if low_k >= high_k:
-        return None
-    if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
-        return None
-    return low_k, high_k
+    return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
 
 
 # Registry lookups scoped to one config entry, on every supported core.
@@ -377,7 +371,7 @@ def device_by_connection(
 class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     """Class to manage fetching data from the Jung Home API."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0915 - one statement per documented attribute
         self, hass: HomeAssistant, config: dict[str, Any], config_entry: ConfigEntry
     ) -> None:
         """Initialize the coordinator."""
@@ -407,10 +401,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None when the owning device carries no id, which entities treat as
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
-        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", read from
-        # REST `GET /version/` (`async_fetch_gateway_version`) — not the
-        # WebSocket "version" frame, which carries the API version. This is
-        # what a device page shows as `sw_version`.
+        # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
+        # over REST `GET /version/` (`async_fetch_gateway_version`) at setup
+        # and again on each stable WebSocket session — never from the WS
+        # "version" frame, which is the API version (`api_version`). The hub's
+        # `sw_version`, and a device's only while its own firmware revision is
+        # unknown (`sw_version_for`).
         self.gateway_version: str | None = None
         # Device-registry id of the synthetic gateway (hub) device, set by
         # ``async_setup_entry`` right after it registers the hub and before any
@@ -425,15 +421,16 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # stamped on every device as `sw_version`, which reported "1.5.0" for a
         # gateway running firmware 2.1.3.
         self.api_version: str | None = None
-        # Scene list, populated from the WebSocket `scenes` broadcasts (full list
-        # on connect, `scenes-new` / `scenes-deleted` deltas on change). The scene
-        # platform discovers from this; recall goes over REST because the
+        # Scene list, populated from the WebSocket `scenes` broadcasts (the full
+        # list, on connect and on every change; the `scenes-new` /
+        # `scenes-deleted` id deltas that follow a change are ignored). The
+        # scene platform discovers from this; recall goes over REST because the
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
-        # Last `groups` broadcast (per-room capability metadata, e.g. which groups
-        # advertise color_temperature_range). Read by `area_for_device` and
-        # `color_temp_range_for_device`, and surfaced in diagnostics so the
-        # capabilities we do not yet implement stay visible.
+        # Last `groups` broadcast (rooms: name, members, and `function_types` —
+        # the member states' type names, never a value; the firmware's
+        # `groups_service.js:37-58`). Read by `area_for_device` and surfaced in
+        # diagnostics.
         self.groups: list[dict[str, Any]] = []
         # Unmapped quantity units the sensor platform has already warned about,
         # once per unit per entry (kept here so it resets on reload and is not
@@ -451,6 +448,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # `_send_datapoint_command` whichever way the wait ends (reply or
         # COMMAND_REPLY_TIMEOUT), so this never accumulates stale entries.
         self._pending_replies: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        # Every set sent on the live session whose outcome frame (reply or
+        # `error:`) has not arrived yet, in send order: message_id ->
+        # (datapoint id, `time.monotonic()` deadline). Unlike
+        # `_pending_replies` it keeps a set that already timed out locally —
+        # its late error frame must not be pinned on a newer set for the same
+        # datapoint (`_attribute_set_error`). Cleared when the session ends;
+        # bounded by COMMAND_OUTCOME_WINDOW otherwise.
+        self._outstanding_sets: dict[str, tuple[str, float]] = {}
         self._next_message_id = 0
         # While a REST poll is in flight, every pushed datapoint's merged keys
         # are recorded here (datapoint id -> merged keys) and re-applied over
@@ -485,7 +490,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # capability watcher in __init__.py) compare this instead of counting
         # raw dispatches: pushes, scenes broadcasts and the WS-drop
         # notification all call async_update_listeners too, and counting those
-        # shrank the pruner's 10-poll window during a WS flap or a
+        # shrank the pruner's 10-adoption window during a WS flap or a
         # scene-editing session while a device was transiently missing from
         # one poll — and re-running the assigner/watcher's O(devices) walks on
         # every push was steady waste on a chatty gateway.
@@ -534,8 +539,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._node_identity_task: asyncio.Task[None] | None = None
         # Function id -> what the verbose device endpoint adds to that function
         # (`models.DeviceProperties`): the energy counter of a metering socket,
-        # the device's firmware revision, reachability. Read once at setup
-        # (`async_fetch_device_properties`), the energy counters re-read every
+        # the device's firmware revision, reachability, a tunable-white light's
+        # Kelvin range. Read once at setup
+        # (`async_fetch_device_properties`); the energy counters, and a light
+        # whose Kelvin range the gateway had not read yet, re-read every
         # DEVICE_PROPERTIES_REFRESH_INTERVAL (`_async_refresh_device_properties`,
         # armed by `start`). Replaced wholesale, never mutated. Empty on
         # firmware without the endpoint.
@@ -547,6 +554,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._properties_listed_for: frozenset[str] | None = None
         self._properties_unsub: CALLBACK_TYPE | None = None
         self._properties_refresh_running = False
+        # The gateway's health log (`GET /healthstatus/`, health.py) as last
+        # read — diagnostics, and the source of the health repair issues
+        # (`async_fetch_health_status`). Read once after the first refresh,
+        # then every HEALTH_STATUS_REFRESH_INTERVAL (armed by `start`).
+        self.health = HealthState(config_entry.entry_id)
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
         # device pruner clears a removed device's ids from them (see
@@ -775,12 +787,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 cast("dict[str, Any]", datapoint).update(overlay[dp_id])
 
     def _reload_if_device_ids_changed(self, devices: list[Device]) -> None:
-        """Reload the entry if the gateway regenerated its device ids.
+        """Reload the entry if a label's device id changed.
 
-        The gateway assigns new volatile device/datapoint ids on a firmware
-        update; entities cache those ids, so without a reload they can no longer
-        find their datapoint (state stops updating, commands target dead ids).
-        unique_ids are label-based and survive the reload.
+        A function id is ``md5(node UUID + element location)``, so it changes
+        when a node is re-provisioned or re-enumerated, a label is moved to
+        another element in the app, or the hardware is swapped (the one
+        measured device-firmware update changed none); entities cache those
+        ids, so without a reload they can no longer find their datapoint
+        (state stops updating, commands target dead ids). unique_ids are
+        label-based and survive the reload.
 
         Colliding slugs are skipped (see ``duplicate_slugs``): two devices whose
         labels slug identically would share ONE key in the map below, with the
@@ -802,7 +817,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._device_ids = new_ids
         if changed and self.config_entry is not None:
             _LOGGER.warning(
-                "Jung Home gateway device ids changed (firmware update?); "
+                "Jung Home gateway device ids changed (device re-provisioned, "
+                "label moved to another element or hardware swapped?); "
                 "reloading the integration to re-resolve entities"
             )
             self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
@@ -849,11 +865,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if entry is None or self._anchor_store is None:
             return  # a bare coordinator: nothing persisted, nothing to follow
         if self._closing:
-            # A refresh that outlived ``stop()`` (an untracked push-triggered
-            # one, the debouncer's cooldown timer) must not touch the registry
+            # A refresh that outlived ``stop()`` must not touch the registry
             # or schedule a save past the unload's flush — on entry removal
-            # that re-created the store file after it was deleted. The next
-            # setup follows from the flushed map.
+            # that re-created the store file after it was deleted. Two remain
+            # possible: a requested refresh the debouncer deferred to its
+            # cooldown timer runs as a plain ``hass.async_create_task``
+            # (helpers/debounce.py) that no unload cancels, and the scheduled
+            # poll's entry task is cancelled only after the unload returns, so
+            # it can adopt while ``stop()`` awaits. The next setup follows
+            # from the flushed map.
             return
         colliding = duplicate_slugs(devices)
         live = {
@@ -1343,7 +1363,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         self.gateway_version = version
         _LOGGER.info("Jung Home gateway software version: %s", self.gateway_version)
-        self._apply_gateway_version()
+        self._apply_device_info()
 
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
@@ -1420,6 +1440,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # before the platforms register anything.
         self.follow_renames(self.data or [])
         await self.async_fetch_device_properties()
+        await self.async_fetch_health_status()
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
         """Read the gateway's project export (``GET /project/junghome``).
@@ -1503,6 +1524,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "Resolved hardware identity for %d gateway functions", len(identities)
         )
         self.apply_node_identities()
+        # The product names (device `model`) and the per-node firmware
+        # revisions resolved through the node UUID come from here too.
+        self._apply_device_info()
 
     async def _fetch_devices_verbose_from_api(
         self, host: str, token: str
@@ -1581,15 +1605,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         self.device_properties = MappingProxyType(parsed)
         _LOGGER.debug("Read properties for %d gateway devices", len(parsed))
+        # Firmware revisions reach the device pages already registered.
+        self._apply_device_info()
 
     async def _async_refresh_device_properties(self, _now: datetime) -> None:
-        """Periodic re-read of the properties that change: the energy counters.
+        """Periodic re-read of the properties that change.
 
-        A function that appeared since the last full-list answer (added in the
+        Those are the energy counters, and a tunable-white light's Kelvin
+        range while it is still pending (read before the gateway had bound
+        the node's range — `models.color_temp_range`; stops once known). A
+        function that appeared since the last full-list answer (added in the
         app), or no answer yet (firmware without the endpoint, a failed read),
-        triggers a full-list read instead; otherwise each device holding an
-        energy counter is re-read on its own, small endpoint. Listeners are
-        notified only when a value changed. Runs are not stacked.
+        triggers a full-list read instead; otherwise each such device is
+        re-read on its own, small endpoint. Listeners are notified only when a
+        value changed. Runs are not stacked.
         """
         if self._properties_refresh_running:
             return
@@ -1611,9 +1640,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 self.async_update_listeners()
             return
         updated = dict(known)
-        changed = False
+        changed = revised = False
         for device_id, props in known.items():
-            if not props.has_energy:
+            if not props.has_energy and not props.color_temp_range_pending:
                 continue
             try:
                 document = await self._fetch_device_verbose_from_api(
@@ -1626,9 +1655,128 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if fresh is not None and fresh != props:
                 updated[device_id] = fresh
                 changed = True
+                revised |= fresh.software_revision != props.software_revision
         if changed:
             self.device_properties = MappingProxyType(updated)
+            if revised:  # a socket updated in place: its page shows the new one
+                self._apply_device_info()
             self.async_update_listeners()
+
+    async def _fetch_health_status_from_api(self, host: str, token: str) -> Any:
+        """Read ``GET /healthstatus/``; None for any non-200.
+
+        The route takes the same token as ``/functions/`` (``auth()`` with no
+        role — health.py); a token it rejects answers 401, which the REST poll
+        turns into reauth on its own, so here it is only "not readable".
+        """
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        url = f"https://{host}/api/junghome/healthstatus/"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                _LOGGER.debug(
+                    "Gateway health status not readable (HTTP %s)", response.status
+                )
+                return None
+            return await response.json()
+
+    async def _fetch_config_parameter_from_api(
+        self, host: str, token: str, parameter: str
+    ) -> Any:
+        """Read one ``GET /config/parameter/{parameter}`` value; None for a non-200."""
+        session = async_get_clientsession(self.hass, verify_ssl=False)
+        ssl = await self._async_ssl()
+        safe = quote(parameter, safe="")
+        url = f"https://{host}/api/junghome/config/parameter/{safe}"
+        headers = {"token": f"{token}"}
+        async with (
+            asyncio.timeout(30),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if response.status != 200:
+                return None
+            return await response.json()
+
+    async def async_fetch_health_status(self) -> None:
+        """Read the gateway's health log and raise or withdraw its repair issues.
+
+        One issue per condition in ``health.HEALTH_CONDITIONS`` the log shows;
+        every other condition's issue is withdrawn. The log only ever grows
+        until the gateway restarts, so a condition with no clearing message
+        (a Bluetooth chip failure, out of sequence numbers) stays raised until
+        then — which is also what the gateway's own text tells the user to do.
+        The time-sync condition is the exception: it is withdrawn as soon as
+        the gateway reports its clock synchronised again (``time_error``), or
+        a later failed round logs only the generic ``time error`` entry.
+
+        Best-effort: a transport failure, a non-200 (401 included) or an
+        unusable body changes nothing — issues from an earlier read stay until
+        a read proves otherwise.
+        """
+        host, token = self.config["host"], self.config["token"]
+        try:
+            raw = await self._fetch_health_status_from_api(host, token)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the gateway health status: %s", err)
+            return
+        entries = parse_health_status(raw)
+        if entries is None:
+            return
+        active = active_health_conditions(entries)
+        if ISSUE_TIME_SYNC in active and await self._time_sync_recovered(host, token):
+            del active[ISSUE_TIME_SYNC]
+        if self._closing:
+            return  # unloaded while the read was in flight: it writes nothing
+        self.health.entries = entries
+        self.health.conditions = frozenset(active)
+        self._apply_health_issues(active)
+
+    async def _time_sync_recovered(self, host: str, token: str) -> bool:
+        """Whether the gateway reports its clock synchronised again.
+
+        Only a definite ``false`` counts: an unreadable parameter keeps the
+        issue the log raised.
+        """
+        try:
+            value = await self._fetch_config_parameter_from_api(
+                host, token, TIME_ERROR_PARAMETER
+            )
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read the gateway time status: %s", err)
+            return False
+        return value is False
+
+    def _apply_health_issues(self, active: Mapping[str, HealthCondition]) -> None:
+        """Create the issue of every active condition, delete every other one."""
+        for condition in HEALTH_CONDITIONS:
+            issue_id = self.health.issue_id(condition.key)
+            if condition.key not in active:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            # Idempotent: an unchanged issue is neither saved nor re-announced.
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=condition.severity,
+                translation_key=condition.key,
+                translation_placeholders={"host": str(self.config["host"])},
+            )
+
+    async def _async_refresh_health_status(self, _now: datetime) -> None:
+        """Periodic health-log re-read; runs are not stacked."""
+        if self.health.refresh_running:
+            return
+        self.health.refresh_running = True
+        try:
+            await self.async_fetch_health_status()
+        finally:
+            self.health.refresh_running = False
 
     def device_properties_for(self, device: Device) -> DeviceProperties | None:
         """Return the verbose endpoint's properties for a function, if read."""
@@ -1637,21 +1785,77 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return None
         return self.device_properties.get(device_id)
 
+    def software_revision_for(self, device: Device) -> tuple[int, ...] | None:
+        """Return the firmware revision of the node behind ``device``, if known.
+
+        The function's own ``software_revision`` when the verbose endpoint
+        filled it, else its node's: the revision is a node property the
+        gateway reliably fills only on the function at the node's main element
+        (see ``models.DeviceProperties.node_address``), so a function whose
+        own value is null takes the one a function of the same node reported —
+        same node meaning the same revision-state address, or the same node
+        UUID when the project export was read. A node whose functions report
+        different revisions (never observed) resolves to None, like no node
+        at all: unknown is the safe answer for every caller.
+        """
+        props = self.device_properties_for(device)
+        if props is not None and props.software_revision is not None:
+            return props.software_revision
+        address = props.node_address if props is not None else None
+        identity = self.node_identity_for(device)
+        uuid = identity.uuid if identity is not None else None
+        if address is None and uuid is None:
+            return None
+        found: set[tuple[int, ...]] = set()
+        for function_id, other in self.device_properties.items():
+            if other.software_revision is None:
+                continue
+            sibling = self.node_identities.get(function_id)
+            if (address is not None and other.node_address == address) or (
+                uuid is not None and sibling is not None and sibling.uuid == uuid
+            ):
+                found.add(other.software_revision)
+        return found.pop() if len(found) == 1 else None
+
+    def sw_version_for(self, device: Device) -> str | None:
+        """Return the firmware version a device page shows, or None if unknown.
+
+        A version the function list carries itself wins; then the node's
+        firmware revision (``"2.2.0.2"``); only a device whose revision is
+        unknown (firmware without the verbose endpoint, a node not read yet)
+        falls back to the gateway's own software version, as every device did
+        before the revisions were read. ``JungHomeEntity.device_info`` and
+        ``_apply_device_info`` both use this, so the two never disagree.
+        """
+        if version := device.get("sw_version"):
+            return version
+        if (revision := self.software_revision_for(device)) is not None:
+            return ".".join(str(part) for part in revision)
+        return self.gateway_version
+
+    def model_for(self, device: Device) -> str | None:
+        """Return the device ``model``: the product, else the function type.
+
+        The product behind the function (``"DimmerAct1gang2input"``) is named
+        from the node's product id in the project export
+        (``models.PRODUCT_NAMES``); without the export, or for a product the
+        table does not know, the gateway's function type (``"DimmerLight"``)
+        stands in, as it always did.
+        """
+        return product_name(self.node_identity_for(device)) or device.get("type")
+
     def button_reports_each_tap_once(self, device: Device) -> bool:
         """Whether ``device`` is KNOWN to run firmware older than the doubling one.
 
         Device firmware 2.2.0.x publishes every button event twice; older
         firmware reports each tap once, so suppressing duplicates there only
         costs fast double-taps. Only a revision the verbose endpoint actually
-        reported, and that is older, exempts a device — unknown stays
-        suppressed, the safe default.
+        reported for the button's node, and that is older, exempts a device
+        (``software_revision_for``) — unknown stays suppressed, the safe
+        default.
         """
-        props = self.device_properties_for(device)
-        return (
-            props is not None
-            and props.software_revision is not None
-            and props.software_revision < DOUBLED_BUTTON_FIRMWARE
-        )
+        revision = self.software_revision_for(device)
+        return revision is not None and revision < DOUBLED_BUTTON_FIRMWARE
 
     def node_identity_for(self, device: Device) -> NodeIdentity | None:
         """Return the hardware identity behind a gateway function, if known.
@@ -1842,10 +2046,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         returns the first group name found (a device is normally in one room).
         Returns ``None`` when the device has no group or none resolve to a name.
 
-        Hardened exactly like ``color_temp_range_for_device`` below: groups and
-        parent ids are untrusted gateway JSON, and an unhashable id (a list, a
-        dict) must not raise ``TypeError`` out of the ``_assign_areas``
-        coordinator listener. (HA's ``async_update_listeners`` does contain a
+        Groups and parent ids are untrusted gateway JSON, and an unhashable
+        id (a list, a dict) must not raise ``TypeError`` out of the
+        ``_assign_areas`` coordinator listener. (HA's ``async_update_listeners`` does contain a
         raising listener — each callback runs in its own try/except and the
         rest still dispatch — but that containment logs a full traceback for
         what is merely malformed gateway data, on every refresh, and area
@@ -1863,8 +2066,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 continue
             name = group.get("name") or group.get("label")
             if name:
-                # First occurrence wins on a duplicated id, matching the
-                # documented order in color_temp_range_for_device.
+                # First occurrence wins on a duplicated id.
                 by_id.setdefault(group_id, str(name))
         for parent in parents:
             if not isinstance(parent, (str, int)) or isinstance(parent, bool):
@@ -1872,59 +2074,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             name = by_id.get(parent)
             if name is not None:
                 return name
-        return None
-
-    def color_temp_range_for_device(self, device: Device) -> tuple[int, int] | None:
-        """Return the (min, max) Kelvin range a device's groups advertise.
-
-        **No firmware is known to send this.** Captured ``groups`` broadcasts
-        (``disk_dump/ws-capture*/groups.json``, 14 real groups) carry only
-        ``id`` / ``address`` / ``name`` / ``related_functions`` /
-        ``function_types`` — there is no colour-temperature field, and the name
-        ``color_temperature_range`` traces back to a speculative comment rather
-        than a capture. Nothing wires this into an entity yet for exactly that
-        reason; see the light-platform note in ``light.py``.
-
-        It is kept because the ``groups`` broadcast is the only plausible source
-        for a per-fixture range, and having the parser and its tests in place
-        means confirming the field later is a one-line change instead of a
-        design question. Both plausible encodings are accepted
-        (``{"min": .., "max": ..}`` and ``[min, max]``); anything unrecognised
-        or implausible is rejected rather than guessed at.
-
-        Returns the range from the **first** parent group that advertises a
-        usable one. That is arbitrary when a device sits in several groups with
-        different ranges — it depends on the gateway's array order — so any
-        future caller must decide whether first-wins, intersection or union is
-        correct for its use. It is only defensible today because nothing
-        consumes the result.
-        """
-        parents = device.get("parent_groups") or []
-        # Untrusted gateway JSON: a non-list `parent_groups`, or an unhashable
-        # group id, must not raise out of a caller's constructor.
-        if not isinstance(parents, (list, tuple)) or not parents:
-            return None
-        by_id: dict[Any, dict[str, Any]] = {}
-        for group in self.groups:
-            if not isinstance(group, dict):
-                continue
-            group_id = group.get("id")
-            if not isinstance(group_id, (str, int)) or isinstance(group_id, bool):
-                continue
-            # First occurrence wins, matching the documented order above; a
-            # plain dict comprehension would silently keep the last duplicate.
-            by_id.setdefault(group_id, group)
-        for parent in parents:
-            if not isinstance(parent, (str, int)) or isinstance(parent, bool):
-                continue
-            parent_group = by_id.get(parent)
-            if parent_group is None:
-                continue
-            parsed = _parse_color_temp_range(
-                parent_group.get("color_temperature_range")
-            )
-            if parsed is not None:
-                return parsed
         return None
 
     def known_unique_ids(self, domain: str) -> set[str]:
@@ -2125,8 +2274,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         same error an immediately-detected dead socket raises) — and an entry
         unload with a command in flight stalled the same way. Futures that are
         already done (reply raced the drop, or the timeout fired) are left
-        alone; each command's ``finally`` still pops its own entry.
+        alone; each command's ``finally`` still pops its own entry. The
+        outstanding-set bookkeeping goes with the session: no outcome frame
+        for its sets can arrive on the next one.
         """
+        self._outstanding_sets.clear()
         for future in self._pending_replies.values():
             if not future.done():
                 future.set_exception(
@@ -2165,6 +2317,60 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     translation_placeholders={"error": reason},
                 )
             )
+
+    def _attribute_set_error(self, text: str) -> None:
+        """Fail the one set an uncorrelated ``error:`` frame can only be about.
+
+        The gateway answers a failed set with ``error: could not set datapoint
+        (<id>) value, <detail>`` and no message_id (websocket-server-service.js),
+        sent only to the socket that carried the set. The id is the
+        correlation: when exactly one set for that datapoint is outstanding on
+        this session — counting sets that already timed out locally, whose
+        late error is exactly what this frame may be — the frame is that set's
+        outcome, and its command fails now with the gateway's reason instead
+        of sitting out COMMAND_REPLY_TIMEOUT. Never by timing, and never when
+        ambiguous: an unparseable frame, an unknown id or two outstanding sets
+        for one datapoint leave every command to its timeout.
+
+        One ambiguous shape is resolved: the publish mutex rejects a queued
+        set when a newer one for the same datapoint arrives (``mutex.js``
+        ``MutexID.lock``, surfaced as 409 "Conflict with newer request"). The
+        lock is gateway-wide but queues at most one request per datapoint, and
+        a newer request rejects exactly that WAITING one — never the set that
+        already holds the lock and is publishing. So with two or more of our
+        sets outstanding for the datapoint, the one replaced is the one we
+        sent just before our newest (``candidates[-2]``; slots are kept in
+        send order): an older one either got the lock or was itself replaced
+        when that one queued. That set ends quietly as a success — the newest
+        carries the user's intent and reports its own outcome — and its slot
+        is retired, since this frame was its outcome. Any older set (the one
+        publishing) stays counted and reports through its own reply. Should a
+        second 409 land after a later set was already sent, the two frames
+        retire the two superseded slots between them, in whichever order.
+        """
+        match = _SET_ERROR_RE.fullmatch(text)
+        if match is None:
+            return
+        datapoint_id = match["datapoint_id"]
+        detail = match["detail"].removeprefix(_SET_ERROR_DETAIL_PREFIX).strip()
+        now = time.monotonic()
+        for message_id, (_, deadline) in list(self._outstanding_sets.items()):
+            if deadline <= now:
+                del self._outstanding_sets[message_id]
+        candidates = [
+            message_id
+            for message_id, (dp_id, _) in self._outstanding_sets.items()
+            if dp_id == datapoint_id
+        ]
+        if len(candidates) == 1:
+            del self._outstanding_sets[candidates[0]]
+            self._reject_pending_reply(
+                candidates[0], detail or text.removeprefix("error:").strip()
+            )
+        elif len(candidates) > 1 and detail == _SET_SUPERSEDED_DETAIL:
+            superseded = candidates[-2]
+            del self._outstanding_sets[superseded]
+            self._resolve_pending_reply(superseded, {})
 
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
@@ -2220,15 +2426,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 if isinstance(text, str) and text.startswith("error:"):
                     # The gateway reports a rejected command (e.g. a bad set) as
                     # an `error:` message frame. Current firmware sends it
-                    # without a message_id, so the WARNING is the only place
-                    # the gateway's own reason ever surfaces; should a frame
-                    # carry one, the awaiting command is failed right away
-                    # with that reason (minus the `error:` tag, which the
+                    # without a message_id but naming the datapoint, which
+                    # `_attribute_set_error` turns into the one command it
+                    # can only be about; should a frame carry a message_id,
+                    # that command is failed directly. Either way with the
+                    # gateway's reason (minus the `error:` tag, which the
                     # translated message already says) instead of sitting
                     # out COMMAND_REPLY_TIMEOUT.
                     if message_id is not None:
+                        self._outstanding_sets.pop(message_id, None)
                         reason = text.removeprefix("error:").strip() or text
                         self._reject_pending_reply(message_id, reason)
+                    else:
+                        self._attribute_set_error(text)
                     _LOGGER.warning("Jung Home gateway reported an error: %s", text)
                 else:
                     _LOGGER.debug("Received message frame: %s", data)
@@ -2239,6 +2449,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # to the normal dispatch below, which merges `data.get("data")`
                 # into `self.data` exactly like a push would — the confirmed
                 # value replaces the optimistic one HA already wrote.
+                self._outstanding_sets.pop(message_id, None)
                 self._resolve_pending_reply(message_id, data.get("data"))
             self._handle_websocket_message(data)
         except Exception as e:
@@ -2407,16 +2618,28 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # missing datapoint_id for a frame that was never malformed.
             _LOGGER.debug("Received %s frame (ignored): %s", msg_type, message)
         elif isinstance(data, list):
-            if msg_type in ("scenes", "scenes-new", "scenes-deleted"):
-                self._handle_scenes_broadcast(msg_type, data)
+            if msg_type == "scenes":
+                self._handle_scenes_broadcast(data)
             elif msg_type == "groups":
-                # Full groups list (on connect and on change). Carries per-room
-                # capability metadata (area names, colour-temperature ranges) and
-                # is surfaced in diagnostics.
+                # Full groups list (on connect and on change): each room's id and
+                # name (area assignment, joined on a device's `parent_groups`),
+                # its member ids and its members' state type NAMES
+                # (`function_types` — no values, so no colour-temperature
+                # range); surfaced in diagnostics.
                 self.groups = [g for g in data if isinstance(g, dict)]
             elif msg_type == "functions":
                 self._handle_functions_broadcast(data)
             else:
+                # Includes every `*-new` / `*-deleted` delta (`scenes-`,
+                # `groups-`, `devices-`): their data is a list of id STRINGS,
+                # not objects (`jung-scenes-service.js:165-170`,
+                # `jung-group-service.js:166-170`,
+                # `jung-device-service.js:287-291`), and the scene and group
+                # deltas are only ever sent right after the full list they were
+                # diffed from (`websocket-server-service.js:356-359`, `:392-396`)
+                # — which is already adopted above. The device deltas describe
+                # the lower-level device list; membership comes from
+                # `functions`.
                 _LOGGER.debug("Received %s broadcast (%d items)", msg_type, len(data))
         else:
             _LOGGER.warning(
@@ -2513,7 +2736,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 "refresh (a device may have just been added)",
                 datapoint_id,
             )
-            self.hass.async_create_task(self.async_request_refresh())
+            if self.config_entry is not None:
+                # Tied to the entry, so an unload cancels it rather than
+                # letting it adopt a list after the coordinator has stopped.
+                self.config_entry.async_create_background_task(
+                    self.hass,
+                    self.async_request_refresh(),
+                    name="junghome_unmatched_push_refresh",
+                )
         else:
             _LOGGER.debug("No matching datapoint found for id %s", datapoint_id)
 
@@ -2558,42 +2788,20 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.async_set_updated_data(devices)
         self._schedule_node_identity_refetch(devices)
 
-    def _handle_scenes_broadcast(self, msg_type: str, data: list[Any]) -> None:
-        """Update the cached scene list from a WebSocket scenes broadcast.
+    def _handle_scenes_broadcast(self, data: list[Any]) -> None:
+        """Replace the cached scene list from a WebSocket ``scenes`` broadcast.
 
-        The gateway pushes the full ``scenes`` list on connect and on change, and
-        ``scenes-new`` / ``scenes-deleted`` deltas when scenes are added/removed
-        in the app. The scene platform discovers from ``self.scenes`` and is
-        notified via ``async_update_listeners`` so new scenes appear without a
-        reload. (The WebSocket ``scene`` *command* is unimplemented on the
-        gateway, so recall still goes over REST — see ``activate_scene``.)
+        The gateway pushes the full ``scenes`` list on connect and on every
+        change. The scene platform discovers from ``self.scenes`` and is
+        notified via ``async_update_listeners`` so new scenes appear (and
+        deleted ones go) without a reload. The ``scenes-new`` /
+        ``scenes-deleted`` frames that follow a change carry only the added /
+        removed ids, diffed from the list this has just adopted, so they are
+        not consumed (see ``_handle_websocket_message``). (The WebSocket
+        ``scene`` *command* is unimplemented on the gateway, so recall still
+        goes over REST — see ``activate_scene``.)
         """
-        items = cast("list[Scene]", [s for s in data if isinstance(s, dict)])
-        if msg_type == "scenes":
-            self.scenes = items
-        elif msg_type == "scenes-new":
-            by_id = {s.get("id"): s for s in self.scenes}
-            for scene in items:
-                by_id[scene.get("id")] = scene
-            # De-duplicate by label, newest wins. Scene identity is the label
-            # (a scene's id is `id` + hex(mesh scene number), a number the app
-            # may reassign — see `models.Scene`), so a delta that assigned a
-            # scene a new id would otherwise leave the old and new entries side
-            # by side — and activation resolves the FIRST label match, which
-            # could be the dead id. Scenes without a label can't back an entity
-            # but are kept for diagnostics.
-            by_label: dict[str, Scene] = {}
-            unlabeled: list[Scene] = []
-            for scene in by_id.values():
-                label = scene.get("label")
-                if label:
-                    by_label[label] = scene
-                else:
-                    unlabeled.append(scene)
-            self.scenes = [*by_label.values(), *unlabeled]
-        else:  # scenes-deleted
-            removed = {s.get("id") for s in items}
-            self.scenes = [s for s in self.scenes if s.get("id") not in removed]
+        self.scenes = cast("list[Scene]", [s for s in data if isinstance(s, dict)])
         self.async_update_listeners()
 
     def _handle_scene_recall(self, data: dict[str, Any]) -> None:
@@ -2624,37 +2832,61 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     event_data["entity_id"] = entity_id
         self.hass.bus.async_fire(EVENT_SCENE_RECALLED, event_data)
 
-    def _apply_gateway_version(self) -> None:
-        """Push the firmware version onto our devices in the registry.
+    @callback
+    def _apply_device_info(self) -> None:
+        """Push the firmware versions and models onto our devices in the registry.
 
         An entity's ``device_info`` is only read when it is first added, which
-        may happen before ``GET /version/`` has answered (setup reads it before
-        the platforms, but a failed read is retried on a later session). Update
-        the registry directly so the device page shows the version without
-        needing a reload. Combined with the ``device_info`` fallback this covers
+        may happen before ``GET /version/`` has answered (a failed read is
+        retried on a later session), or before the verbose device properties
+        (firmware revisions) or the project export (product names) are known —
+        or those change later. Update the registry directly so the device page
+        follows without a reload. Combined with ``device_info`` this covers
         either ordering (entities created before or after the read).
 
-        The value written per device mirrors ``JungHomeEntity.device_info``
-        exactly: a device that reports its **own** ``sw_version`` keeps it, and
-        only devices without one (plus the synthetic gateway hub, which has no
-        entry in the function list) fall back to the gateway version. Writing the
-        gateway version unconditionally used to clobber a per-device version, so
-        the two mechanisms disagreed whenever the gateway populated it.
+        The values written mirror ``JungHomeEntity.device_info`` exactly
+        (``sw_version_for`` / ``model_for``). The synthetic gateway hub gets the
+        gateway version and keeps its model. A row whose slug the current
+        device list does not carry (a device on its way to the pruner) is left
+        alone, and so are colliding slugs (``duplicate_slugs``): two functions
+        behind one registry device would take turns writing their values.
+        Unknown values are never written — ``None`` would blank what an
+        earlier run stored.
         """
-        if self.gateway_version is None or self.config_entry is None:
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
             return
-        by_slug = {device_slug(d): d for d in (self.data or [])}
+        devices = self.data or []
+        colliding = duplicate_slugs(devices)
+        by_slug = {
+            device_slug(d): d for d in devices if device_slug(d) not in colliding
+        }
+        hub_id = gateway_device_id(entry)
         registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(
-            registry, self.config_entry.entry_id
-        ):
-            desired = self.gateway_version
-            for domain, identifier in device.identifiers:
-                if domain == DOMAIN and identifier in by_slug:
-                    desired = by_slug[identifier].get("sw_version") or desired
-                    break
-            if device.sw_version != desired:
-                registry.async_update_device(device.id, sw_version=desired)
+        for device_entry in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            slugs = {
+                identifier
+                for domain, identifier in device_entry.identifiers
+                if domain == DOMAIN
+            }
+            sw_version: str | None
+            model: str | None = None
+            if hub_id in slugs:
+                sw_version = self.gateway_version
+            elif (
+                device := next((by_slug[s] for s in slugs if s in by_slug), None)
+            ) is not None:
+                sw_version = self.sw_version_for(device)
+                model = self.model_for(device)
+            else:
+                continue
+            changes: dict[str, Any] = {}
+            if sw_version and device_entry.sw_version != sw_version:
+                changes["sw_version"] = sw_version
+            if model and device_entry.model != model:
+                changes["model"] = model
+            if changes:
+                registry.async_update_device(device_entry.id, **changes)
 
     async def start(self) -> None:
         """Connect to the WebSocket.
@@ -2671,11 +2903,17 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._ws_task = entry.async_create_background_task(
             self.hass, self._websocket_loop(), name="junghome_ws"
         )
-        # The energy counters move; everything else in the map is static.
+        # The energy counters move, and a light's Kelvin range may still be
+        # unread; everything else in the map is static.
         self._properties_unsub = async_track_time_interval(
             self.hass,
             self._async_refresh_device_properties,
             timedelta(seconds=DEVICE_PROPERTIES_REFRESH_INTERVAL),
+        )
+        self.health.unsub = async_track_time_interval(
+            self.hass,
+            self._async_refresh_health_status,
+            timedelta(seconds=HEALTH_STATUS_REFRESH_INTERVAL),
         )
 
     async def stop(self) -> None:
@@ -2691,6 +2929,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # own, or a reconfigure onto a confirmed new certificate) rebuilds the
         # coordinator, which re-raises it on the next poll if it still holds.
         ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
+        # NOT the health and colliding-label issues (`entry_derived_issue_ids`):
+        # deleting them here, on every reload and HA shutdown, lost the user's
+        # "Ignore" each time.
         if self._ws_task is not None:
             self._ws_task.cancel()
             try:
@@ -2701,6 +2942,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if self._properties_unsub is not None:
             self._properties_unsub()
             self._properties_unsub = None
+        if self.health.unsub is not None:
+            self.health.unsub()
+            self.health.unsub = None
         if (task := self._node_identity_task) is not None and not task.done():
             # Entry unload cancels its background tasks itself; a full HA
             # shutdown reaches here without an unload, so cancel explicitly.
@@ -2746,9 +2990,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``datapoint`` reply that ``_dispatch_text_frame`` routes to
         ``_resolve_pending_reply``, which resolves the future this method
         awaits — turning what used to be fire-and-forget into a real,
-        raiseable outcome. See ``COMMAND_REPLY_TIMEOUT`` for why a rejection
-        (which the gateway cannot correlate back to this request) surfaces as
-        a timeout rather than the gateway's own error text.
+        raiseable outcome. A rejection carries no message_id; it fails the
+        future through ``_attribute_set_error`` when its datapoint id pins it
+        on this set alone, and otherwise surfaces as ``COMMAND_REPLY_TIMEOUT``.
+        The set is counted in ``_outstanding_sets`` before the send (a reply
+        can land while ``send_str`` is still suspended) and stays counted past
+        a local timeout until its outcome frame arrives; a send that fails on
+        a live socket leaves it counted too — the frame may have reached the
+        gateway, and a stale slot only makes attribution more cautious.
 
         The pending entry is always popped in ``finally``, whether the wait
         succeeded, timed out, or ``send_websocket_message`` raised first (e.g.
@@ -2768,6 +3017,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         }
         future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
+        if self.websocket is not None and not self.websocket.closed:
+            # Same test `send_websocket_message` makes, with no await between:
+            # without a socket nothing leaves, so no outcome frame will come.
+            self._outstanding_sets[message_id] = (
+                datapoint_id,
+                time.monotonic() + COMMAND_OUTCOME_WINDOW,
+            )
         try:
             try:
                 await self.send_websocket_message(message)
@@ -2780,8 +3036,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     await future
             except TimeoutError as err:
                 # Named here so it can be paired with the gateway's own
-                # uncorrelated "error: ..." WARNING (logged by the message-frame
-                # branch), which is the usual reason the reply never came.
+                # "error: ..." WARNING (logged by the message-frame branch)
+                # when that error was too late or too ambiguous to attribute.
                 _LOGGER.warning(
                     "Jung Home gateway did not confirm the %s command for %s "
                     "within %s s",
@@ -2883,7 +3139,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         These three are the only values the firmware accepts — it throws for
         anything else, including the ``none`` its own API descriptor
         advertises (``SetPointState.publishMode``), which would surface here
-        as an uncorrelated error and a command-confirmation timeout.
+        as a command-confirmation timeout: the mode path retries it for ~6 s
+        before the gateway's generic error arrives.
         """
         await self._send_datapoint_command(
             datapoint_id,

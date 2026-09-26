@@ -7,9 +7,14 @@ JUNG HOME Gateway over its REST API and WebSocket.
 
 - `custom_components/junghome/` — the integration.
   - `__init__.py` — setup/unload, one-time stable-ID registry migrations,
-    stale-device pruner, area auto-assignment, capability-change reload,
-    manual device delete, repair-issue withdrawal and store deletion on
-    entry removal; loads the rename-following store before the first refresh.
+    stale-device pruner, area auto-assignment, capability-change reload
+    (whose pass also raises the `duplicate_device_labels` repair issue for
+    `duplicate_slugs` collisions — withdrawn only after
+    `LABEL_COLLISION_CLEAR_ADOPTIONS` = 2 collision-free adoptions in a row, a
+    partial poll must not flap it; nothing written while the entry unloads),
+    manual device delete, repair-issue withdrawal and store deletion on entry
+    removal (the entry-derived issues also on an unload that disables the
+    entry); loads the rename-following store before the first refresh.
   - `coordinator.py` — REST poll (default 60 s, options-configurable) +
     WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
@@ -18,12 +23,25 @@ JUNG HOME Gateway over its REST API and WebSocket.
     enrichments read after the first refresh: node identities from the
     project export (`node_identities`) and device properties from the
     deprecated verbose device endpoint (`device_properties`: energy counters
-    re-read every 5 min, firmware revisions, reachability). And rename
+    re-read every 5 min — the gateway itself refreshes them hourly — firmware
+    revisions, reachability, light Kelvin ranges). And rename
     following (`follow_renames`, on every device-list adoption before the
     listeners run): `function_anchors` (slug → `models.FunctionAnchor`:
     function id, node MAC, element location), persisted in the entry's
     `Store` (`function_anchors_store`), pairs a vanished label with a new one
-    on the same element and rewrites the registry in place.
+    on the same element and rewrites the registry in place. And the gateway
+    health log (`async_fetch_health_status`, `health`: after the first
+    refresh, then every 15 min, best-effort) → one repair issue per
+    `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
+    (`entry_derived_issue_ids`) are **not** deleted by `stop()`: a reload or an
+    HA restart keeps them, so the user's "Ignore" survives (HA restores a
+    dismissal only for an issue it still holds; a deleted one comes back
+    un-ignored), and the next setup re-derives them. They go on entry removal
+    and on an unload with `entry.disabled_by` set (nothing would re-derive
+    them). The push-failure and certificate issues are still dropped by
+    `stop()`.
+  - `health.py` — `GET /healthstatus/` parser and the condition table (which
+    firmware messages raise which issue, and what clears them).
   - `config_flow.py` — zeroconf + manual setup (app-approval or network-key
     password), reauth (confirm form first — registration opens the gateway's
     single 180 s approval window the moment it runs), reconfigure, options
@@ -51,15 +69,27 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
+  - `entity.py` — `JungHomeEntity`, the shared base of every device-backed
+    platform (`device_info`, `available`, datapoint lookups, the
+    foreign-device push skip, `entry_unloading`); scenes don't use it.
+  - `models.py` — the typed wire models and parsers: `sanitize_devices`
+    (both device-list adoption points), `parse_project_export` /
+    `NodeIdentity`, `FunctionAnchor`, `parse_devices_verbose` /
+    `DeviceProperties`.
+  - `diagnostics.py` — entry and device diagnostics (hosts, tokens and
+    serials redacted, also inside free-form text).
+  - `device_trigger.py` — per-button device triggers wrapping the event
+    platform's `EVENT_BUTTON_ACTION` re-emission; `logbook.py` — describes
+    the scene-recalled event.
 - `tools/ws-capture/capture_ws.py` — read-only WS capture + analysis tool.
   Records frames **with timestamps** and walks the user through a scripted
   gesture set (`--script rocker` / `cover`), then `analyze` derives per-gesture
   edge sequences, the burst shape (presses per gesture — the doubled-firmware
   diagnostic), which channels fired inside one gesture (a single-key element's
   alternating copies) and the timing bounds `const.py`'s
-  `BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` rest on. This is how the
-  two open evidence items (the hardware verification of the gesture rebuild
-  and the cover travel question) get settled; the old `disk_dump/ws-capture*/`
+  `BUTTON_HOLD_THRESHOLD` / `BUTTON_DUPLICATE_WINDOW` rest on. It settled the
+  hardware verification of the gesture rebuild (2026-09-16) and is how the
+  cover travel question gets settled; the old `disk_dump/ws-capture*/`
   dumps have no timing.
 - `blueprints/automation/junghome/button_gestures.yaml` — shipped blueprint
   mapping the event platform's `click`/`hold_start` events to actions (plus
@@ -110,18 +140,24 @@ JUNG HOME Gateway over its REST API and WebSocket.
   channel** (the 2026-08-02 rocker capture); single-key elements (events
   5/6) get the side toggled per reception via one service-wide
   `_prevButtonType`, so their two copies **alternate `up`/`down`** (on-air
-  capture by the sibling; a key-element *hold* through the gateway is
-  uncaptured and by the code differs). Labelled capture (2026-08-02, 16 taps + 5
+  capture by the sibling; a key-element *hold* differs — captured
+  2026-09-16, next bullet). Labelled capture (2026-08-02, 16 taps + 5
   holds): tap pulse 0.40–0.53 s (the gateway's synthesised release, not the
   finger and not "device granularity"), hold pulse 2.44–3.11 s (the finger),
   intra-burst gap 0.11–1.03 s. Single vs double click is
   **indistinguishable** (both = 2 identical pairs, overlapping gap ranges);
   tap vs hold separates perfectly on **pulse width** (5× empty band). **This
-  is a regression**: the gateway's own archived logs (2026-06-20→07-28, ~450
-  bursts) show 1.00 presses/burst on the same buttons; gateway fw unchanged
-  across the window, JUNG app went 2.1.0→2.2.0 (app 2.2.x updates device
-  firmware — issue #66). Gesture logic must tolerate both one and two pairs
-  per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
+  is a regression, dated by the gateway's own log** (sdb4 middleware logs,
+  2026-06-20→07-29, gateway fw unchanged throughout): it records 52 of 52
+  functions in the project (a 53rd, a button, was removed on 06-28)
+  going v2.0.0.4 → v2.2.0.x in `software_revision` (2.2.0.2 on all 23
+  buttons) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
+  (the time the hourly re-read saw it — app 2.2.x updates device firmware,
+  issue #66), and per button presses/burst go from 1.13 before (89 % single
+  presses) to 2.53 after (none single; bursts split at > 2 s) — every
+  button edge in that log is a single-key event (5/6/4), so this dates
+  single-key elements; rockers rest on the captures. Gesture
+  logic must tolerate both one and two pairs per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
   device, not per datapoint** (a key element's second copy lands on the
   other datapoint; earlier 0.15–0.25 s guidance came from a mis-segmented
   unlabelled capture — refuted). Evidence + tables in
@@ -143,7 +179,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   pre-2.2.0 device firmware with suppression turned off. A **hold on a
   single-key element** can be copied to the *other* side (captured
   2026-09-16, 1 of 4 holds: press, other-side press +1.4 s, the finger's
-  release on the copy's side, the first side never released): a press on the
+  release on the copy's side, the first side never released; the gateway's
+  June–July log shows the same shape on 10 of 25 key-element holds after
+  the device update, 0 of 38 before): a press on the
   other side of a device whose one side has been down 0.6–2.5 s
   (`BUTTON_HOLD_COPY_AFTER`/`BUTTON_HOLD_COPY_WINDOW`) is dropped as that
   copy and its release completes the hold on the side that is down — one
@@ -186,11 +224,11 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `hvac_mode` again (issue #121; evidence in docs/gateway-websocket.md).
 - **Thermostat presets: the API descriptor's `none` is a lie.** Writes accept
   exactly `frost`/`eco`/`comfort` (the firmware throws on anything else,
-  surfacing as an uncorrelated error → command timeout); "no preset" reads
-  back as the **empty string**, never `"none"` (a preset is derived — target
-  temperature == a configured threshold). climate.py maps `""` → PRESET_NONE
-  on read and treats selecting PRESET_NONE as a local no-op; never send
-  `"none"` (preset note in docs/gateway-websocket.md).
+  surfacing as a generic error only after ~6 s of retries → command
+  timeout); "no preset" reads back as the **empty string**, never `"none"`
+  (a preset is derived — target temperature == a configured threshold).
+  climate.py maps `""` → PRESET_NONE on read and treats selecting
+  PRESET_NONE as a local no-op; never send `"none"` (preset note in docs/gateway-websocket.md).
 - **Cover `level` is percent-closed**: close ⇒ BT-Mesh "down" (`0x7FFF`,
   level→100 %), open ⇒ "up" (`0x8000`, →0 %); HA position = `100 - level`.
   Correct for shutters/blinds; **awnings mount the motor the opposite way** and
@@ -205,15 +243,38 @@ JUNG HOME Gateway over its REST API and WebSocket.
   gateway calls every cover a `WindowCover`, so there is nothing else to key on.
   Don't hard-code `blind` again: it gave every roller shutter slat-oriented
   controls and icons.
-- **Colour temperature is 2000–6000 K, enforced by the gateway**: the
-  middleware hard-codes that range and clamps every tunable-white write
-  (`models/device_states/ColorTemperatureState.js:60,95-103`; see the
-  `DEFAULT_MAX_KELVIN` comment in `light.py`). Do not widen it — it is a
-  gateway limit, not the device's (the app sends `Light CTL Set` with
-  2000–10000 K; the real range is `Light CTL Temperature Range Get`
-  `0x8262`, which the gateway never surfaces). The write path is
-  conditional (`:108-122`): the CTL-Temperature state when the device has
-  one, else Generic Level on element+1.
+- **Colour temperature: the gateway clamps to the device's own range, and
+  the light declares that range.** `ColorTemperatureState.publishValue`
+  clamps every tunable-white write to the state's `profile.range`
+  (`models/device_states/ColorTemperatureState.js:94-103`); 2000–6000 K is
+  only its constructor default (`:60`). The middleware reads the node's
+  Light CTL Temperature Range (`ColorTemperatureStateRange.js`, state
+  `color_temperature_range`) and binds it into that profile range
+  (`services/device_state_service.js:664-687` →
+  `fromState_ColorTemperatureRange`, `:190-197`). `/functions/` carries
+  neither (`getDatapointTypeByState` maps the range state to `null`), but
+  the verbose endpoint does: `models.color_temp_range` reads
+  `states.color_temperature.profile.range` (the effective clamp — probe:
+  2000–6000 on all four lights) into `DeviceProperties.color_temp_range`.
+  The binding runs only once the range state is read — every state starts
+  dirty and the boot's first poll pass (`startup.js:165`
+  `boostPollStates`) reaches it seconds to minutes after a gateway start —
+  so a verbose read taken before then shows the constructor default next to
+  an unread (`[]`) range state. The profile is trusted only when the range
+  state holds a read `[min, max]`, when there is no range state, or when it
+  already differs from 2000–6000 (bound earlier; a failed-request `NaN`
+  reset of the range value does not unbind it); otherwise the range is
+  unknown and `color_temp_range_pending`, and the periodic properties
+  refresh re-reads that light (`GET /devices/{id}?verbose=true`, next to the
+  energy counters) until it is known. `light.py` looks the range up on every
+  state write (`_kelvin_range`, falling back to `DEFAULT_MIN/MAX_KELVIN`
+  2000–6000 K when unknown or implausible — outside the spec's 800–20000
+  K), so a range learned after the entity exists reaches it on that
+  refresh's listener dispatch; min/max and both clamp directions
+  (`_clamp_kelvin`) use it. The `/types/datapoints`
+  catalog's 2000–10000 is a descriptor, not the enforcement. The write
+  path is conditional (`:107-122`): the CTL-Temperature state when the
+  device has one, else Generic Level on element+1.
 - **The WS handshake's `version` frame is the API version, not the firmware.**
   It carries `api-junghome`'s own package version (`"1.5.0"`, matching
   `apidoc.json` `info.version`); the gateway's *software* version is the
@@ -223,11 +284,28 @@ JUNG HOME Gateway over its REST API and WebSocket.
   reply, which carries both next to `api_version` (one token-less request;
   the two `config/parameter` reads it replaced returned the same values). The two were conflated, so every device page showed
   `1.5.0` as its `sw_version`. `coordinator.api_version` holds the former
-  (diagnostics only); `gateway_version` holds the latter and is what reaches
-  `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
+  (diagnostics only); `gateway_version` holds the latter and is the hub's
+  `sw_version` — and a function device's only while its node's own firmware
+  revision is unknown (`coordinator.sw_version_for`: the function list's own
+  `sw_version`, else the node's `software_revision` as `"2.2.0.2"`, else the
+  gateway version). The device `model` is the node's product
+  (`coordinator.model_for`: the export's `pid` named by the firmware's
+  `ProductID` enum, `models.PRODUCT_NAMES` from `models/btmesh_product_ids.js`
+  — `PushButton2gang`, `DimmerAct1gang2input`), else the function type.
+  `device_info` reads both at registration; `_apply_device_info` rewrites
+  registered rows when the gateway version, the properties or the identities
+  arrive or change later (hub, listed non-colliding slugs only; unknown
+  values never written). The hub's `configuration_url` is
+  `https://<host>/` (`const.gateway_configuration_url`: nginx proxies `/` to
+  the api-server's webview landing page; a host change reloads the entry,
+  which re-registers it). The state DB's defaults `"0.0.0"`/`"0"` mean "not
+  read yet".
 - Scenes arrive over the WS `scenes` broadcasts (plus a setup-time REST fetch)
-  and recall over REST `POST /scenes/{id}` — the WS `scene` *command* is
-  unimplemented on the gateway. Scene identity is the **label**; recalls
+  — the full list, on connect and on change; the `scenes-new` /
+  `scenes-deleted` frames that follow a change carry only id strings and are
+  not consumed (as for every `*-new`/`*-deleted` frame) — and recall over
+  REST `POST /scenes/{id}` — the WS `scene` *command* is unimplemented on
+  the gateway. Scene identity is the **label**; recalls
   re-resolve the id at call time. (The scene `id` is in fact derived —
   `"id"` + hex(mesh scene number), `id0001` ↔ `value` `"0001"` — so it is
   stabler than the device ids; the label-keyed design stays for existing
@@ -236,20 +314,36 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - The gateway lists **unreachable devices too** (no `isOnline` filter in the
   firmware's function assembly) — absence from `/functions/` means
   deleted/relabelled or a partial poll, which is why the pruner debounces
-  `STALE_DEVICE_PRUNE_MISSES` polls before removing anything.
+  `STALE_DEVICE_PRUNE_MISSES` device-list adoptions (polls and `functions`
+  broadcasts — every `data_generation` bump) before removing anything.
 - **`GET /devices/?verbose=true` (deprecated/experimental in the OpenAPI,
   probed live 2026-09-16 on 2.1.3/2840, 49 devices, 187 KB) returns the raw
   middleware device objects** — everything `/functions/` drops. Per state:
-  `statistics.reachable` / `last_seen` / `connection_quality` (per-device
-  reachability at last — 19 of 49 devices were unreachable at probe time),
+  `statistics.reachable` / `last_seen` / `connection_quality` — **not live**:
+  the api-server serves its cached copy of each state, replaced only when
+  the value changes (or the whole device list is republished), and the
+  middleware serialises that copy *before* the mesh answer updates the
+  statistics (`device_state_service.js:249-253`,
+  `jung-device-service.js:249-276`), so 162 states/properties of the probe
+  held a value yet read `reachable: false`, `last_seen: 0`;
   `profile.index` (the datapoint suffix in hex: `input_power` idx 16 =
   `-010`), `model.address` (element unicast). Per device `property`:
   `total_device_energy_use` in **Wh** and `total_device_power_on_time` in h
   on `SocketEnergy` (cumulative energy the README says is missing — it is a
-  property, never a state, so `/functions/` cannot carry it),
-  `software_revision` `[2, 2, 0, 2]` on every push button (device firmware
-  2.2.0.2 confirmed per device; `[2, 2, 0, 1]` on lights — a per-device
-  doubled-firmware detector for the duplicate-suppression default), `key_mode`
+  property, never a state, so `/functions/` cannot carry it; the gateway
+  re-reads the counter from the device only hourly —
+  `TotalDeviceEnergyUse.js:65` `POLL_60MIN`),
+  `software_revision` (a **node** property: `[2, 2, 0, 2]` / `[2, 2, 0, 1]`
+  where filled, but in the probe only 2 of 20 push-button functions and not
+  every light carried a value — lights 18 × 2.2.0.2, 5 × 2.2.0.1, 4 × null;
+  both sockets 2.2.0.1; every function's revision state
+  sits at its node's main-element unicast, `model.address`, the Generic
+  Property models being bound to element 0 —
+  `services/products_service.js:29-33` — and each null one shares that
+  address with a function that read the node's revision — a gateway bug:
+  `isDeviceAtMainElement` counts property addresses, so non-main functions
+  poll the revision themselves, the answer lands on the main function and
+  their own read times out and resets; docs/gateway-rest-api.md), `key_mode`
   (6 = gateway on 19 of 20 buttons), `switch_operation_mode`,
   `device_key_lock`. No cover in the network, so `move_operation_mode` is
   still unverified. Raw sample: `disk_dump/devices-verbose-20260916.json`
@@ -259,12 +353,41 @@ JUNG HOME Gateway over its REST API and WebSocket.
   first refresh (and again only when a function appears that the last answer
   did not list — an omitted function is not re-asked, a missing endpoint or
   failed read is retried each interval), then
-  `GET /devices/{id}?verbose=true` (~8 KB) per energy device every
-  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s. Drives the `total_energy`
-  sensor (Wh, `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
-  per-device duplicate-suppression exemption
-  (`button_reports_each_tap_once`: revision known AND < 2.2.0). Reachability
-  is diagnostics-only — availability semantics are a settled decision.
+  `GET /devices/{id}?verbose=true` (~8 KB) per energy device — and per
+  light whose Kelvin range is still pending, until known — every
+  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
+  counter itself moves at most hourly). Drives the `total_energy`
+  sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that
+  only at registration, so counters registered earlier stay Wh;
+  `TOTAL_INCREASING`, `sensor.<socket>_total_energy`), each tunable-white
+  light's Kelvin range (colour-temperature bullet above), each device page's
+  `sw_version` and the per-device duplicate-suppression exemption
+  (`button_reports_each_tap_once`: revision known AND < 2.2.0) — both
+  through `coordinator.software_revision_for`, which resolves a null
+  revision per node (same revision-state address, or same node UUID from the
+  export; disagreeing values on one node → unknown, so suppression stays
+  on). Device diagnostics carry the function's properties, the resolved node
+  revision and its rename anchor. Reachability is diagnostics-only —
+  availability semantics are a settled decision.
+- **`GET /healthstatus/` is an append-only log, not a status** (v2.1.3,
+  `health_status_service.js`): every middleware `debug/info/warn/error` call
+  since the middleware started, newest first, `{level, time (ISO UTC),
+  description, details}`; never pruned, never deduplicated, no WS push
+  (commented out). Same token as `/functions/` (401 only). So a condition
+  "clears" only on a gateway restart or when a newer entry supersedes it
+  (`New Bluetooth Mesh Project` clears the project ones). Time sync: every
+  failed NTP round logs the generic `time error` flag entry, and one more
+  than 24 h after the last good sync then also logs `JUNG HOME Gateway Time
+  Sync Error`, later in the same handler (`sys_event_handler.js:128-156`) —
+  so `time error` is that condition's clearing entry (a single missed round
+  after a recovery leaves it newest and must not resurrect the issue from
+  the stale entry), and a successful sync, which logs nothing, withdraws it
+  through `config/parameter/time_error` reading `false`. Issues: Bluetooth
+  chip/adapter failure, out of sequence numbers, time sync (> 24 h), project
+  missing, project incomplete. `JUNG HOME Devices are unreachable` is
+  `isDeviceOnline` — the push-button false positive of the reachability
+  decision — so diagnostics only; `time error` alone raises nothing. Message
+  table in docs/gateway-rest-api.md.
 
 ## Gateway reference — read `docs/` first
 
@@ -289,7 +412,8 @@ instead of re-deriving:
 ## Key behaviours to preserve
 
 - **Stable identity.** Device/datapoint `id`s have been observed to change
-  across app-driven firmware updates, so entity `unique_id`s and device
+  around app-driven firmware updates (not *by* them — measured below), so
+  entity `unique_id`s and device
   identifiers derive from the device **label** + datapoint **suffix**
   (`stable_unique_id`), never the raw id. The ids are not random: per the
   2026-09-15 audit a device id is `"id"` + `md5(node UUID + hex(location))[:15]`
@@ -305,7 +429,8 @@ instead of re-deriving:
   label-keyed design turns into a new HA device (old one pruned, history and
   customisations not carried over — **no longer**: renames are followed, next
   bullet). The gateway *does* expose
-  hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
+  hardware identity on API 1.5.0+, i.e. gateway fw 2.1.x
+  (`GET /project/junghome`: node UUID / MAC /
   unicast / locations — tracker §3), but the label-keyed design stays.
   Don't reintroduce id-based identifiers. That export IS read at setup
   (`coordinator.async_fetch_node_identities`, `models.parse_project_export`,
@@ -365,9 +490,11 @@ instead of re-deriving:
   by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
-  changes). Guard every such map with `duplicate_slugs()`; its three current
-  users are `_register_capability_reload`, `_reload_if_device_ids_changed`
-  and `_make_area_assigner` (the device-identifier migration guards the same
+  changes). Guard every such map with `duplicate_slugs()`; its current
+  users are `_register_capability_reload`, `_reload_if_device_ids_changed`,
+  `_make_area_assigner`, `follow_renames`, `apply_node_identities`,
+  `link_node_identity` and `_apply_device_info` (the device-identifier
+  migration guards the same
   hazard differently — a registry `async_get_device` clash check before each
   write).
 - **Entity naming.** `_attr_has_entity_name = True` with a short `_attr_name`
@@ -433,17 +560,30 @@ instead of re-deriving:
   `_dispatch_text_frame` routes to `_resolve_pending_reply` to resolve the
   future the command method is awaiting — then falls through to the normal
   merge path, so `coordinator.data` holds the *confirmed* value before the
-  entity's own optimistic write runs. A rejected set produces only an
-  `error:` message frame with **no `message_id`** to correlate against, so a
-  rejection surfaces as a `COMMAND_REPLY_TIMEOUT` (5 s; the middleware itself
-  gives up on the BT-Mesh node after 3 s — `config.btmesh.response_timeout_ms`
-  in `config.json`) rather than the gateway's specific error text. Do not try
-  to attribute an uncorrelated `error:` frame to whichever command is
-  in-flight — with concurrent commands from different entities that would
-  misattribute someone else's failure. The reply only ever arrives on the
-  session that sent the command (`socket.send`, not a broadcast), so the
-  `_run_websocket` finally block fails all in-flight futures (`cannot_send`)
-  the moment the session ends — never leave them to sit out the timeout.
+  entity's own optimistic write runs. A rejected set produces an `error:`
+  message frame with **no `message_id`**, but its text names the datapoint
+  (`could not set datapoint (<id>) value, ...` — formats and causes in
+  docs/gateway-websocket.md "Errors"), and **attribution is by that id with
+  a uniqueness guard (2026-09-26)**: `_attribute_set_error` fails the
+  command (`command_rejected`, the middleware's text) only when exactly one
+  set for that datapoint is outstanding in `_outstanding_sets` — which keeps
+  sets that already timed out locally (the api-server's own error comes at
+  6 s, after `COMMAND_REPLY_TIMEOUT` = 5 s) until their outcome frame
+  arrives or `COMMAND_OUTCOME_WINDOW` passes, so a late error is never
+  pinned on a newer set. Anything ambiguous (two outstanding, unparseable,
+  unknown id) still surfaces as the timeout. The one resolved ambiguity: a
+  409 `Conflict with newer request` (the publish mutex replaced a *waiting*
+  set with a newer one for the same datapoint, `mutex.js:55-60`; the one
+  publishing is never replaced) while two or more of ours are outstanding
+  ends the one sent just before our newest quietly and retires its slot —
+  the user's own later command superseded it; an older, publishing set
+  still reports through its own reply. Never attribute by *timing* ("whichever
+  command is in flight") — with concurrent commands from different entities
+  that misattributes someone else's failure. The reply (and the error) only
+  ever arrives on the session that sent the command (`socket.send`, not a
+  broadcast), so the `_run_websocket` finally block fails all in-flight
+  futures (`cannot_send`) and forgets `_outstanding_sets` the moment the
+  session ends — never leave them to sit out the timeout.
 
 ## Conventions
 
@@ -455,16 +595,23 @@ instead of re-deriving:
   (self-signed gateway cert); never build SSL contexts on the event loop.
 - CI: `test.yml` (pytest + mypy, strict via `pyproject.toml`), `lint.yml` (ruff, pinned),
   `validate.yml` (hassfest + HACS), `floor.yml` (imports the integration
-  against the `hacs.json` minimum HA on every branch — a floor break means
-  *raise the floor*, not block the release, unless the missing name is
-  type-only, which goes under `TYPE_CHECKING` as `repairs.py` does),
-  `release.yml` (tag-gated on all checks). Coverage
+  and runs the full suite against the `hacs.json` minimum HA on every
+  branch, with `FLOOR_PHCC` = the phcc release pinning the nearest older
+  core — bump it with the floor; the eight `test_all_*_entities` snapshots
+  are deselected there, their floor deltas all core-owned (Pass 6 lists
+  them); a floor break means *raise the floor*, not block the release,
+  unless the missing name is type-only, which goes under `TYPE_CHECKING` as
+  `repairs.py` does), `canary.yml` (weekly/manual, non-gating: the full
+  suite against the newest stable HA that has a matching phcc — an early
+  warning before the next bump), `release.yml` (tag-gated on lint, test and
+  validate only). Coverage
   gate: 95 % branch (`.coveragerc`). Renovate owns pip (the
   pytest-homeassistant-custom-component stack moves as one group and is
   version-capped); Dependabot deliberately does not watch pip.
 - Tests: one file per platform plus flow/coordinator/websocket/init/blueprint/
-  translations/device-trigger/diagnostics/models/project-export/tls/const
-  files; new platform behaviour goes in that platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
+  translations/device-trigger/diagnostics/models/project-export/tls/const/
+  device-properties/logbook/health files; new platform behaviour goes in that
+  platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
   The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
   loaded by conftest as `DEVICES`; `bare_coordinator` is the shared bare
@@ -494,16 +641,34 @@ them without new evidence wastes a session.
   update listener dispatches synchronously inside `async_update_entry`, so
   core re-reads UNLOAD_IN_PROGRESS and its own reload never fires.
   `reload_on_update=False` is passed to state intent only.
-- **Only unknown sensor labels stay untranslated.** The known quantities
-  (`QUANTITY_DESCRIPTIONS` in `sensor.py`: power, energy, voltage, current,
-  frequency, temperature, illuminance, present illuminance — the BWM's
-  ambient reading, its own key — and humidity, matched on unit AND label)
-  are named via `entity.sensor.<key>` translation keys whose English text is
-  the gateway's own label, so nothing changes for English installs; any other
-  label is user-authored app data with nothing correct to translate it to and
-  keeps today's raw name. Voltage/current/frequency register disabled by
-  default; a correlated `error:` reply raises `command_rejected` with the
-  gateway's text.
+- **Only unknown sensor labels stay untranslated.** Quantity labels are
+  **not user-authored**: the gateway maps the sensor state's SIG property id
+  through its own `const/bt_mesh_properties.json`
+  (`util/datapoint_helper_methods.js:52-56`; every name ends in a space, an
+  id missing from the table sends the literal `unknown`). The whole
+  vocabulary is the `category: "sensor"` states in
+  `models/device_sensor_states/*State.js` (label ← `model.kind`, unit ←
+  `profile.unit`): SocketEnergy `Present Device Input Power `/W,
+  `Active Power Loadside `/W, `Present Output Current `/A,
+  `Present Output Voltage `/V and `Present Input Current `/A (the last two
+  `visible: false`, so never in `/functions/`); Thermostat
+  `Present Ambient Temperature `/°C; presence detector
+  `Present Illuminance `/lux and `Presence Detected `/"" (binary_sensor).
+  Captured verbatim: the three visible socket labels (`ws-capture*`,
+  `devices-verbose-20260916.json`) and the detector's two (a user's
+  diagnostics, `disk_dump/config_entry-*.json`). `QUANTITY_DESCRIPTIONS`
+  in `sensor.py` has one description per firmware label (distinct
+  translation keys — two readings of one socket never share a name),
+  matched on unit AND label, English text = the stripped label, so nothing
+  changes for English installs and unique_ids (raw-label-derived) never
+  move. The older generic labels (power, energy, voltage, current,
+  frequency, temperature, illuminance, humidity) match no firmware — none
+  is a SIG name — but stay as the unit base for an unknown label. Any other
+  label keeps its raw name. Voltage/current/frequency descriptions register
+  disabled by default — new registrations only: installs that predate the
+  firmware labels already hold `Present Output Current` enabled (it matched
+  nothing then); a correlated `error:` reply raises `command_rejected` with
+  the gateway's text.
 - **Status LED is an `EntityCategory.CONFIG` switch** — it configures the
   button's look, not a load; still fully actuable.
 - **Scene entities set `has_entity_name = False`** — no backing device to
@@ -511,7 +676,7 @@ them without new evidence wastes a session.
 - **No `services.py`** — exempt in `quality_scale.yaml`; reconsider only with
   a real use case.
 - **`JungHomeEntity.available` does not check the entity's own device against
-  `coordinator.data`** — deliberate: the pruner's 10-poll debounce
+  `coordinator.data`** — deliberate: the pruner's 10-adoption debounce
   (`STALE_DEVICE_PRUNE_MISSES`) bounds the stale window, and a naive check
   would flap on every partial poll. Revisit only by sharing the debounce
   counter.
@@ -524,9 +689,13 @@ them without new evidence wastes a session.
 - **ruff `target-version` stays `py313`** — bumping to py314 flips
   TC001/TC002/UP037 semantics (PEP 649 lazy annotations) and would churn every
   module for zero behavioural gain; revisit when HA core moves.
-- **The group `color_temperature_range` parser stays unwired** — no captured
-  firmware sends the field (`disk_dump/ws-capture*/groups.json`); the gateway
-  clamps CT to 2000–6000 K anyway.
+- **Groups carry no colour-temperature range — the group parser is gone.**
+  `color_temperature_range` in a `groups` frame's `function_types` is only
+  a member state's *type name*: the list is the set of visible state types
+  of the group's members (`services/groups_service.js:37-58`), and a group
+  (`models/jung-home-group.js`) has no other field. No capture carries a
+  value. The per-device range comes from the verbose endpoint instead (the
+  colour-temperature bullet above).
 - **The three broad excepts in `coordinator.py` stay broad** (reconnect loop,
   frame-handler catch-all, WS send path) — wontfix. Each is load-bearing
   containment: the reconnect loop must retry through *any* failure class, a
@@ -543,7 +712,10 @@ them without new evidence wastes a session.
   value to `NaN`). Push buttons never answer requests for their key states,
   so 13 of the network's 20 mains-powered buttons read "unreachable" while
   working perfectly (probe of 2026-09-16; `hasBattery` was false on all 49
-  devices, so it is not a sleepy-node effect). For actuators the same
+  devices, so it is not a sleepy-node effect). And the endpoint does not
+  even serve the live flag: its `statistics` are the api-server's cached copy
+  from the state's last value change, serialised before that answer was
+  counted (verbose bullet above). For actuators the same
   mechanism already reaches the integration for free: the reset writes
   `"NaN"` into `/functions/` and every push, which the platforms show as
   unknown (`const.py` `datapoint_value` note). Nothing the deprecated
@@ -594,7 +766,7 @@ actually carries.
 integration writes, trace the full path: HA service → coordinator command →
 `ip_event_handler` routing → state-class publish, and confirm every value
 sent is one the firmware accepts (it throws on anything else, which
-surfaces as an uncorrelated error → command timeout). For every read, trace
+may surface only as a late, generic error → command timeout). For every read, trace
 state class → `composeDatapointByState` → the value set that can actually
 appear — including `""`, `"NaN"`, trailing-space labels and boundary
 numbers — and confirm the platform parses all of them.
@@ -635,9 +807,14 @@ coherent. **Run the suite on a real floor venv**, not just the import check:
 no `pytest-homeassistant-custom-component` release pins the floor, so install
 the one pinning the nearest older core (0.13.300 for 2025.12.4) and then
 `pip install --only-binary litellm homeassistant==<floor>`; the only expected
-floor-only failures are the eight `test_all_*_entities` snapshots
-(`aliases: list([None])` vs `set({})`, a core-owned serializer delta).
-Anything else is a finding — a name that exists only on newer cores
+floor-only failures are the eight `test_all_*_entities` snapshots, with
+core-owned deltas only — regenerated at 2025.12.4: registry `aliases`
+(`list([None])` vs `set({})`) and `object_id_base` (absent), state
+attribute keys as plain strings instead of `<…Attribute.X: 'k'>` enum
+reprs, no cover `is_closed`, and the light's `min_mireds`/`max_mireds`/
+`color_temp`. syrupy stops at the first failing key (`aliases`), so check
+a floor-only change by regenerating them in a scratch copy
+(`--snapshot-update`) and diffing. Anything else is a finding — a name that exists only on newer cores
 (`RepairsFlowResult`, HA 2026.6) shipped through eight betas because
 `floor.yml` ran on `main` only and never on the integration branch.
 
@@ -656,14 +833,20 @@ or "clean — nothing above P3 survived verification."
   and the captures (§5) that would close the remaining questions. Every bug
   and doc correction it raised has landed. Prefer it over re-deriving those
   facts.
-- **Cover travel states** — less unblocked than it looked: a composed
+- **Cover travel states** — possibly readable, **unverified**: a composed
   `level` datapoint carries a `level_move` value (−1/1/0) derived from
-  current-vs-target (`PositionState.fromMeshMessage` computes mode
-  opening/closing/stopped), but per the audit `extractTargetValue` slices
-  the *last two octets* of the status parameters, which makes `level_move`
-  **structurally always 0** — `is_opening`/`is_closing` cannot be read from
-  `level` pushes as they stand. No cover exists in any capture or in the
-  reference network. Still needed before building anything: a capture of a
+  current-vs-target (`PositionState.fromMeshMessage:115-141` computes mode
+  opening/closing/stopped). `extractTargetValue` slices the *last two
+  octets* of the status parameters (`util/device_state_helper.js:130-133`),
+  which is the target while a transition's status carries one (current +
+  target; the BGAPI event reports the remaining time in its own
+  `remaining_ms` field, not in `parameters` — the field name is in the
+  bt_tunnel binary's strings next to `server_address`/`parameters`
+  (`opt/bt_tunnel/lbc-gw-bt-tunnel_pi-zero`), and the middleware reads
+  only `parameters` for the value, `handler/bt_event_handler.js:106`) and
+  the current level otherwise — so `level_move` is *not* structurally 0
+  (an earlier audit said it was), but nothing has shown it moving either. No
+  cover exists in any capture or in the reference network. Still needed before building anything: a capture of a
   blind actually moving (`tools/ws-capture/capture_ws.py capture --script
   cover` — note its script drives an API move whose `level` reports the
   *target* for ~4 s, so read the result with that in mind), to learn whether
@@ -672,11 +855,12 @@ or "clean — nothing above P3 survived verification."
   (2026-09-16, three rocker elements and two single-key elements — the live
   verification table in docs/gateway-websocket.md): rocker taps/holds/double
   taps behave exactly as modelled, key-element taps alternate sides, and the
-  copied key-element hold was captured once in four and is now handled.
+  copied key-element hold was captured once in four (10 of 25 in the
+  gateway's June–July log) and is now handled.
   The upstream report is drafted —
   `docs/upstream-report-button-double-reporting.md`, ready to send to JUNG
   (the fix at source is a one-line counter dedupe in the gateway's
   `btmesh_property_service.js`, which ignores the `0x5012` counter byte, or
   the device firmware's double publication) — sending it is the user's
-  call. Optionally, more key-element hold samples to learn why three of four
-  carried no copy (the §5 mesh capture would settle it).
+  call. Optionally, more key-element hold samples to learn why some holds
+  carry no copy (the §5 mesh capture would settle it).

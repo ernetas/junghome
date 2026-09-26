@@ -25,7 +25,7 @@
           "host": "Serveris"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50)."
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytąją reikšmę junghome.local, kuri veikia tik kai kuriuose tinkluose, pakeiskite sietuvo IP adresu (pavyzdžiui, 192.168.1.50)."
         }
       },
       "password": {
@@ -36,7 +36,7 @@
           "password": "Tinklo rakto slaptažodis"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytoji reikšmė junghome.local veikia daugelyje tinklų, arba naudokite IP adresą (pavyzdžiui, 192.168.1.50).",
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas. Jis užpildomas automatiškai, kai sietuvas aptinkamas; kitu atveju numatytąją reikšmę junghome.local, kuri veikia tik kai kuriuose tinkluose, pakeiskite sietuvo IP adresu (pavyzdžiui, 192.168.1.50).",
           "password": "„Jung Home“ sietuvo tinklo rakto slaptažodis."
         }
       },
@@ -59,7 +59,7 @@
           "host": "Serveris"
         },
         "data_description": {
-          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50 arba junghome.local)."
+          "host": "„Jung Home“ sietuvo IP adresas arba serverio vardas (pavyzdžiui, 192.168.1.50)."
         }
       },
       "reconfigure_certificate": {
@@ -183,6 +183,12 @@
       "frequency": { "name": "Dažnis" },
       "temperature": { "name": "Temperatūra" },
       "illuminance": { "name": "Apšvieta" },
+      "input_power": { "name": "Įrenginio įėjimo galia" },
+      "load_power": { "name": "Aktyvioji galia (apkrovos pusėje)" },
+      "output_current": { "name": "Išėjimo srovė" },
+      "input_current": { "name": "Įėjimo srovė" },
+      "output_voltage": { "name": "Išėjimo įtampa" },
+      "ambient_temperature": { "name": "Aplinkos temperatūra" },
       "present_illuminance": { "name": "Dabartinis apšvietimas" },
       "humidity": { "name": "Drėgmė" }
     },
@@ -238,6 +244,30 @@
           "different_gateway": "Adresas atsako, bet priklauso kitam Jung Home šliuzui nei šis įrašas. Adresui pakeisti naudokite Konfigūruoti iš naujo."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "„Jung Home“ įrenginiai su konfliktuojančiais pavadinimais",
+      "description": "Kai kurių „Jung Home“ sietuvo adresu {host} įrenginių pavadinimų „Home Assistant“ negali atskirti, nes jie skiriasi tik didžiosiomis ir mažosiomis raidėmis, tarpais arba skyrybos ženklais:\n\n{labels}\n\nTik vienas kiekvienos grupės įrenginys gauna objektus „Home Assistant“. Pervadinkite kitus programėlėje „Jung Home“. Ši problema išnyks savaime, kai tik pavadinimai skirsis."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "„Jung Home“ sietuvo „Bluetooth“ gedimas",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad nepasileido jo „Bluetooth“ lustas, todėl jis negali susisiekti su jūsų „Jung Home“ įrenginiais. Paleiskite sietuvą iš naujo trumpam atjungę jo maitinimą. Jei problema išlieka, atkurkite sietuvo gamyklinius nustatymus ir vėl pridėkite jį prie projekto programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas bus paleistas iš naujo be šios klaidos."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "„Jung Home“ sietuvui baigėsi eilės numeriai",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad jam baigėsi „Bluetooth Mesh“ eilės numeriai, todėl jis gali nebegalėti siųsti komandų jūsų „Jung Home“ įrenginiams. Jei įrenginiai nustoja reaguoti, atkurkite sietuvo gamyklinius nustatymus ir vėl pridėkite jį prie projekto programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas bus paleistas iš naujo be šios klaidos."
+    },
+    "gateway_time_sync_failure": {
+      "title": "„Jung Home“ sietuvo laikrodis nesinchronizuotas",
+      "description": "„Jung Home“ sietuvas adresu {host} daugiau nei 24 valandas nepajėgė sinchronizuoti savo laikrodžio su laiko serveriu. Patikrinkite, ar sietuvas turi interneto prieigą. Ši problema išnyks savaime, kai tik laikrodis vėl bus sinchronizuotas."
+    },
+    "gateway_project_missing": {
+      "title": "„Jung Home“ sietuvas neturi projekto",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad negavo projekto iš programėlės „Jung Home“, todėl nežino jūsų įrenginių. Atidarykite programėlę „Jung Home“ tame pačiame vietiniame tinkle kaip ir sietuvas, kad ji galėtų vėl įkelti projektą. Ši problema išnyks, kai sietuvas gaus naują projektą."
+    },
+    "gateway_project_incomplete": {
+      "title": "„Jung Home“ sietuvo projektas neišsamus",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad jo projekte trūksta įrenginių duomenų, todėl įrenginių pavadinimų, patalpų ir scenų gali trūkti arba jie gali būti neteisingi. Sinchronizuokite projektą rankiniu būdu programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas gaus naują projektą."
     }
   }
 }

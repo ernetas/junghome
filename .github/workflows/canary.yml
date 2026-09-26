@@ -1,0 +1,101 @@
+name: HA canary
+
+# Early warning, not a gate. The gating suite (test.yml) runs against the
+# Home Assistant release pinned in requirements.txt, which Renovate moves
+# deliberately; this job runs the same suite against the newest stable Home
+# Assistant release that has a matching pytest-homeassistant-custom-component,
+# so a core change that will break the integration (or only its tests — a
+# snapshot repr, a renamed helper) shows up weekly instead of on the day of
+# the bump. A red run here means "look before the next HA bump", never "block
+# the release": release.yml does not call this workflow, and it runs only on
+# a schedule or by hand. Check the "Resolve" step's output for which versions
+# it tested.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions: {}
+
+jobs:
+  canary:
+    name: Test against the newest Home Assistant release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Resolve the newest HA release and its test stack
+        # pytest-homeassistant-custom-component pins homeassistant exactly and
+        # its newest releases often track a core beta, so walk its releases
+        # newest-first and take the first that pins the newest stable core
+        # (falling back, with a warning, to the newest that pins any stable
+        # core when none has caught up yet).
+        id: resolve
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          import re
+          import sys
+          import urllib.request
+
+          def pypi(path):
+              with urllib.request.urlopen(f"https://pypi.org/pypi/{path}/json", timeout=30) as reply:
+                  return json.load(reply)
+
+          stable = re.compile(r"^\d+(\.\d+)*$")
+          latest_ha = pypi("homeassistant")["info"]["version"]
+          releases = pypi("pytest-homeassistant-custom-component")["releases"]
+          candidates = sorted(
+              (v for v, files in releases.items()
+               if stable.match(v) and files and not all(f.get("yanked") for f in files)),
+              key=lambda v: tuple(int(p) for p in v.split(".")),
+              reverse=True,
+          )
+          fallback = None
+          for version in candidates[:60]:
+              requires = pypi(f"pytest-homeassistant-custom-component/{version}")["info"]["requires_dist"] or []
+              pins = [m.group(1) for r in requires if (m := re.match(r"^homeassistant\s*==\s*([^\s;,]+)", r))]
+              if not pins or not stable.match(pins[0]):
+                  continue
+              if pins[0] == latest_ha:
+                  chosen = (version, pins[0])
+                  break
+              fallback = fallback or (version, pins[0])
+          else:
+              if fallback is None:
+                  sys.exit("No pytest-homeassistant-custom-component release pins a stable core")
+              chosen = fallback
+              print(
+                  f"::warning::No phcc release pins homeassistant=={latest_ha} yet; "
+                  f"testing {chosen[1]} instead"
+              )
+          print(f"Canary: homeassistant=={chosen[1]} with phcc=={chosen[0]} (newest stable core: {latest_ha})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"phcc={chosen[0]}\nhomeassistant={chosen[1]}\n")
+          EOF
+
+      - name: Install the canary test stack
+        # --only-binary litellm: see floor.yml. The remaining test
+        # requirements (everything but the pinned HA stack and the linters)
+        # come from the requirement files, as in floor.yml.
+        env:
+          PHCC: ${{ steps.resolve.outputs.phcc }}
+          HA: ${{ steps.resolve.outputs.homeassistant }}
+        run: |
+          grep -hvE '^(-r|homeassistant|pytest-homeassistant-custom-component|mypy|ruff)\b' \
+            requirements.txt requirements_test.txt > "${RUNNER_TEMP}/canary-extras.txt"
+          python3 -m pip install --only-binary litellm \
+            "pytest-homeassistant-custom-component==${PHCC}" \
+            "homeassistant==${HA}" \
+            -r "${RUNNER_TEMP}/canary-extras.txt"
+
+      - name: Run the test suite against the canary
+        run: python3 -m pytest -q
