@@ -415,8 +415,9 @@ def _meta_devices(document: dict[str, Any]) -> list[dict[str, Any]]:
 def _first(mapping: dict[str, Any], *keys: str) -> Any:
     """Return the first present key's value.
 
-    The export is camelCase from the app and the gateway's own stored copy is
-    snake_case, so both spellings are tried.
+    The endpoint serves camelCase: the api-server converts its stored
+    snake_case copy (``keysToCamelCase``, ``03_project-file-controller.js``).
+    Both spellings are still tried, defensively.
     """
     for key in keys:
         if key in mapping:
