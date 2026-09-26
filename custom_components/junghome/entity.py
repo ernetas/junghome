@@ -163,10 +163,18 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         ``apply_node_identities`` when identities resolve or a device is
         removed) — see ``_write_node_identity`` for the rule.
 
+        ``model`` is the product behind the function (``"PushButton2gang"``,
+        from the project export) and ``sw_version`` the node's own firmware
+        revision (``"2.2.0.2"``, from the verbose device endpoint), each with
+        the function type / gateway version as fallback — see
+        ``coordinator.model_for`` / ``sw_version_for``, which
+        ``_apply_device_info`` also uses to update rows registered before
+        those were known.
+
         No literal fallbacks, and no ``None`` either: an unknown label, type
         or version is left out, so the registry keeps whatever it already
-        holds for that row (a ``None`` would clear it — the gateway version
-        ``_apply_gateway_version`` wrote on an earlier run, say) and a new
+        holds for that row (a ``None`` would clear it — the version
+        ``_apply_device_info`` wrote on an earlier run, say) and a new
         device is named after the entry, as HA does for any nameless device —
         rather than a made-up "Unknown Model" pinned as if the gateway had
         said it.
@@ -177,11 +185,9 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         }
         if label := self._device.get("label"):
             info["name"] = label
-        if model := self._device.get("type"):
+        if model := self.coordinator.model_for(self._device):
             info["model"] = model
-        if version := (
-            self._device.get("sw_version") or self.coordinator.gateway_version
-        ):
+        if version := self.coordinator.sw_version_for(self._device):
             info["sw_version"] = version
         identity = self.coordinator.node_identity_for(self._device)
         if identity is not None and identity.mac is not None:

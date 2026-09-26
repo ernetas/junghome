@@ -14,6 +14,7 @@ import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -26,7 +27,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import DOMAIN, gateway_device_id
 from custom_components.junghome.coordinator import (
     DEVICE_PROPERTIES_REFRESH_INTERVAL,
     JungHomeDataUpdateCoordinator,
@@ -34,13 +35,21 @@ from custom_components.junghome.coordinator import (
 from custom_components.junghome.diagnostics import async_get_config_entry_diagnostics
 from custom_components.junghome.models import (
     DeviceProperties,
+    NodeIdentity,
     parse_device_properties,
     parse_devices_verbose,
 )
-from tests.conftest import PRISTINE_DEVICES, _fake_run_websocket, bare_coordinator
+from tests.conftest import (
+    PRISTINE_DEVICES,
+    _fake_run_websocket,
+    bare_coordinator,
+    find_device,
+)
 
 SOCKET = "idsock1"  # the fixture's metering socket ("Boiler")
 LIGHT = "idlight1"
+ROCKER = "idrock1"  # the fixture's push-button element ("Button A")
+NULL = object()  # a software_revision property whose value is null
 
 
 def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
@@ -51,8 +60,13 @@ def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
     energy_present: bool = True,
     revision: object = (2, 2, 0, 1),
     reachable: bool = True,
+    node_address: object = None,
 ) -> dict:
-    """One verbose device object, in the wire shape of the 2026-09-16 probe."""
+    """One verbose device object, in the wire shape of the 2026-09-16 probe.
+
+    ``revision=None`` omits the property; ``revision=NULL`` sends it with a
+    ``null`` value, as the probe's secondary functions of a node do.
+    """
     props: dict = {}
     if energy_present:
         props["total_device_energy_use"] = {
@@ -64,9 +78,20 @@ def _verbose(  # noqa: PLR0913 - one keyword per wire field under test
     if revision is not None:
         props["software_revision"] = {
             "state_type": "software_revision",
-            "value": list(revision) if isinstance(revision, tuple) else revision,
+            "value": (
+                None
+                if revision is NULL
+                else list(revision)
+                if isinstance(revision, tuple)
+                else revision
+            ),
             "profile": {"unit": ""},
         }
+        if node_address is not None:
+            props["software_revision"]["model"] = {
+                "address": node_address,
+                "category": "property",
+            }
     return {
         "device_id": device_id,
         "device_type": device_type,
@@ -230,6 +255,7 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
             "energy_wh": 209655.0,
             "software_revision": (2, 2, 0, 1),
             "reachable": True,
+            "node_address": None,
         }
 
 
@@ -505,3 +531,155 @@ async def test_energy_sensor_skips_another_devices_push(hass: HomeAssistant) -> 
         )
         await hass.async_block_till_done()
         assert hass.states.get("sensor.boiler_total_energy").last_updated == before
+
+
+# --- Per-node firmware revision, and the device pages it reaches ------------
+#
+# The revision is a node property the gateway fills reliably only on the
+# function at the node's main element: in the 2026-09-16 probe 18 of 20
+# push-button functions read `null`, each carrying its revision state at the
+# address (the node's main-element unicast) of a function that read one.
+
+
+def test_parse_reads_the_revision_state_address() -> None:
+    """The revision state's `model.address` is the node's key; junk is None."""
+    doc = _verbose(ROCKER, energy_present=False, revision=NULL, node_address=562)
+    assert parse_device_properties(doc) == DeviceProperties(
+        software_revision=None, reachable=True, node_address=562
+    )
+    for bad in (None, "x", -1, True, 1.5):
+        doc["property"]["software_revision"]["model"]["address"] = bad
+        assert parse_device_properties(doc).node_address is None, bad
+    doc["property"]["software_revision"]["model"] = "nope"
+    assert parse_device_properties(doc).node_address is None
+
+
+def test_revision_resolves_through_the_node(hass: HomeAssistant) -> None:
+    """A null revision takes its node's: by revision address, or by node UUID."""
+    coordinator = bare_coordinator(hass)
+    coordinator.device_properties = MappingProxyType(
+        {
+            "main": DeviceProperties(software_revision=(2, 1, 4, 0), node_address=562),
+            "key": DeviceProperties(node_address=562),
+            "other": DeviceProperties(node_address=600),
+            "bare": DeviceProperties(),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "main"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "key"}) == (2, 1, 4, 0)
+    assert coordinator.button_reports_each_tap_once({"id": "key"})
+    # Another node, no address at all, nothing read: unknown.
+    for device_id in ("other", "bare", "unread"):
+        assert coordinator.software_revision_for({"id": device_id}) is None
+        assert not coordinator.button_reports_each_tap_once({"id": device_id})
+
+    # With the project export read, the node UUID joins them too — also for
+    # a function the verbose answer left out entirely.
+    coordinator.node_identities = MappingProxyType(
+        {
+            "main": NodeIdentity(uuid="NODE-A", location=1),
+            "bare": NodeIdentity(uuid="NODE-A", location=0x40),
+            "unread": NodeIdentity(uuid="NODE-A", location=0x41),
+            "lone": NodeIdentity(uuid="NODE-B", location=1),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "bare"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "unread"}) == (2, 1, 4, 0)
+    assert coordinator.software_revision_for({"id": "lone"}) is None
+
+    # Two revisions on one node (never observed): unknown, the safe default.
+    coordinator.device_properties = MappingProxyType(
+        {
+            **coordinator.device_properties,
+            "main2": DeviceProperties(software_revision=(2, 2, 0, 2), node_address=562),
+        }
+    )
+    assert coordinator.software_revision_for({"id": "key"}) is None
+    assert not coordinator.button_reports_each_tap_once({"id": "key"})
+
+
+def test_sw_version_prefers_the_device_then_its_node_then_the_gateway(
+    hass: HomeAssistant,
+) -> None:
+    """The order ``device_info`` and the registry updater share."""
+    coordinator = bare_coordinator(hass)
+    coordinator.gateway_version = "2.1.3 (2840)"
+    coordinator.device_properties = MappingProxyType(
+        {
+            "main": DeviceProperties(software_revision=(2, 2, 0, 2), node_address=562),
+            "key": DeviceProperties(node_address=562),
+        }
+    )
+    assert coordinator.sw_version_for({"id": "key"}) == "2.2.0.2"
+    assert coordinator.sw_version_for({"id": "unread"}) == "2.1.3 (2840)"
+    assert coordinator.sw_version_for({"id": "key", "sw_version": "9"}) == "9"
+    coordinator.gateway_version = None
+    assert coordinator.sw_version_for({"id": "unread"}) is None
+
+
+def _node_of_two(revision: tuple[int, ...] = (2, 2, 0, 1)) -> list[dict]:
+    """The light at a node's main element with the revision, the rocker null."""
+    return [
+        _verbose(LIGHT, energy_present=False, revision=revision, node_address=302),
+        _verbose(ROCKER, energy_present=False, revision=NULL, node_address=302),
+    ]
+
+
+async def test_device_pages_show_the_node_firmware(hass: HomeAssistant) -> None:
+    """Each function's page shows its node's revision; the hub the gateway's.
+
+    The rocker's own revision is null, so the value is its node's; a function
+    whose revision nothing reports falls back to the gateway version, as every
+    device did before.
+    """
+
+    async def _version(_self, _host: str) -> dict[str, str]:
+        return {"version_release": "2.1.3", "version_build": "2840"}
+
+    verbose = [*_node_of_two(), _verbose(SOCKET, revision=None)]
+    with patch.object(
+        JungHomeDataUpdateCoordinator, "_fetch_version_from_api", _version
+    ):
+        async with _running(hass, verbose) as entry:
+            assert find_device(hass, "hall_light").sw_version == "2.2.0.1"
+            assert find_device(hass, "button_a").sw_version == "2.2.0.1"
+            assert find_device(hass, "boiler").sw_version == "2.1.3 (2840)"
+            hub = find_device(hass, gateway_device_id(entry))
+            assert hub.sw_version == "2.1.3 (2840)"
+
+
+async def test_revisions_read_after_the_pages_exist_reach_them(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Properties arriving after registration update the registry in place.
+
+    Setup found no endpoint, so the pages were registered without a revision;
+    the periodic retry reads the list and the rows follow — and a socket whose
+    own re-read reports a new revision (updated in the app) follows too.
+    """
+    async with _running(hass, None) as entry:
+        coordinator = entry.runtime_data
+        assert find_device(hass, "button_a").sw_version is None
+        verbose = [*_node_of_two(), _verbose(SOCKET, revision=(2, 2, 0, 1))]
+        with patch.object(
+            coordinator,
+            "_fetch_devices_verbose_from_api",
+            AsyncMock(return_value=verbose),
+        ):
+            await _tick(hass, freezer)
+        assert find_device(hass, "button_a").sw_version == "2.2.0.1"
+        assert find_device(hass, "boiler").sw_version == "2.2.0.1"
+
+        single = AsyncMock(return_value=_verbose(SOCKET, revision=(2, 2, 0, 3)))
+        with patch.object(coordinator, "_fetch_device_verbose_from_api", single):
+            await _tick(hass, freezer)
+        assert find_device(hass, "boiler").sw_version == "2.2.0.3"
+        # A counter-only change writes nothing to the registry.
+        single.return_value = _verbose(SOCKET, energy=1, revision=(2, 2, 0, 3))
+        with (
+            patch.object(coordinator, "_fetch_device_verbose_from_api", single),
+            patch.object(coordinator, "_apply_device_info") as apply,
+        ):
+            await _tick(hass, freezer)
+        apply.assert_not_called()
+        assert coordinator.device_properties[SOCKET].energy_wh == 1.0

@@ -269,4 +269,28 @@ async def async_get_device_diagnostics(
             if matched and (identity := coordinator.node_identity_for(matched))
             else None
         ),
+        # What the verbose device endpoint said about this function (see the
+        # entry dump's map) and the firmware revision resolved for its node —
+        # the one the device page and the duplicate-suppression exemption use,
+        # which differs from the function's own when that one is null.
+        "device_properties": (
+            asdict(props)
+            if matched and (props := coordinator.device_properties_for(matched))
+            else None
+        ),
+        "node_software_revision": (
+            coordinator.software_revision_for(matched) if matched else None
+        ),
+        # The rename-following anchor stored for this device's slug (function
+        # id, node MAC, element location — identities, not secrets, like
+        # `node_identity`). Present for a device the gateway stopped reporting
+        # too: it is what a rename in the app would be paired against.
+        "function_anchor": next(
+            (
+                asdict(anchor)
+                for slug in sorted(slugs)
+                if (anchor := coordinator.function_anchors.get(slug)) is not None
+            ),
+            None,
+        ),
     }

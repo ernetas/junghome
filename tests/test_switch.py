@@ -1,6 +1,7 @@
 """Switch / socket platform tests for Jung Home."""
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -28,6 +29,28 @@ async def test_switch_and_socket_commands(
             "switch", "turn_off", {"entity_id": entity}, blocking=True
         )
     assert init_integration.runtime_data.websocket.send_str.called
+
+
+async def test_status_led_icon_follows_its_state(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The status LED's icon comes from icons.json via its translation key.
+
+    Lit by default, ``mdi:led-off`` while off — the frontend resolves it from
+    the entity's ``translation_key``, so the key and the file must agree.
+    """
+    entry = er.async_get(hass).async_get("switch.button_a_status_led")
+    assert entry is not None
+    assert entry.translation_key == "status_led"
+    icons = json.loads(
+        (
+            Path(__file__).parents[1] / "custom_components/junghome/icons.json"
+        ).read_text()
+    )
+    assert icons["entity"]["switch"][entry.translation_key] == {
+        "default": "mdi:led-on",
+        "state": {"off": "mdi:led-off"},
+    }
 
 
 async def test_status_led_update(hass: HomeAssistant, init_integration) -> None:

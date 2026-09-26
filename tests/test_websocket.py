@@ -12,7 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from custom_components.junghome.const import DOMAIN
+from custom_components.junghome.const import DOMAIN, gateway_device_id
 from custom_components.junghome.coordinator import (
     WS_KNOWN_FRAME_TYPES,
     JungHomeDataUpdateCoordinator,
@@ -168,22 +168,56 @@ async def test_ws_handshake_auth_failure_triggers_reauth(hass: HomeAssistant) ->
     reauth.assert_called_once()
 
 
-async def test_apply_gateway_version_updates_registry(hass: HomeAssistant) -> None:
+async def test_apply_device_info_updates_registry(hass: HomeAssistant) -> None:
+    """The hub and a listed device get the gateway version; a stale row does not.
+
+    A row whose slug the device list no longer carries is a device on its way
+    to the pruner: nothing current describes it, so it is left alone.
+    """
     coordinator = bare_coordinator(hass)
+    coordinator.data = [{"id": "d1", "label": "Listed"}]
+    registry = dr.async_get(hass)
+    entry_id = coordinator.config_entry.entry_id
+    hub = registry.async_get_or_create(
+        config_entry_id=entry_id,
+        identifiers={(DOMAIN, gateway_device_id(coordinator.config_entry))},
+        model="Gateway",
+    )
+    listed = registry.async_get_or_create(
+        config_entry_id=entry_id, identifiers={(DOMAIN, "listed")}
+    )
+    stale = registry.async_get_or_create(
+        config_entry_id=entry_id, identifiers={(DOMAIN, "some-device")}
+    )
+    assert listed.sw_version is None
+
+    coordinator.gateway_version = "1.5.0"
+    coordinator._apply_device_info()
+
+    assert registry.async_get(hub.id).sw_version == "1.5.0"
+    assert registry.async_get(hub.id).model == "Gateway"
+    assert registry.async_get(listed.id).sw_version == "1.5.0"
+    assert registry.async_get(stale.id).sw_version is None
+
+
+async def test_apply_device_info_skips_colliding_slugs(hass: HomeAssistant) -> None:
+    """Two labels behind one registry device: neither writes over the other."""
+    coordinator = bare_coordinator(hass)
+    coordinator.data = [
+        {"id": "d1", "label": "Lamp 1", "sw_version": "1"},
+        {"id": "d2", "label": "Lamp-1", "sw_version": "2"},
+    ]
     registry = dr.async_get(hass)
     device = registry.async_get_or_create(
         config_entry_id=coordinator.config_entry.entry_id,
-        identifiers={(DOMAIN, "some-device")},
+        identifiers={(DOMAIN, "lamp_1")},
     )
-    assert device.sw_version is None
-
     coordinator.gateway_version = "1.5.0"
-    coordinator._apply_gateway_version()
+    coordinator._apply_device_info()
+    assert registry.async_get(device.id).sw_version is None
 
-    assert registry.async_get(device.id).sw_version == "1.5.0"
 
-
-async def test_apply_gateway_version_keeps_per_device_sw_version(
+async def test_apply_device_info_keeps_per_device_sw_version(
     hass: HomeAssistant,
 ) -> None:
     """A device reporting its OWN sw_version keeps it; others get the gateway's.
@@ -208,22 +242,24 @@ async def test_apply_gateway_version_keeps_per_device_sw_version(
     )
 
     coordinator.gateway_version = "1.5.0"
-    coordinator._apply_gateway_version()
+    coordinator._apply_device_info()
 
     assert registry.async_get(versioned.id).sw_version == "9.9-device"
     assert registry.async_get(unversioned.id).sw_version == "1.5.0"
 
 
-async def test_apply_gateway_version_noop_without_version(hass: HomeAssistant) -> None:
+async def test_apply_device_info_noop_without_version(hass: HomeAssistant) -> None:
     coordinator = bare_coordinator(hass)
+    coordinator.data = [{"id": "d1", "label": "Some Device"}]
     registry = dr.async_get(hass)
     device = registry.async_get_or_create(
         config_entry_id=coordinator.config_entry.entry_id,
-        identifiers={(DOMAIN, "some-device")},
+        identifiers={(DOMAIN, "some_device")},
+        sw_version="2.2.0.2",
     )
-    # No version received yet — must not clobber the registry.
-    coordinator._apply_gateway_version()
-    assert registry.async_get(device.id).sw_version is None
+    # Nothing known — must not clobber what an earlier run stored.
+    coordinator._apply_device_info()
+    assert registry.async_get(device.id).sw_version == "2.2.0.2"
 
 
 async def test_send_raises_when_disconnected(hass: HomeAssistant) -> None:

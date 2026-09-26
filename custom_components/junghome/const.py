@@ -1,9 +1,12 @@
 """Constants and firmware-stable identity helpers for Jung Home."""
 
+import ipaddress
 from typing import TYPE_CHECKING
 
+from homeassistant.const import CONF_HOST
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import slugify
+from yarl import URL
 
 from .models import Datapoint, Device
 
@@ -344,7 +347,41 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     # legacy entry that predates serial discovery.
     if serial := entry.data.get(CONF_SERIAL):
         info["serial_number"] = str(serial)
+    # The gateway's own web page ("Visit" on the device page). Built from the
+    # entry's host on every setup, so a reconfigure or a discovery that moves
+    # the host — both reload the entry — re-points it.
+    if url := gateway_configuration_url(entry.data.get(CONF_HOST)):
+        info["configuration_url"] = url
     return info
+
+
+def gateway_configuration_url(host: object) -> str | None:
+    """Return ``https://<host>/``, the gateway's web page, or None.
+
+    nginx proxies every path but ``/ws`` to the api-server
+    (``etc/nginx/generate_nginx_sites.sh``, ``location /``), which serves its
+    webview at ``/`` (``api.route_webviews`` in ``const/config.json``, mounted
+    unconditionally in ``server.js``): the "JUNG HOME Gateway" landing page
+    with the software version. The host is used exactly as the integration
+    reaches the gateway — nginx answers only its own IP and mDNS name, which
+    are what an entry stores. A bare IPv6 address is bracketed; a host that
+    still does not make a URL with a host part yields None, because the
+    device registry raises on an invalid ``configuration_url`` and a cosmetic
+    link must not fail setup.
+    """
+    if not isinstance(host, str) or not (host := host.strip()):
+        return None
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            host = f"[{host}]"
+    except ValueError:
+        pass  # a hostname, or an address with a port: used as is
+    url = f"https://{host}/"
+    try:
+        valid = bool(URL(url).host)
+    except ValueError:
+        return None
+    return url if valid else None
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:

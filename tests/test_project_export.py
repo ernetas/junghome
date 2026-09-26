@@ -22,6 +22,7 @@ from custom_components.junghome.models import (
     function_id_for,
     mac_from_uuid,
     parse_project_export,
+    product_name,
 )
 
 # A 2-gang push button: primary element (load 1) at index 0, a second load,
@@ -481,3 +482,26 @@ def test_node_identity_is_immutable() -> None:
     with pytest.raises(AttributeError):
         identity.mac = "00:00:00:00:00:00"  # type: ignore[misc]
     assert deepcopy(identity) == identity
+
+
+@pytest.mark.parametrize(
+    ("product_id", "expected"),
+    [
+        # The middleware's ProductID enum (models/btmesh_product_ids.js).
+        (2, "PushButton2gang"),
+        (3, "SocketAct1gangEnergy"),
+        (6, "PushButton2gangBat"),
+        (18, "DimmerAct1gang2input"),
+        (22, "MiniSensor2inputBat"),
+        # Unnamed: a gap in the enum, a product newer than the table, none.
+        (14, None),
+        (0xFE, None),
+        (None, None),
+    ],
+)
+def test_product_name_is_the_gateways_own(
+    product_id: int | None, expected: str | None
+) -> None:
+    identity = NodeIdentity(uuid=NODE_A, location=1, product_id=product_id)
+    assert product_name(identity) == expected
+    assert product_name(None) is None

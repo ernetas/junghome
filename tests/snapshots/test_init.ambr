@@ -3,6 +3,7 @@
   list([
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -26,6 +27,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -49,6 +51,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -72,6 +75,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -95,6 +99,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': 'https://1.2.3.4/',
       'connections': list([
       ]),
       'entry_type': None,
@@ -113,6 +118,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -136,6 +142,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -159,6 +166,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -182,6 +190,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,
@@ -205,6 +214,7 @@
     }),
     dict({
       'area_id': None,
+      'configuration_url': None,
       'connections': list([
       ]),
       'entry_type': None,

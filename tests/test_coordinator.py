@@ -1766,12 +1766,12 @@ async def test_gateway_version_tolerates_missing_or_unread_fields(
         await coordinator.async_fetch_gateway_version()
         assert coordinator.gateway_version == "2.1.3"
 
-    # Re-reading the same version writes nothing: `_apply_gateway_version`
+    # Re-reading the same version writes nothing: `_apply_device_info`
     # walks every registry row, and the stable-session hook calls this on
     # every reconnect.
     aioclient_mock.clear_requests()
     aioclient_mock.get(url, json={"version_release": "2.1.3", "version_build": "0"})
-    with patch.object(coordinator, "_apply_gateway_version") as apply:
+    with patch.object(coordinator, "_apply_device_info") as apply:
         await coordinator.async_fetch_gateway_version()
     apply.assert_not_called()
     assert coordinator.gateway_version == "2.1.3"
