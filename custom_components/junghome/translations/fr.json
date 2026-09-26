@@ -183,6 +183,12 @@
       "frequency": { "name": "Fréquence" },
       "temperature": { "name": "Température" },
       "illuminance": { "name": "Éclairement" },
+      "input_power": { "name": "Puissance d'entrée de l'appareil" },
+      "load_power": { "name": "Puissance active (côté charge)" },
+      "output_current": { "name": "Courant de sortie" },
+      "input_current": { "name": "Courant d'entrée" },
+      "output_voltage": { "name": "Tension de sortie" },
+      "ambient_temperature": { "name": "Température ambiante" },
       "present_illuminance": { "name": "Éclairement actuel" },
       "humidity": { "name": "Humidité" }
     },

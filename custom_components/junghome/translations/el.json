@@ -183,6 +183,12 @@
       "frequency": { "name": "Συχνότητα" },
       "temperature": { "name": "Θερμοκρασία" },
       "illuminance": { "name": "Φωτεινότητα" },
+      "input_power": { "name": "Ισχύς εισόδου συσκευής" },
+      "load_power": { "name": "Ενεργός ισχύς (πλευρά φορτίου)" },
+      "output_current": { "name": "Ρεύμα εξόδου" },
+      "input_current": { "name": "Ρεύμα εισόδου" },
+      "output_voltage": { "name": "Τάση εξόδου" },
+      "ambient_temperature": { "name": "Θερμοκρασία περιβάλλοντος" },
       "present_illuminance": { "name": "Τρέχων φωτισμός" },
       "humidity": { "name": "Υγρασία" }
     },

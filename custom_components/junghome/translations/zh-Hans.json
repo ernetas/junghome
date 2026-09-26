@@ -183,6 +183,12 @@
       "frequency": { "name": "频率" },
       "temperature": { "name": "温度" },
       "illuminance": { "name": "照度" },
+      "input_power": { "name": "设备输入功率" },
+      "load_power": { "name": "有功功率（负载侧）" },
+      "output_current": { "name": "输出电流" },
+      "input_current": { "name": "输入电流" },
+      "output_voltage": { "name": "输出电压" },
+      "ambient_temperature": { "name": "环境温度" },
       "present_illuminance": { "name": "当前照度" },
       "humidity": { "name": "湿度" }
     },

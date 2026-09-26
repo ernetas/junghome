@@ -285,7 +285,10 @@ async def test_push_restores_availability_of_other_devices_entities(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     assert hass.states.get("switch.boiler").state == "unavailable"
-    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        == "unavailable"
+    )
 
     # A push for the LIGHT (a different device) arrives and proves the gateway
     # alive again.
@@ -298,7 +301,10 @@ async def test_push_restores_availability_of_other_devices_entities(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.boiler").state != "unavailable"
-    assert hass.states.get("sensor.boiler_power").state != "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        != "unavailable"
+    )
 
 
 async def test_the_gateway_echo_still_updates_the_socket(
@@ -359,7 +365,10 @@ async def test_push_markers_do_not_survive_their_dispatch(
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     assert hass.states.get("switch.boiler").state == "unavailable"
-    assert hass.states.get("sensor.boiler_power").state == "unavailable"
+    assert (
+        hass.states.get("sensor.boiler_present_device_input_power").state
+        == "unavailable"
+    )
 
 
 async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
@@ -403,7 +412,7 @@ async def test_a_sibling_datapoints_push_does_not_revert_the_socket(
                 "type": "quantity",
                 "values": [
                     {"key": "quantity", "value": "42.0"},
-                    {"key": "quantity_label", "value": "Power "},
+                    {"key": "quantity_label", "value": "Present Device Input Power "},
                     {"key": "quantity_unit", "value": "W"},
                 ],
             },

@@ -183,6 +183,12 @@
       "frequency": { "name": "Частота" },
       "temperature": { "name": "Температура" },
       "illuminance": { "name": "Освещённость" },
+      "input_power": { "name": "Входная мощность устройства" },
+      "load_power": { "name": "Активная мощность (сторона нагрузки)" },
+      "output_current": { "name": "Выходной ток" },
+      "input_current": { "name": "Входной ток" },
+      "output_voltage": { "name": "Выходное напряжение" },
+      "ambient_temperature": { "name": "Температура окружающей среды" },
       "present_illuminance": { "name": "Текущая освещённость" },
       "humidity": { "name": "Влажность" }
     },

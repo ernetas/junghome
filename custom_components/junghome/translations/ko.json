@@ -183,6 +183,12 @@
       "frequency": { "name": "주파수" },
       "temperature": { "name": "온도" },
       "illuminance": { "name": "조도" },
+      "input_power": { "name": "기기 입력 전력" },
+      "load_power": { "name": "유효 전력(부하 측)" },
+      "output_current": { "name": "출력 전류" },
+      "input_current": { "name": "입력 전류" },
+      "output_voltage": { "name": "출력 전압" },
+      "ambient_temperature": { "name": "주변 온도" },
       "present_illuminance": { "name": "현재 조도" },
       "humidity": { "name": "습도" }
     },

@@ -201,6 +201,24 @@
       "illuminance": {
         "name": "Illuminance"
       },
+      "input_power": {
+        "name": "Present Device Input Power"
+      },
+      "load_power": {
+        "name": "Active Power Loadside"
+      },
+      "output_current": {
+        "name": "Present Output Current"
+      },
+      "input_current": {
+        "name": "Present Input Current"
+      },
+      "output_voltage": {
+        "name": "Present Output Voltage"
+      },
+      "ambient_temperature": {
+        "name": "Present Ambient Temperature"
+      },
       "present_illuminance": {
         "name": "Present Illuminance"
       },

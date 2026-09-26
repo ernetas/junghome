@@ -264,7 +264,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   failed read is retried each interval), then
   `GET /devices/{id}?verbose=true` (~8 KB) per energy device every
   `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s. Drives the `total_energy`
-  sensor (Wh, `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
+  sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that
+  only at registration, so counters registered earlier stay Wh;
+  `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
   per-device duplicate-suppression exemption
   (`button_reports_each_tap_once`: revision known AND < 2.2.0). Reachability
   is diagnostics-only — availability semantics are a settled decision.
@@ -497,16 +499,34 @@ them without new evidence wastes a session.
   update listener dispatches synchronously inside `async_update_entry`, so
   core re-reads UNLOAD_IN_PROGRESS and its own reload never fires.
   `reload_on_update=False` is passed to state intent only.
-- **Only unknown sensor labels stay untranslated.** The known quantities
-  (`QUANTITY_DESCRIPTIONS` in `sensor.py`: power, energy, voltage, current,
-  frequency, temperature, illuminance, present illuminance — the BWM's
-  ambient reading, its own key — and humidity, matched on unit AND label)
-  are named via `entity.sensor.<key>` translation keys whose English text is
-  the gateway's own label, so nothing changes for English installs; any other
-  label is user-authored app data with nothing correct to translate it to and
-  keeps today's raw name. Voltage/current/frequency register disabled by
-  default; a correlated `error:` reply raises `command_rejected` with the
-  gateway's text.
+- **Only unknown sensor labels stay untranslated.** Quantity labels are
+  **not user-authored**: the gateway maps the sensor state's SIG property id
+  through its own `const/bt_mesh_properties.json`
+  (`util/datapoint_helper_methods.js:52-56`; every name ends in a space, an
+  id missing from the table sends the literal `unknown`). The whole
+  vocabulary is the `category: "sensor"` states in
+  `models/device_sensor_states/*State.js` (label ← `model.kind`, unit ←
+  `profile.unit`): SocketEnergy `Present Device Input Power `/W,
+  `Active Power Loadside `/W, `Present Output Current `/A,
+  `Present Output Voltage `/V and `Present Input Current `/A (the last two
+  `visible: false`, so never in `/functions/`); Thermostat
+  `Present Ambient Temperature `/°C; presence detector
+  `Present Illuminance `/lux and `Presence Detected `/"" (binary_sensor).
+  Captured verbatim: the three visible socket labels (`ws-capture*`,
+  `devices-verbose-20260916.json`) and the detector's two (a user's
+  diagnostics, `disk_dump/config_entry-*.json`). `QUANTITY_DESCRIPTIONS`
+  in `sensor.py` has one description per firmware label (distinct
+  translation keys — two readings of one socket never share a name),
+  matched on unit AND label, English text = the stripped label, so nothing
+  changes for English installs and unique_ids (raw-label-derived) never
+  move. The older generic labels (power, energy, voltage, current,
+  frequency, temperature, illuminance, humidity) match no firmware — none
+  is a SIG name — but stay as the unit base for an unknown label. Any other
+  label keeps its raw name. Voltage/current/frequency descriptions register
+  disabled by default — new registrations only: installs that predate the
+  firmware labels already hold `Present Output Current` enabled (it matched
+  nothing then); a correlated `error:` reply raises `command_rejected` with
+  the gateway's text.
 - **Status LED is an `EntityCategory.CONFIG` switch** — it configures the
   button's look, not a load; still fully actuable.
 - **Scene entities set `has_entity_name = False`** — no backing device to

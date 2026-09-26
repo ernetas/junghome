@@ -19,9 +19,12 @@ is required.
   (DALI, etc.) with brightness and colour *temperature* (tunable white; the
   gateway supports 2000–6000 K). Full RGB colour is not exposed by the
   gateway.
-- **Sockets** — on/off plus their live meter readings (power, current, …)
-  and, on gateway firmware 2.1.x+, the socket's **cumulative energy counter**
-  as a `total_increasing` sensor — add it to the Energy Dashboard directly.
+- **Sockets** — on/off plus their live meter readings (input power,
+  load-side power, output current) and, on gateway firmware 2.1.x+, the
+  socket's **cumulative energy counter** as a `total_increasing` sensor —
+  add it to the Energy Dashboard directly. It is shown in kWh when first
+  added (a counter set up by an earlier version keeps showing Wh — pick kWh
+  in the entity's settings if you prefer it).
 - **Blinds / shutters (covers)** — open/close/stop, position, and slat tilt.
   Covers that expose slat tilt show up as blinds; position-only ones as roller
   shutters, with the matching icons and controls.
@@ -302,9 +305,19 @@ commands and button presses only travel over the WebSocket. It clears itself onc
 back. If it persists, check that the gateway is reachable and hasn't been
 rebooting.
 
-**Voltage, current and frequency sensors are missing.**
-They register disabled by default on new installs (they are noisy diagnostics);
-enable them from the device page. Existing installs keep them as they were.
+**A socket's current sensor is missing.**
+A metering socket's *Present Output Current* registers disabled by default
+when the socket is first added (it is a noisy diagnostic); enable it from the
+device page. A socket set up by an earlier version keeps it exactly as it was
+— enabled — since Home Assistant never re-disables a registered entity. The socket's output
+voltage and input current exist in the gateway but are hidden by the
+gateway itself, so they never show up at all.
+
+**Sensor names.** The gateway names each reading with its Bluetooth SIG
+property name (*Present Device Input Power*, *Active Power Loadside*,
+*Present Ambient Temperature*, *Present Illuminance*, …). English installs
+show exactly that; every other language gets a translated name. Only a
+label the integration does not know keeps its raw English name.
 
 **Devices show a serial number.**
 On gateway firmware 2.1.x+ (API 1.5.0) each device carries its node's

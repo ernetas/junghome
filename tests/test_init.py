@@ -86,9 +86,8 @@ async def test_all_entity_types_created(hass: HomeAssistant, init_integration) -
     assert hass.states.get("light.hall_light") is not None
     assert hass.states.get("light.strip").state == "on"
     assert hass.states.get("switch.boiler").state == "on"
-    assert hass.states.get("sensor.boiler_power").state == "5.0"
-    # Unknown unit ("?") -> unitless MEASUREMENT sensor (no unit) -> value floated.
-    assert hass.states.get("sensor.boiler_status").state == "42.0"
+    assert hass.states.get("sensor.boiler_present_device_input_power").state == "5.0"
+    assert hass.states.get("sensor.boiler_active_power_loadside").state == "42.0"
     assert hass.states.get("switch.button_a_status_led") is not None
     assert hass.states.get("event.button_a_up") is not None
     assert hass.states.get("event.button_a_down") is not None
@@ -919,7 +918,7 @@ async def test_entity_availability_tracks_connection(
         "switch.button_a_status_led",
         "event.button_a_up",
     )
-    read_only = ("sensor.boiler_power",)
+    read_only = ("sensor.boiler_present_device_input_power",)
 
     def states(entities: tuple[str, ...]) -> set[str]:
         return {
@@ -4490,7 +4489,9 @@ async def test_setup_survives_one_malformed_device_from_the_gateway(
         assert entry.state is ConfigEntryState.LOADED
         assert hass.states.get("light.strip").state == "on"
         assert hass.states.get("climate.living_room") is not None
-        assert hass.states.get("sensor.boiler_power").state == "5.0"
+        assert (
+            hass.states.get("sensor.boiler_present_device_input_power").state == "5.0"
+        )
         assert hass.states.get("event.button_a_up") is not None
         assert hass.states.get("binary_sensor.jung_home_gateway_connection") is not None
         assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

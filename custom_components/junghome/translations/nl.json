@@ -183,6 +183,12 @@
       "frequency": { "name": "Frequentie" },
       "temperature": { "name": "Temperatuur" },
       "illuminance": { "name": "Verlichtingssterkte" },
+      "input_power": { "name": "Ingangsvermogen apparaat" },
+      "load_power": { "name": "Werkelijk vermogen (belastingzijde)" },
+      "output_current": { "name": "Uitgangsstroom" },
+      "input_current": { "name": "Ingangsstroom" },
+      "output_voltage": { "name": "Uitgangsspanning" },
+      "ambient_temperature": { "name": "Omgevingstemperatuur" },
       "present_illuminance": { "name": "Huidige verlichtingssterkte" },
       "humidity": { "name": "Luchtvochtigheid" }
     },
