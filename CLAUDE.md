@@ -51,6 +51,18 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
+  - `entity.py` — `JungHomeEntity`, the shared base of every device-backed
+    platform (`device_info`, `available`, datapoint lookups, the
+    foreign-device push skip, `entry_unloading`); scenes don't use it.
+  - `models.py` — the typed wire models and parsers: `sanitize_devices`
+    (both device-list adoption points), `parse_project_export` /
+    `NodeIdentity`, `FunctionAnchor`, `parse_devices_verbose` /
+    `DeviceProperties`.
+  - `diagnostics.py` — entry and device diagnostics (hosts, tokens and
+    serials redacted, also inside free-form text).
+  - `device_trigger.py` — per-button device triggers wrapping the event
+    platform's `EVENT_BUTTON_ACTION` re-emission; `logbook.py` — describes
+    the scene-recalled event.
 - `tools/ws-capture/capture_ws.py` — read-only WS capture + analysis tool.
   Records frames **with timestamps** and walks the user through a scripted
   gesture set (`--script rocker` / `cover`), then `analyze` derives per-gesture
@@ -110,18 +122,21 @@ JUNG HOME Gateway over its REST API and WebSocket.
   channel** (the 2026-08-02 rocker capture); single-key elements (events
   5/6) get the side toggled per reception via one service-wide
   `_prevButtonType`, so their two copies **alternate `up`/`down`** (on-air
-  capture by the sibling; a key-element *hold* through the gateway is
-  uncaptured and by the code differs). Labelled capture (2026-08-02, 16 taps + 5
+  capture by the sibling; a key-element *hold* differs — captured
+  2026-09-16, next bullet). Labelled capture (2026-08-02, 16 taps + 5
   holds): tap pulse 0.40–0.53 s (the gateway's synthesised release, not the
   finger and not "device granularity"), hold pulse 2.44–3.11 s (the finger),
   intra-burst gap 0.11–1.03 s. Single vs double click is
   **indistinguishable** (both = 2 identical pairs, overlapping gap ranges);
   tap vs hold separates perfectly on **pulse width** (5× empty band). **This
-  is a regression**: the gateway's own archived logs (2026-06-20→07-28, ~450
-  bursts) show 1.00 presses/burst on the same buttons; gateway fw unchanged
-  across the window, JUNG app went 2.1.0→2.2.0 (app 2.2.x updates device
-  firmware — issue #66). Gesture logic must tolerate both one and two pairs
-  per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
+  is a regression, dated by the gateway's own log** (sdb4 middleware logs,
+  2026-06-20→07-29, gateway fw unchanged throughout): it records every
+  function's `software_revision` going v2.0.0.4 → v2.2.0.x (2.2.0.2 on every
+  button) in two waves, 2026-07-25 23:11→07-27 00:01 and 07-27 09:26–10:30
+  (the time the hourly re-read saw it — app 2.2.x updates device firmware,
+  issue #66), and per button presses/burst go from 1.13 before (89 % single
+  presses) to 2.53 after (none single; bursts split at > 2 s). Gesture
+  logic must tolerate both one and two pairs per tap. A duplicate-suppression window must be **≥ ~1.2 s and per
   device, not per datapoint** (a key element's second copy lands on the
   other datapoint; earlier 0.15–0.25 s guidance came from a mis-segmented
   unlabelled capture — refuted). Evidence + tables in
@@ -236,20 +251,29 @@ JUNG HOME Gateway over its REST API and WebSocket.
 - The gateway lists **unreachable devices too** (no `isOnline` filter in the
   firmware's function assembly) — absence from `/functions/` means
   deleted/relabelled or a partial poll, which is why the pruner debounces
-  `STALE_DEVICE_PRUNE_MISSES` polls before removing anything.
+  `STALE_DEVICE_PRUNE_MISSES` device-list adoptions (polls and `functions`
+  broadcasts — every `data_generation` bump) before removing anything.
 - **`GET /devices/?verbose=true` (deprecated/experimental in the OpenAPI,
   probed live 2026-09-16 on 2.1.3/2840, 49 devices, 187 KB) returns the raw
   middleware device objects** — everything `/functions/` drops. Per state:
-  `statistics.reachable` / `last_seen` / `connection_quality` (per-device
-  reachability at last — 19 of 49 devices were unreachable at probe time),
+  `statistics.reachable` / `last_seen` / `connection_quality` — **not live**:
+  the api-server serves its cached copy of each state, replaced only when
+  the value changes (or the whole device list is republished), and the
+  middleware serialises that copy *before* the mesh answer updates the
+  statistics (`device_state_service.js:249-253`,
+  `jung-device-service.js:249-276`), so 162 states/properties of the probe
+  held a value yet read `reachable: false`, `last_seen: 0`;
   `profile.index` (the datapoint suffix in hex: `input_power` idx 16 =
   `-010`), `model.address` (element unicast). Per device `property`:
   `total_device_energy_use` in **Wh** and `total_device_power_on_time` in h
   on `SocketEnergy` (cumulative energy the README says is missing — it is a
-  property, never a state, so `/functions/` cannot carry it),
-  `software_revision` `[2, 2, 0, 2]` on every push button (device firmware
-  2.2.0.2 confirmed per device; `[2, 2, 0, 1]` on lights — a per-device
-  doubled-firmware detector for the duplicate-suppression default), `key_mode`
+  property, never a state, so `/functions/` cannot carry it; the gateway
+  re-reads the counter from the device only hourly —
+  `TotalDeviceEnergyUse.js:65` `POLL_60MIN`), `software_revision` (a
+  per-function doubled-firmware detector for the duplicate-suppression
+  default — but only where the gateway has read it: in the probe `null` on
+  18 of 20 push buttons and `[2, 2, 0, 2]` on 2; lights 18 × 2.2.0.2,
+  5 × 2.2.0.1, 4 × null; both sockets 2.2.0.1), `key_mode`
   (6 = gateway on 19 of 20 buttons), `switch_operation_mode`,
   `device_key_lock`. No cover in the network, so `move_operation_mode` is
   still unverified. Raw sample: `disk_dump/devices-verbose-20260916.json`
@@ -260,7 +284,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   did not list — an omitted function is not re-asked, a missing endpoint or
   failed read is retried each interval), then
   `GET /devices/{id}?verbose=true` (~8 KB) per energy device every
-  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s. Drives the `total_energy`
+  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the value
+  itself moves at most hourly). Drives the `total_energy`
   sensor (Wh, `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
   per-device duplicate-suppression exemption
   (`button_reports_each_tap_once`: revision known AND < 2.2.0). Reachability
@@ -305,7 +330,8 @@ instead of re-deriving:
   label-keyed design turns into a new HA device (old one pruned, history and
   customisations not carried over — **no longer**: renames are followed, next
   bullet). The gateway *does* expose
-  hardware identity on fw 1.5.0+ (`GET /project/junghome`: node UUID / MAC /
+  hardware identity on API 1.5.0+, i.e. gateway fw 2.1.x
+  (`GET /project/junghome`: node UUID / MAC /
   unicast / locations — tracker §3), but the label-keyed design stays.
   Don't reintroduce id-based identifiers. That export IS read at setup
   (`coordinator.async_fetch_node_identities`, `models.parse_project_export`,
@@ -362,9 +388,10 @@ instead of re-deriving:
   by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
-  changes). Guard every such map with `duplicate_slugs()`; its three current
-  users are `_register_capability_reload`, `_reload_if_device_ids_changed`
-  and `_make_area_assigner` (the device-identifier migration guards the same
+  changes). Guard every such map with `duplicate_slugs()`; its current
+  users are `_register_capability_reload`, `_reload_if_device_ids_changed`,
+  `_make_area_assigner`, `follow_renames`, `apply_node_identities` and
+  `link_node_identity` (the device-identifier migration guards the same
   hazard differently — a registry `async_get_device` clash check before each
   write).
 - **Entity naming.** `_attr_has_entity_name = True` with a short `_attr_name`
@@ -460,8 +487,9 @@ instead of re-deriving:
   pytest-homeassistant-custom-component stack moves as one group and is
   version-capped); Dependabot deliberately does not watch pip.
 - Tests: one file per platform plus flow/coordinator/websocket/init/blueprint/
-  translations/device-trigger/diagnostics/models/project-export/tls/const
-  files; new platform behaviour goes in that platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
+  translations/device-trigger/diagnostics/models/project-export/tls/const/
+  device-properties/logbook files; new platform behaviour goes in that
+  platform's file. Uses `pytest_homeassistant_custom_component` (`hass`
   fixture, `MockConfigEntry`, `aioclient_mock`); Python 3.14, pinned HA.
   The shared gateway payload is `tests/fixtures/functions.json` (wire-shaped,
   loaded by conftest as `DEVICES`; `bare_coordinator` is the shared bare
@@ -508,7 +536,7 @@ them without new evidence wastes a session.
 - **No `services.py`** — exempt in `quality_scale.yaml`; reconsider only with
   a real use case.
 - **`JungHomeEntity.available` does not check the entity's own device against
-  `coordinator.data`** — deliberate: the pruner's 10-poll debounce
+  `coordinator.data`** — deliberate: the pruner's 10-adoption debounce
   (`STALE_DEVICE_PRUNE_MISSES`) bounds the stale window, and a naive check
   would flap on every partial poll. Revisit only by sharing the debounce
   counter.
@@ -540,7 +568,10 @@ them without new evidence wastes a session.
   value to `NaN`). Push buttons never answer requests for their key states,
   so 13 of the network's 20 mains-powered buttons read "unreachable" while
   working perfectly (probe of 2026-09-16; `hasBattery` was false on all 49
-  devices, so it is not a sleepy-node effect). For actuators the same
+  devices, so it is not a sleepy-node effect). And the endpoint does not
+  even serve the live flag: its `statistics` are the api-server's cached copy
+  from the state's last value change, serialised before that answer was
+  counted (verbose bullet above). For actuators the same
   mechanism already reaches the integration for free: the reset writes
   `"NaN"` into `/functions/` and every push, which the platforms show as
   unknown (`const.py` `datapoint_value` note). Nothing the deprecated
@@ -653,14 +684,17 @@ or "clean — nothing above P3 survived verification."
   and the captures (§5) that would close the remaining questions. Every bug
   and doc correction it raised has landed. Prefer it over re-deriving those
   facts.
-- **Cover travel states** — less unblocked than it looked: a composed
+- **Cover travel states** — possibly readable, **unverified**: a composed
   `level` datapoint carries a `level_move` value (−1/1/0) derived from
-  current-vs-target (`PositionState.fromMeshMessage` computes mode
-  opening/closing/stopped), but per the audit `extractTargetValue` slices
-  the *last two octets* of the status parameters, which makes `level_move`
-  **structurally always 0** — `is_opening`/`is_closing` cannot be read from
-  `level` pushes as they stand. No cover exists in any capture or in the
-  reference network. Still needed before building anything: a capture of a
+  current-vs-target (`PositionState.fromMeshMessage:115-141` computes mode
+  opening/closing/stopped). `extractTargetValue` slices the *last two
+  octets* of the status parameters (`util/device_state_helper.js:130-133`),
+  which is the target while a transition's status carries one (current +
+  target; the BGAPI event reports the remaining time in its own
+  `remaining_ms` field, not in `parameters` —
+  `handler/bt_event_handler.js:101-106`) and the current level otherwise — so `level_move` is *not* structurally 0
+  (an earlier audit said it was), but nothing has shown it moving either. No
+  cover exists in any capture or in the reference network. Still needed before building anything: a capture of a
   blind actually moving (`tools/ws-capture/capture_ws.py capture --script
   cover` — note its script drives an API move whose `level` reports the
   *target* for ~4 s, so read the result with that in mind), to learn whether

@@ -343,8 +343,10 @@ on connect and on every change — so at most about ten minutes at the default
 delete in the JUNG HOME app also leaves Home Assistant. A removal is logged as
 a warning naming the device, so check the log if one goes unexpectedly. If the
 device is still installed, make sure it is powered and in range of the mesh;
-it is re-added automatically once the gateway reports it again, though any
-custom name, area or `entity_id` you had set is not restored. You can also
+it is re-added automatically once the gateway reports it again under the
+same name, and Home Assistant brings back the custom name, area and
+`entity_id` you had set (it keeps those for removed devices and entities), so
+only automations that fired while it was gone notice the gap. You can also
 remove a stale device yourself from its device page (**⋮ → Delete**); Home
 Assistant refuses this while the gateway is still reporting the device, since
 it would simply come straight back.

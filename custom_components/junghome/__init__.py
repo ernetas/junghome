@@ -48,25 +48,28 @@ PLATFORMS: list[Platform] = [
 # every `coordinator.data_generation` bump) a device must be absent from before
 # it is pruned. The gateway occasionally returns a partial device list on a
 # single poll (notably right after a reload); pruning on the first miss would
-# delete a live device's entities — and because identity is label-derived, the
-# platform would then re-create them under whatever label the next poll
-# reports, losing the user's entity_id/customisations. Requiring persistence
-# rides out a transient blip.
+# delete a live device's entities — which then vanish from dashboards and
+# automations until the device is reported again (Home Assistant restores a
+# re-created device's custom name/area and its entities' entity_ids from its
+# deleted-registry rows, `test_pruned_device_reported_again_is_restored_*`, but
+# only for the same label-derived identity and only after the gap). Requiring
+# persistence rides out a transient blip.
 #
 # The threshold is deliberately generous (10 adoptions — at most about 10
 # minutes at the default 60 s interval, since the poll supplies one per
 # interval and each broadcast (WS connect, an app edit) adds another; the
 # window scales with the configured interval, up to 10 hours at the 1 h
-# ceiling). Removal is destructive and irreversible from the
-# user's side — it takes the entity registry entries with it, so custom names,
-# areas and entity_ids are lost and automations referencing them break — while
-# the cost of removing late is only that a device the user deleted in the app
-# lingers for a few extra polls.
+# ceiling). Removal is destructive from the user's side — it takes the entity
+# registry entries with it, so automations referencing them break and history
+# stops until the device returns under the same label (only then are its
+# custom name, area and entity_ids restored) — while the cost of removing late
+# is only that a device the user deleted in the app lingers for a few extra
+# adoptions.
 # Home Assistant core integrations that prune do so on the *first* miss, but
 # they trust their hub's device list; this gateway is documented above as
 # occasionally returning a partial one, so the same confidence isn't available.
 # (Verified against gateway firmware: the middleware maps every known device
-# into the function list with no `isOnline` filter — disk_dump sdc2
+# into the function list with no `isOnline` filter — disk_dump sdb2
 # `function_helper_methods.js`, `createFunctionListByDevices` — so an
 # unreachable BT-Mesh device is NOT omitted from `/functions/`; it just
 # reports stale/`"NaN"` values. Absence therefore means deleted/relabelled,
