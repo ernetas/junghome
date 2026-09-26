@@ -503,6 +503,9 @@ class JungHomeEnergyTotal(JungHomeEntity, SensorEntity):
     the entity registry only when it registers the entity (or re-derives
     every sensor's after a unit-system change), so a counter registered
     before the suggestion keeps showing Wh until its user picks a unit.
+    No suggested display precision: Home Assistant reads one in the
+    *suggested* unit (0 would show 450 Wh as "0 kWh") and otherwise derives
+    its own per unit — 2 decimals in kWh, whole Wh for a row kept in Wh.
     """
 
     _attr_translation_key = "total_energy"
@@ -510,7 +513,6 @@ class JungHomeEnergyTotal(JungHomeEntity, SensorEntity):
     _attr_state_class = _TOTAL
     _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
     _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_suggested_display_precision = 0
 
     def __init__(
         self, coordinator: JungHomeDataUpdateCoordinator, device: Device

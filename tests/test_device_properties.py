@@ -353,6 +353,11 @@ async def test_setup_reads_properties_and_creates_the_energy_sensor(
         assert state.attributes["unit_of_measurement"] == "kWh"
         assert state.attributes["device_class"] == "energy"
         assert state.attributes["state_class"] == "total_increasing"
+        # Displayed to 1 Wh: the precision derived for kWh, not a fixed 0 read
+        # in the suggested unit (whole kWh — 450 Wh shown as "0 kWh").
+        registered = er.async_get(hass).async_get("sensor.boiler_total_energy")
+        assert registered is not None
+        assert registered.options["sensor"] == {"suggested_display_precision": 2}
         assert hass.states.get("sensor.hall_light_total_energy") is None
         diag = await async_get_config_entry_diagnostics(hass, entry)
         assert diag["device_properties"][SOCKET] == {
@@ -390,6 +395,8 @@ async def test_counter_registered_before_the_kwh_suggestion_keeps_wh(
         registered = entity_registry.async_get("sensor.boiler_total_energy")
         assert registered is not None
         assert "sensor.private" not in registered.options
+        # Whole Wh — not the "209655.000 Wh" a fixed precision of 3 would give.
+        assert registered.options["sensor"] == {"suggested_display_precision": 0}
 
 
 async def test_counter_not_yet_polled_reads_unknown(hass: HomeAssistant) -> None:
