@@ -186,11 +186,11 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `hvac_mode` again (issue #121; evidence in docs/gateway-websocket.md).
 - **Thermostat presets: the API descriptor's `none` is a lie.** Writes accept
   exactly `frost`/`eco`/`comfort` (the firmware throws on anything else,
-  surfacing as an uncorrelated error → command timeout); "no preset" reads
-  back as the **empty string**, never `"none"` (a preset is derived — target
-  temperature == a configured threshold). climate.py maps `""` → PRESET_NONE
-  on read and treats selecting PRESET_NONE as a local no-op; never send
-  `"none"` (preset note in docs/gateway-websocket.md).
+  surfacing as a generic error only after ~6 s of retries → command
+  timeout); "no preset" reads back as the **empty string**, never `"none"`
+  (a preset is derived — target temperature == a configured threshold).
+  climate.py maps `""` → PRESET_NONE on read and treats selecting
+  PRESET_NONE as a local no-op; never send `"none"` (preset note in docs/gateway-websocket.md).
 - **Cover `level` is percent-closed**: close ⇒ BT-Mesh "down" (`0x7FFF`,
   level→100 %), open ⇒ "up" (`0x8000`, →0 %); HA position = `100 - level`.
   Correct for shutters/blinds; **awnings mount the motor the opposite way** and
@@ -438,17 +438,28 @@ instead of re-deriving:
   `_dispatch_text_frame` routes to `_resolve_pending_reply` to resolve the
   future the command method is awaiting — then falls through to the normal
   merge path, so `coordinator.data` holds the *confirmed* value before the
-  entity's own optimistic write runs. A rejected set produces only an
-  `error:` message frame with **no `message_id`** to correlate against, so a
-  rejection surfaces as a `COMMAND_REPLY_TIMEOUT` (5 s; the middleware itself
-  gives up on the BT-Mesh node after 3 s — `config.btmesh.response_timeout_ms`
-  in `config.json`) rather than the gateway's specific error text. Do not try
-  to attribute an uncorrelated `error:` frame to whichever command is
-  in-flight — with concurrent commands from different entities that would
-  misattribute someone else's failure. The reply only ever arrives on the
-  session that sent the command (`socket.send`, not a broadcast), so the
-  `_run_websocket` finally block fails all in-flight futures (`cannot_send`)
-  the moment the session ends — never leave them to sit out the timeout.
+  entity's own optimistic write runs. A rejected set produces an `error:`
+  message frame with **no `message_id`**, but its text names the datapoint
+  (`could not set datapoint (<id>) value, ...` — formats and causes in
+  docs/gateway-websocket.md "Errors"), and **attribution is by that id with
+  a uniqueness guard (2026-09-26)**: `_attribute_set_error` fails the
+  command (`command_rejected`, the middleware's text) only when exactly one
+  set for that datapoint is outstanding in `_outstanding_sets` — which keeps
+  sets that already timed out locally (the api-server's own error comes at
+  6 s, after `COMMAND_REPLY_TIMEOUT` = 5 s) until their outcome frame
+  arrives or `COMMAND_OUTCOME_WINDOW` passes, so a late error is never
+  pinned on a newer set. Anything ambiguous (two outstanding, unparseable,
+  unknown id) still surfaces as the timeout. The one resolved ambiguity: a
+  409 `Conflict with newer request` (the publish mutex replaced a *waiting*
+  set with a newer one for the same datapoint, `mutex.js:55-60`) while two
+  or more of ours are outstanding ends the older ones quietly — the user's
+  own later command superseded them. Never attribute by *timing* ("whichever
+  command is in flight") — with concurrent commands from different entities
+  that misattributes someone else's failure. The reply (and the error) only
+  ever arrives on the session that sent the command (`socket.send`, not a
+  broadcast), so the `_run_websocket` finally block fails all in-flight
+  futures (`cannot_send`) and forgets `_outstanding_sets` the moment the
+  session ends — never leave them to sit out the timeout.
 
 ## Conventions
 
@@ -623,7 +634,7 @@ actually carries.
 integration writes, trace the full path: HA service → coordinator command →
 `ip_event_handler` routing → state-class publish, and confirm every value
 sent is one the firmware accepts (it throws on anything else, which
-surfaces as an uncorrelated error → command timeout). For every read, trace
+may surface only as a late, generic error → command timeout). For every read, trace
 state class → `composeDatapointByState` → the value set that can actually
 appear — including `""`, `"NaN"`, trailing-space labels and boundary
 numbers — and confirm the platform parses all of them.

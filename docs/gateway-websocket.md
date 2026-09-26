@@ -224,8 +224,11 @@ Common `values` keys by device type:
 > middleware routes any present `temperature_ctrl_preset` value to the preset
 > publisher, which throws "does not set a valid preset" for anything but
 > `frost`/`eco`/`comfort` — including `"none"` (`ip_event_handler.js` +
-> `SetPointState.publishMode`); the retry loop then re-throws after 3 attempts
-> and the client sees only an uncorrelated `error:` frame. **Reads**: a preset
+> `SetPointState.publishMode`); the mode path wraps the error into a plain
+> string, which drops any HTTP status, so the retry loop runs all 3 attempts
+> 3 s apart and the client sees only a generic `error:` frame (`error
+> publish`, or the api-server's own 6 s timeout text — see "Errors" below),
+> after any reasonable client timeout. **Reads**: a preset
 > is a *derived* fact — `getRTRTemperatureMode` compares the target temperature
 > against the device's three configured thresholds and returns the matching
 > name or the **empty string** (`property_helper_methods.js`; its own JSDoc
@@ -419,11 +422,58 @@ the device or the mesh, never from a client.
 
 ### Errors
 
-Any failure is returned as a `message` frame:
+Any failure is returned as a `message` frame, sent only to the socket that
+carried the command (`socket.send` in the handler's `catch`), and **without
+the command's `message_id`** — only the `datapoint` success reply echoes it:
 
 ```json
 { "type": "message", "data": "error: could not set datapoint (id...-001) value, ..." }
 ```
+
+Every datapoint set is answered by exactly one frame on its session: the
+`datapoint` reply or this error. A failed set's text is built in three layers
+(all v2.1.3, `sdb2/opt`):
+
+1. `api-server/dist/services/websocket-server-service.js:213-215` —
+   `"could not set datapoint (" + datapoint.id + ") value, " + err.message`,
+   prefixed `"error: "` by the catch at `:236-239`. The id is echoed verbatim
+   from the request — **this is the only correlation a rejection carries**.
+2. `api-server/dist/services/jung-function-service.js` `updateDatapointValues`
+   — `err.message` is `"JungFunctionService: Error during publish request: "`
+   + the middleware's reply `message`.
+3. `middleware/dist/handler/ip_event_handler.js:187-259` (the `Publish`
+   handler) — that `message`:
+
+| middleware `message` | status | cause | arrives |
+|---|---|---|---|
+| `Device is locked` | 423 | `enforced_output` is `active`/`locked`/`frozen`/`windalarm` (`device_state_service.js` `checkIfLocked`) | at once |
+| `RTR controlled datapoint` | 423 | a `switch` whose `SwitchOperationMode` is 1 (the `lockedReason`) | at once |
+| `Unprocessable Entity` | 422 | value outside the state's range/type (`models/device-states.js` `validate`) — value path only; the mode path drops the status and retries (last row) | at once |
+| `Conflict with newer request` | 409 | superseded by a newer set for the same datapoint (below) | at once |
+| `error publish` | — | anything else without a status: an unknown datapoint id (`getState` "no state found") at once; an invalid preset only after its three attempts 3 s apart, racing the next row | at once / ~6 s |
+| `Command with id '<hex>' timed out!` | — | the api-server's own bound on the middleware call (`adapter/mesh-middleware-connection.js` `_sendRequest`, `middleware.command_timeout_ms` = 6000) — any set the middleware has not answered by then, e.g. an unreachable node (each attempt waits out the 3 s mesh response timeout, then 3 s before the next) | at 6 s |
+
+So a full rejection reads e.g. `error: could not set datapoint
+(id5f09764942a70ce-001) value, JungFunctionService: Error during publish
+request: Device is locked`. (Errors that are not about a set carry no id:
+`invalid message format, could not find id` / `could not find type` /
+`message type is unknown`, the `not implemented yet` rejections, and a JSON
+parse error.)
+
+**Superseded sets (409).** Every mesh publish goes through one gateway-wide
+lock, `MutexID` in `middleware/dist/util/mutex.js`, keyed by the state id —
+which *is* the datapoint id (`device_state_service.js` `getState(state_id)`,
+called with the datapoint id). The lock is global (one publish at a time);
+the key only matters for the waiting queue, which holds at most one request
+per id: when a set arrives while the lock is held and a set for the **same
+datapoint** is already *waiting*, the waiting one is rejected with `deferred
+request <id> was replaced by a newer request` (`mutex.js:55-60`) and the
+newer one takes its place. The set that is currently *publishing* is never
+superseded. The `Publish` handler does not retry that rejection and maps it
+to 409 (`ip_event_handler.js:217-219`), so the older command's client gets
+`... Conflict with newer request` straight away while the newer one proceeds
+and is confirmed normally. The newer request can come from any client (the
+app, another HA instance); the error goes only to the older one's socket.
 
 ## Notes for the integration
 
@@ -433,8 +483,21 @@ Any failure is returned as a `message` frame:
   instead of firing and forgetting, so a rejected command now surfaces as a
   real service error and the confirmed re-read value — not just an
   optimistic guess — lands before the awaiting service call returns. A
-  rejection itself is not correlatable (see "Errors" above), so it surfaces
-  as a timeout rather than the gateway's own error text.
+  rejection carries no `message_id` but names the datapoint (see "Errors"
+  above), and the coordinator correlates on that id alone, never on timing
+  (`_attribute_set_error`): it counts every set still owed an outcome frame
+  on the session — including sets that already timed out locally, whose
+  6 s api-server error comes after the integration's 5 s timeout — and fails
+  a command with the gateway's text (`command_rejected`) only when exactly
+  one set for that datapoint is outstanding. Two or more is ambiguous and
+  falls back to the timeout, with one exception: a 409 `Conflict with newer
+  request` while two or more of ours are outstanding means one of our own
+  older sets was replaced, so the older ones return quietly and the newest
+  reports its own outcome. (If another client superseded our *newest* set,
+  that one times out and an older in-progress one returns early — its
+  confirmation is still merged when it arrives.) A 409 on our only set for
+  the datapoint — another client overrode it — is a rejection like any
+  other.
 - The coordinator consumes the full-list `scenes` broadcasts to populate the
   scene platform (recall is REST-only; the `scenes-new` / `scenes-deleted` id
   deltas that follow each one are not consumed), and the

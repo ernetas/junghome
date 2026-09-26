@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import random
+import re
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -109,12 +110,40 @@ WS_SEND_TIMEOUT = 10
 # middleware's own retry loop (3 attempts, 3 s apart) means a set that did not
 # succeed on the first mesh attempt cannot answer inside that bound either —
 # so every reply that will ever arrive does so within ~3.5 s. A rejected set
-# produces only an uncorrelated `error:` message frame (no message_id to match
-# against — see `_dispatch_text_frame`), so a rejection surfaces here as a
-# timeout rather than the gateway's specific error text. (Were the firmware
-# ever to echo the message_id on that frame, `_reject_pending_reply` fails
-# the command at once instead.)
+# produces an `error:` message frame with no message_id, but its text names
+# the datapoint (`could not set datapoint (<id>) value, ...`), so
+# `_attribute_set_error` fails the command at once when that id identifies
+# exactly one outstanding set; anything ambiguous still surfaces here as a
+# timeout. The error frames that need the mesh (offline node, retries) arrive
+# only when the api-server gives up at 6 s — after this timeout, which is why
+# timed-out sets stay counted in `_outstanding_sets` (see
+# COMMAND_OUTCOME_WINDOW).
 COMMAND_REPLY_TIMEOUT = 5
+# How long a sent set stays counted as "its outcome frame may still arrive"
+# for the uniqueness guard of `_attribute_set_error`. Every set is answered by
+# exactly one frame on its session — the `datapoint` reply or the `error:`
+# message (websocket-server-service.js) — and the api-server answers a stuck
+# middleware call after `middleware.command_timeout_ms` = 6000 ms at the
+# latest, so a slot older than this can only be one whose frame was consumed
+# without being matched to it (an ambiguous error). Expiring it merely lets
+# attribution resume on that datapoint; a slot that lingers only makes the
+# guard more cautious, never less.
+COMMAND_OUTCOME_WINDOW = 30
+# The WS handler's wrapper around a failed set (websocket-server-service.js
+# `_on_client_message`), around the api-server's own wrapper of the
+# middleware's reply (`JungFunctionService.updateDatapointValues`). The id is
+# the one the client sent — the integration's own `"id" + hex` datapoint ids,
+# which never contain parentheses.
+_SET_ERROR_RE = re.compile(
+    r"error: could not set datapoint \((?P<datapoint_id>[^()]+)\) value, "
+    r"(?P<detail>.*)",
+    re.DOTALL,
+)
+_SET_ERROR_DETAIL_PREFIX = "JungFunctionService: Error during publish request: "
+# The middleware's text for a set its publish mutex replaced with a newer set
+# for the same datapoint (`HttpErrorMessages[409]`, ip_event_handler.js on
+# `mutex.js` MutexID's "replaced by a newer request").
+_SET_SUPERSEDED_DETAIL = "Conflict with newer request"
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # Repair-issue translation key for "the gateway presents a certificate other
@@ -452,6 +481,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # `_send_datapoint_command` whichever way the wait ends (reply or
         # COMMAND_REPLY_TIMEOUT), so this never accumulates stale entries.
         self._pending_replies: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        # Every set sent on the live session whose outcome frame (reply or
+        # `error:`) has not arrived yet, in send order: message_id ->
+        # (datapoint id, `time.monotonic()` deadline). Unlike
+        # `_pending_replies` it keeps a set that already timed out locally —
+        # its late error frame must not be pinned on a newer set for the same
+        # datapoint (`_attribute_set_error`). Cleared when the session ends;
+        # bounded by COMMAND_OUTCOME_WINDOW otherwise.
+        self._outstanding_sets: dict[str, tuple[str, float]] = {}
         self._next_message_id = 0
         # While a REST poll is in flight, every pushed datapoint's merged keys
         # are recorded here (datapoint id -> merged keys) and re-applied over
@@ -2126,8 +2163,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         same error an immediately-detected dead socket raises) — and an entry
         unload with a command in flight stalled the same way. Futures that are
         already done (reply raced the drop, or the timeout fired) are left
-        alone; each command's ``finally`` still pops its own entry.
+        alone; each command's ``finally`` still pops its own entry. The
+        outstanding-set bookkeeping goes with the session: no outcome frame
+        for its sets can arrive on the next one.
         """
+        self._outstanding_sets.clear()
         for future in self._pending_replies.values():
             if not future.done():
                 future.set_exception(
@@ -2166,6 +2206,54 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     translation_placeholders={"error": reason},
                 )
             )
+
+    def _attribute_set_error(self, text: str) -> None:
+        """Fail the one set an uncorrelated ``error:`` frame can only be about.
+
+        The gateway answers a failed set with ``error: could not set datapoint
+        (<id>) value, <detail>`` and no message_id (websocket-server-service.js),
+        sent only to the socket that carried the set. The id is the
+        correlation: when exactly one set for that datapoint is outstanding on
+        this session — counting sets that already timed out locally, whose
+        late error is exactly what this frame may be — the frame is that set's
+        outcome, and its command fails now with the gateway's reason instead
+        of sitting out COMMAND_REPLY_TIMEOUT. Never by timing, and never when
+        ambiguous: an unparseable frame, an unknown id or two outstanding sets
+        for one datapoint leave every command to its timeout.
+
+        One ambiguous shape is resolved: the publish mutex rejects a queued
+        set when a newer one for the same datapoint arrives (``mutex.js``
+        ``MutexID.lock``, surfaced as 409 "Conflict with newer request"). With
+        two or more of our sets outstanding for that datapoint, one of ours
+        was replaced — normally by our own later set (a dragged slider) — so
+        the older sets end quietly as successes: the newest carries the user's
+        intent and reports its own outcome. One slot is retired for the frame
+        (the oldest; the count is what the guard reads), the other older sets
+        stay counted until their own reply arrives.
+        """
+        match = _SET_ERROR_RE.fullmatch(text)
+        if match is None:
+            return
+        datapoint_id = match["datapoint_id"]
+        detail = match["detail"].removeprefix(_SET_ERROR_DETAIL_PREFIX).strip()
+        now = time.monotonic()
+        for message_id, (_, deadline) in list(self._outstanding_sets.items()):
+            if deadline <= now:
+                del self._outstanding_sets[message_id]
+        candidates = [
+            message_id
+            for message_id, (dp_id, _) in self._outstanding_sets.items()
+            if dp_id == datapoint_id
+        ]
+        if len(candidates) == 1:
+            del self._outstanding_sets[candidates[0]]
+            self._reject_pending_reply(
+                candidates[0], detail or text.removeprefix("error:").strip()
+            )
+        elif len(candidates) > 1 and detail == _SET_SUPERSEDED_DETAIL:
+            del self._outstanding_sets[candidates[0]]
+            for message_id in candidates[:-1]:
+                self._resolve_pending_reply(message_id, {})
 
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
@@ -2221,15 +2309,19 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 if isinstance(text, str) and text.startswith("error:"):
                     # The gateway reports a rejected command (e.g. a bad set) as
                     # an `error:` message frame. Current firmware sends it
-                    # without a message_id, so the WARNING is the only place
-                    # the gateway's own reason ever surfaces; should a frame
-                    # carry one, the awaiting command is failed right away
-                    # with that reason (minus the `error:` tag, which the
+                    # without a message_id but naming the datapoint, which
+                    # `_attribute_set_error` turns into the one command it
+                    # can only be about; should a frame carry a message_id,
+                    # that command is failed directly. Either way with the
+                    # gateway's reason (minus the `error:` tag, which the
                     # translated message already says) instead of sitting
                     # out COMMAND_REPLY_TIMEOUT.
                     if message_id is not None:
+                        self._outstanding_sets.pop(message_id, None)
                         reason = text.removeprefix("error:").strip() or text
                         self._reject_pending_reply(message_id, reason)
+                    else:
+                        self._attribute_set_error(text)
                     _LOGGER.warning("Jung Home gateway reported an error: %s", text)
                 else:
                     _LOGGER.debug("Received message frame: %s", data)
@@ -2240,6 +2332,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # to the normal dispatch below, which merges `data.get("data")`
                 # into `self.data` exactly like a push would — the confirmed
                 # value replaces the optimistic one HA already wrote.
+                self._outstanding_sets.pop(message_id, None)
                 self._resolve_pending_reply(message_id, data.get("data"))
             self._handle_websocket_message(data)
         except Exception as e:
@@ -2735,9 +2828,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``datapoint`` reply that ``_dispatch_text_frame`` routes to
         ``_resolve_pending_reply``, which resolves the future this method
         awaits — turning what used to be fire-and-forget into a real,
-        raiseable outcome. See ``COMMAND_REPLY_TIMEOUT`` for why a rejection
-        (which the gateway cannot correlate back to this request) surfaces as
-        a timeout rather than the gateway's own error text.
+        raiseable outcome. A rejection carries no message_id; it fails the
+        future through ``_attribute_set_error`` when its datapoint id pins it
+        on this set alone, and otherwise surfaces as ``COMMAND_REPLY_TIMEOUT``.
+        The set is counted in ``_outstanding_sets`` before the send (a reply
+        can land while ``send_str`` is still suspended) and stays counted past
+        a local timeout until its outcome frame arrives; a send that fails on
+        a live socket leaves it counted too — the frame may have reached the
+        gateway, and a stale slot only makes attribution more cautious.
 
         The pending entry is always popped in ``finally``, whether the wait
         succeeded, timed out, or ``send_websocket_message`` raised first (e.g.
@@ -2757,6 +2855,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         }
         future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
+        if self.websocket is not None and not self.websocket.closed:
+            # Same test `send_websocket_message` makes, with no await between:
+            # without a socket nothing leaves, so no outcome frame will come.
+            self._outstanding_sets[message_id] = (
+                datapoint_id,
+                time.monotonic() + COMMAND_OUTCOME_WINDOW,
+            )
         try:
             try:
                 await self.send_websocket_message(message)
@@ -2769,8 +2874,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     await future
             except TimeoutError as err:
                 # Named here so it can be paired with the gateway's own
-                # uncorrelated "error: ..." WARNING (logged by the message-frame
-                # branch), which is the usual reason the reply never came.
+                # "error: ..." WARNING (logged by the message-frame branch)
+                # when that error was too late or too ambiguous to attribute.
                 _LOGGER.warning(
                     "Jung Home gateway did not confirm the %s command for %s "
                     "within %s s",
@@ -2872,7 +2977,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         These three are the only values the firmware accepts — it throws for
         anything else, including the ``none`` its own API descriptor
         advertises (``SetPointState.publishMode``), which would surface here
-        as an uncorrelated error and a command-confirmation timeout.
+        as a command-confirmation timeout: the mode path retries it for ~6 s
+        before the gateway's generic error arrives.
         """
         await self._send_datapoint_command(
             datapoint_id,
