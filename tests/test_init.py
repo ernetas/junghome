@@ -638,6 +638,28 @@ async def test_host_change_triggers_reload(
     reload.assert_called_once_with(entry.entry_id)
 
 
+async def test_hub_configuration_url_follows_the_host(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """The hub links the gateway's web page, and a moved host re-points it.
+
+    A reconfigure or an adopted discovery rewrites the stored host, which
+    reloads the entry; setup registers the hub again from the new host.
+    """
+    entry = init_integration
+    hub = find_device(hass, gateway_device_id(entry))
+    assert hub is not None
+    assert hub.configuration_url == "https://1.2.3.4/"
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_HOST: "9.9.9.9"}
+    )
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    hub = find_device(hass, gateway_device_id(entry))
+    assert hub is not None
+    assert hub.configuration_url == "https://9.9.9.9/"
+
+
 async def test_token_only_change_reloads_entry(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -2381,6 +2403,7 @@ async def test_device_registry_entries(
                 "manufacturer": device.manufacturer,
                 "model": device.model,
                 "sw_version": device.sw_version,
+                "configuration_url": device.configuration_url,
                 "area_id": device.area_id,
                 "entry_type": device.entry_type,
                 # Hardware identity from the project export; the fixture setup
@@ -2430,7 +2453,7 @@ async def test_gateway_software_version_reaches_every_device_page(
 
     End-to-end counterpart to the coordinator's unit tests: `device_info` is
     only read when an entity is first added, so the value has to be known
-    before the platforms run (setup fetches it) and `_apply_gateway_version`
+    before the platforms run (setup fetches it) and `_apply_device_info`
     has to carry it into rows already written.
     """
     entry = MockConfigEntry(
@@ -2685,6 +2708,29 @@ async def test_node_identity_reaches_the_device_registry(hass: HomeAssistant) ->
     await hass.async_block_till_done()
 
 
+async def test_device_model_is_the_product_behind_the_function(
+    hass: HomeAssistant,
+) -> None:
+    """``model`` names the node's product (``pid``); the function type is the fallback.
+
+    Every function of a node shares its product — the load and the rocker of
+    one 2-gang push button both read ``PushButton2gang`` — and a function the
+    export does not cover, or a product id the gateway's table does not name,
+    keeps the function type it always showed.
+    """
+    export = _project_export()
+    cdb = json.loads(base64.b64decode(export["network"]))
+    cdb["nodes"][1]["pid"] = "00FE"  # the socket's node: not in the table
+    export["network"] = base64.b64encode(json.dumps(cdb).encode()).decode()
+    entry = await _setup_with_export(hass, export)
+    assert _device(hass, "Hall Light").model == "PushButton2gang"
+    assert _device(hass, "Hall Button").model == "PushButton2gang"
+    assert _device(hass, "Desk Socket").model == "Socket"
+    assert _device(hass, "Orphan").model == "OnOff"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_node_identity_fetch_is_best_effort(hass: HomeAssistant) -> None:
     """No export (older firmware), a failed read, or garbage: setup still loads."""
     for export in (None, [], "not a dict", {"network": "@@@"}):
@@ -2806,6 +2852,72 @@ async def test_diagnostics_carry_identities_but_never_keys(
     await hass.async_block_till_done()
 
 
+async def test_device_diagnostics_carry_properties_and_the_anchor(
+    hass: HomeAssistant,
+) -> None:
+    """A device's report: its verbose properties, its node's revision, its anchor.
+
+    The button's own revision is null — the gateway fills it on the node's
+    main-element function only — so the resolved node revision differs from
+    the raw one, which is exactly what the report must show. The anchor
+    (function id, node MAC, element location) is an identity like
+    ``node_identity``, not a secret, and a function the export does not cover
+    has an id-only one.
+    """
+
+    def _verbose(device_id: str, revision: list[int] | None) -> dict:
+        return {
+            "device_id": device_id,
+            "states": {},
+            "property": {
+                "software_revision": {
+                    "state_type": "software_revision",
+                    "value": revision,
+                    "model": {"address": 0xCF, "category": "property"},
+                }
+            },
+        }
+
+    verbose = [_verbose(HALL_LIGHT_ID, [2, 2, 0, 2]), _verbose(HALL_BUTTON_ID, None)]
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_verbose_from_api",
+        AsyncMock(return_value=verbose),
+    ):
+        entry = await _setup_with_export(hass, _project_export())
+    button = _device(hass, "Hall Button")
+    assert button.sw_version == "2.2.0.2"
+    device_diag = await async_get_device_diagnostics(hass, entry, button)
+    assert device_diag["device_properties"] == {
+        "has_energy": False,
+        "energy_wh": None,
+        "software_revision": None,
+        "reachable": None,
+        "color_temp_range": None,
+        "node_address": 0xCF,
+    }
+    assert device_diag["node_software_revision"] == (2, 2, 0, 2)
+    assert device_diag["function_anchor"] == {
+        "id": HALL_BUTTON_ID,
+        "mac": MAC_A,
+        "location": 0x40,
+    }
+
+    orphan_diag = await async_get_device_diagnostics(
+        hass, entry, _device(hass, "Orphan")
+    )
+    assert orphan_diag["device_properties"] is None
+    assert orphan_diag["node_software_revision"] is None
+    assert orphan_diag["function_anchor"] == {
+        "id": "idorphan",
+        "mac": None,
+        "location": None,
+    }
+    assert "1.2.3.4" not in json.dumps(device_diag, default=str)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_unidentified_function_triggers_a_debounced_refetch(
     hass: HomeAssistant,
 ) -> None:
@@ -2819,6 +2931,7 @@ async def test_unidentified_function_triggers_a_debounced_refetch(
     entry = await _setup_with_export(hass, export=None)
     coordinator = entry.runtime_data
     assert _device(hass, "Hall Light").serial_number is None
+    assert _device(hass, "Hall Light").model == "OnOff"
     fetch = AsyncMock(return_value=_project_export())
     with patch.object(coordinator, "_fetch_project_export_from_api", fetch):
         broadcast = json.dumps({"type": "functions", "data": _identified_devices()})
@@ -2848,6 +2961,9 @@ async def test_unidentified_function_triggers_a_debounced_refetch(
         assert _device(hass, "Hall Button").serial_number == MAC_A
         assert _device(hass, "Hall Button").connections == set()
         assert _device(hass, "Orphan").serial_number is None
+        # The product names reach the pages registered with the fallback.
+        assert _device(hass, "Hall Light").model == "PushButton2gang"
+        assert _device(hass, "Orphan").model == "OnOff"
 
         # The orphan is still unidentified, but the clock was just reset.
         coordinator._dispatch_text_frame(broadcast)

@@ -40,6 +40,7 @@ from .const import (
     WEBSOCKET_OUTAGE_REPAIR_AFTER,
     device_slug,
     duplicate_slugs,
+    gateway_device_id,
     scene_unique_id,
 )
 from .models import (
@@ -53,6 +54,7 @@ from .models import (
     parse_devices_verbose,
     parse_function_anchors,
     parse_project_export,
+    product_name,
     sanitize_devices,
 )
 from .tls import (
@@ -368,8 +370,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.pushed_device_id: str | None = None
         # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", read from
         # REST `GET /version/` (`async_fetch_gateway_version`) — not the
-        # WebSocket "version" frame, which carries the API version. This is
-        # what a device page shows as `sw_version`.
+        # WebSocket "version" frame, which carries the API version. The hub's
+        # `sw_version`, and a device's only while its own firmware revision is
+        # unknown (`sw_version_for`).
         self.gateway_version: str | None = None
         # Device-registry id of the synthetic gateway (hub) device, set by
         # ``async_setup_entry`` right after it registers the hub and before any
@@ -1312,7 +1315,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         self.gateway_version = version
         _LOGGER.info("Jung Home gateway software version: %s", self.gateway_version)
-        self._apply_gateway_version()
+        self._apply_device_info()
 
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
@@ -1472,6 +1475,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "Resolved hardware identity for %d gateway functions", len(identities)
         )
         self.apply_node_identities()
+        # The product names (device `model`) and the per-node firmware
+        # revisions resolved through the node UUID come from here too.
+        self._apply_device_info()
 
     async def _fetch_devices_verbose_from_api(
         self, host: str, token: str
@@ -1550,6 +1556,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         self.device_properties = MappingProxyType(parsed)
         _LOGGER.debug("Read properties for %d gateway devices", len(parsed))
+        # Firmware revisions reach the device pages already registered.
+        self._apply_device_info()
 
     async def _async_refresh_device_properties(self, _now: datetime) -> None:
         """Periodic re-read of the properties that change: the energy counters.
@@ -1580,7 +1588,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 self.async_update_listeners()
             return
         updated = dict(known)
-        changed = False
+        changed = revised = False
         for device_id, props in known.items():
             if not props.has_energy:
                 continue
@@ -1595,8 +1603,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if fresh is not None and fresh != props:
                 updated[device_id] = fresh
                 changed = True
+                revised |= fresh.software_revision != props.software_revision
         if changed:
             self.device_properties = MappingProxyType(updated)
+            if revised:  # a socket updated in place: its page shows the new one
+                self._apply_device_info()
             self.async_update_listeners()
 
     def device_properties_for(self, device: Device) -> DeviceProperties | None:
@@ -1606,21 +1617,77 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return None
         return self.device_properties.get(device_id)
 
+    def software_revision_for(self, device: Device) -> tuple[int, ...] | None:
+        """Return the firmware revision of the node behind ``device``, if known.
+
+        The function's own ``software_revision`` when the verbose endpoint
+        filled it, else its node's: the revision is a node property the
+        gateway reliably fills only on the function at the node's main element
+        (see ``models.DeviceProperties.node_address``), so a function whose
+        own value is null takes the one a function of the same node reported —
+        same node meaning the same revision-state address, or the same node
+        UUID when the project export was read. A node whose functions report
+        different revisions (never observed) resolves to None, like no node
+        at all: unknown is the safe answer for every caller.
+        """
+        props = self.device_properties_for(device)
+        if props is not None and props.software_revision is not None:
+            return props.software_revision
+        address = props.node_address if props is not None else None
+        identity = self.node_identity_for(device)
+        uuid = identity.uuid if identity is not None else None
+        if address is None and uuid is None:
+            return None
+        found: set[tuple[int, ...]] = set()
+        for function_id, other in self.device_properties.items():
+            if other.software_revision is None:
+                continue
+            sibling = self.node_identities.get(function_id)
+            if (address is not None and other.node_address == address) or (
+                uuid is not None and sibling is not None and sibling.uuid == uuid
+            ):
+                found.add(other.software_revision)
+        return found.pop() if len(found) == 1 else None
+
+    def sw_version_for(self, device: Device) -> str | None:
+        """Return the firmware version a device page shows, or None if unknown.
+
+        A version the function list carries itself wins; then the node's
+        firmware revision (``"2.2.0.2"``); only a device whose revision is
+        unknown (firmware without the verbose endpoint, a node not read yet)
+        falls back to the gateway's own software version, as every device did
+        before the revisions were read. ``JungHomeEntity.device_info`` and
+        ``_apply_device_info`` both use this, so the two never disagree.
+        """
+        if version := device.get("sw_version"):
+            return version
+        if (revision := self.software_revision_for(device)) is not None:
+            return ".".join(str(part) for part in revision)
+        return self.gateway_version
+
+    def model_for(self, device: Device) -> str | None:
+        """Return the device ``model``: the product, else the function type.
+
+        The product behind the function (``"DimmerAct1gang2input"``) is named
+        from the node's product id in the project export
+        (``models.PRODUCT_NAMES``); without the export, or for a product the
+        table does not know, the gateway's function type (``"DimmerLight"``)
+        stands in, as it always did.
+        """
+        return product_name(self.node_identity_for(device)) or device.get("type")
+
     def button_reports_each_tap_once(self, device: Device) -> bool:
         """Whether ``device`` is KNOWN to run firmware older than the doubling one.
 
         Device firmware 2.2.0.x publishes every button event twice; older
         firmware reports each tap once, so suppressing duplicates there only
         costs fast double-taps. Only a revision the verbose endpoint actually
-        reported, and that is older, exempts a device — unknown stays
-        suppressed, the safe default.
+        reported for the button's node, and that is older, exempts a device
+        (``software_revision_for``) — unknown stays suppressed, the safe
+        default.
         """
-        props = self.device_properties_for(device)
-        return (
-            props is not None
-            and props.software_revision is not None
-            and props.software_revision < DOUBLED_BUTTON_FIRMWARE
-        )
+        revision = self.software_revision_for(device)
+        return revision is not None and revision < DOUBLED_BUTTON_FIRMWARE
 
     def node_identity_for(self, device: Device) -> NodeIdentity | None:
         """Return the hardware identity behind a gateway function, if known.
@@ -2582,37 +2649,61 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     event_data["entity_id"] = entity_id
         self.hass.bus.async_fire(EVENT_SCENE_RECALLED, event_data)
 
-    def _apply_gateway_version(self) -> None:
-        """Push the firmware version onto our devices in the registry.
+    @callback
+    def _apply_device_info(self) -> None:
+        """Push the firmware versions and models onto our devices in the registry.
 
         An entity's ``device_info`` is only read when it is first added, which
-        may happen before ``GET /version/`` has answered (setup reads it before
-        the platforms, but a failed read is retried on a later session). Update
-        the registry directly so the device page shows the version without
-        needing a reload. Combined with the ``device_info`` fallback this covers
+        may happen before ``GET /version/`` has answered (a failed read is
+        retried on a later session), or before the verbose device properties
+        (firmware revisions) or the project export (product names) are known —
+        or those change later. Update the registry directly so the device page
+        follows without a reload. Combined with ``device_info`` this covers
         either ordering (entities created before or after the read).
 
-        The value written per device mirrors ``JungHomeEntity.device_info``
-        exactly: a device that reports its **own** ``sw_version`` keeps it, and
-        only devices without one (plus the synthetic gateway hub, which has no
-        entry in the function list) fall back to the gateway version. Writing the
-        gateway version unconditionally used to clobber a per-device version, so
-        the two mechanisms disagreed whenever the gateway populated it.
+        The values written mirror ``JungHomeEntity.device_info`` exactly
+        (``sw_version_for`` / ``model_for``). The synthetic gateway hub gets the
+        gateway version and keeps its model. A row whose slug the current
+        device list does not carry (a device on its way to the pruner) is left
+        alone, and so are colliding slugs (``duplicate_slugs``): two functions
+        behind one registry device would take turns writing their values.
+        Unknown values are never written — ``None`` would blank what an
+        earlier run stored.
         """
-        if self.gateway_version is None or self.config_entry is None:
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
             return
-        by_slug = {device_slug(d): d for d in (self.data or [])}
+        devices = self.data or []
+        colliding = duplicate_slugs(devices)
+        by_slug = {
+            device_slug(d): d for d in devices if device_slug(d) not in colliding
+        }
+        hub_id = gateway_device_id(entry)
         registry = dr.async_get(self.hass)
-        for device in dr.async_entries_for_config_entry(
-            registry, self.config_entry.entry_id
-        ):
-            desired = self.gateway_version
-            for domain, identifier in device.identifiers:
-                if domain == DOMAIN and identifier in by_slug:
-                    desired = by_slug[identifier].get("sw_version") or desired
-                    break
-            if device.sw_version != desired:
-                registry.async_update_device(device.id, sw_version=desired)
+        for device_entry in dr.async_entries_for_config_entry(registry, entry.entry_id):
+            slugs = {
+                identifier
+                for domain, identifier in device_entry.identifiers
+                if domain == DOMAIN
+            }
+            sw_version: str | None
+            model: str | None = None
+            if hub_id in slugs:
+                sw_version = self.gateway_version
+            elif (
+                device := next((by_slug[s] for s in slugs if s in by_slug), None)
+            ) is not None:
+                sw_version = self.sw_version_for(device)
+                model = self.model_for(device)
+            else:
+                continue
+            changes: dict[str, Any] = {}
+            if sw_version and device_entry.sw_version != sw_version:
+                changes["sw_version"] = sw_version
+            if model and device_entry.model != model:
+                changes["model"] = model
+            if changes:
+                registry.async_update_device(device_entry.id, **changes)
 
     async def start(self) -> None:
         """Connect to the WebSocket.

@@ -279,6 +279,43 @@ class NodeIdentity:
     primary: bool = False
 
 
+# The gateway's own names for the product ids a node's ``pid`` carries — the
+# middleware's ``ProductID`` enum, verbatim (``models/btmesh_product_ids.js``).
+# A node backs several functions (a 2-gang push button is two rockers and two
+# loads on one radio), so every function of the node shares the name. An id
+# missing here (a product newer than this table) has no name: the caller falls
+# back rather than inventing one.
+PRODUCT_NAMES: dict[int, str] = {
+    1: "PushButton1gang",
+    2: "PushButton2gang",
+    3: "SocketAct1gangEnergy",
+    4: "SwitchAct1gang2input",
+    5: "PushButton1gangBat",
+    6: "PushButton2gangBat",
+    7: "MotionDetector1m",
+    8: "MotionDetector2m",
+    9: "PresenceDetector",
+    10: "RoomThermostat",
+    11: "Gateway",
+    12: "SocketAct1gang",
+    13: "BlindsAct1gang2input",
+    16: "SwitchAct1gang2inputEnergy",
+    17: "SwitchAct2gang2input",
+    18: "DimmerAct1gang2input",
+    19: "BlindsPP2Act1gang2input",
+    20: "DaliAct1gang2input",
+    21: "MiniSensor2inputMains",
+    22: "MiniSensor2inputBat",
+}
+
+
+def product_name(identity: NodeIdentity | None) -> str | None:
+    """Return the gateway's name for the product behind ``identity``, if known."""
+    if identity is None or identity.product_id is None:
+        return None
+    return PRODUCT_NAMES.get(identity.product_id)
+
+
 @dataclass(frozen=True, slots=True)
 class FunctionAnchor:
     """What ties a function's *label* to the element it was last seen on.
@@ -538,10 +575,21 @@ def parse_project_export(document: Any) -> dict[str, NodeIdentity]:
 # raw ``JungHomeDevice`` objects — ``device_id`` is the function id — and with
 # them the device *properties* the function list never carries (probed live
 # 2026-09-16, docs/gateway-rest-api.md): a metering socket's cumulative energy
-# counter ``total_device_energy_use`` (Wh), every device's ``software_revision``
-# (``[2, 2, 0, 2]``), per-state ``statistics.reachable``, and a tunable-white
-# light's colour-temperature range. Only those four are read; the rest of the
-# document is dropped.
+# counter ``total_device_energy_use`` (Wh), the device firmware's
+# ``software_revision`` (``[2, 2, 0, 2]``), per-state ``statistics.reachable``,
+# and a tunable-white light's colour-temperature range. Only those four are
+# read — plus the address the revision belongs to, below — and the rest of
+# the document is dropped.
+#
+# The revision is a property of the *node*, not of the function: the
+# middleware binds the Generic Property models to the node's main element
+# (element 0, at the node's unicast — ``services/products_service.js:29-33``),
+# so every function of a node carries a ``software_revision`` state at that
+# one address, and only the main-element function's is reliably filled. In
+# the 2026-09-16 probe 18 of 20 push-button functions (and four lights on a
+# node's second channel) read ``null``, each sharing its address with a
+# function that read the revision. ``coordinator.software_revision_for``
+# resolves the revision per node through that address.
 
 # The device firmware that started publishing every button event twice
 # (docs/cross-repo-analysis.md §1.1). A button whose revision is known to be
@@ -565,6 +613,10 @@ class DeviceProperties:
     # The (min, max) Kelvin window the gateway clamps this light's
     # colour-temperature writes to — see ``color_temp_range``.
     color_temp_range: tuple[int, int] | None = None
+    # The ``software_revision`` state's ``model.address``: the node's main
+    # element unicast, shared by every function of the node — the key a
+    # function whose own revision is null finds its node's revision by.
+    node_address: int | None = None
 
 
 def _entries(collection: Any) -> list[dict[str, Any]]:
@@ -693,6 +745,7 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
     has_energy = False
     energy_wh: float | None = None
     revision: tuple[int, ...] | None = None
+    node_address: int | None = None
     for prop in _entries(document.get("property")):
         kind = prop.get("state_type")
         if kind == "total_device_energy_use":
@@ -700,6 +753,8 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
             energy_wh = _energy_wh(prop)
         elif kind == "software_revision":
             revision = _revision(prop.get("value"))
+            if isinstance(model := prop.get("model"), dict):
+                node_address = _decimal_int(model.get("address"))
     reachable: bool | None = None
     states = _entries(document.get("states"))
     if states:
@@ -714,6 +769,7 @@ def parse_device_properties(document: Any) -> DeviceProperties | None:
         software_revision=revision,
         reachable=reachable,
         color_temp_range=color_temp_range(states),
+        node_address=node_address,
     )
 
 

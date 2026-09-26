@@ -4,6 +4,12 @@
       "up": { "default": "mdi:gesture-tap-button" },
       "down": { "default": "mdi:gesture-tap-button" },
       "press": { "default": "mdi:gesture-tap-button" }
+    },
+    "switch": {
+      "status_led": {
+        "default": "mdi:led-on",
+        "state": { "off": "mdi:led-off" }
+      }
     }
   }
 }

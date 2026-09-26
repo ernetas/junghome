@@ -236,8 +236,22 @@ JUNG HOME Gateway over its REST API and WebSocket.
   reply, which carries both next to `api_version` (one token-less request;
   the two `config/parameter` reads it replaced returned the same values). The two were conflated, so every device page showed
   `1.5.0` as its `sw_version`. `coordinator.api_version` holds the former
-  (diagnostics only); `gateway_version` holds the latter and is what reaches
-  `DeviceInfo`. The state DB's defaults `"0.0.0"`/`"0"` mean "not read yet".
+  (diagnostics only); `gateway_version` holds the latter and is the hub's
+  `sw_version` — and a function device's only while its node's own firmware
+  revision is unknown (`coordinator.sw_version_for`: the function list's own
+  `sw_version`, else the node's `software_revision` as `"2.2.0.2"`, else the
+  gateway version). The device `model` is the node's product
+  (`coordinator.model_for`: the export's `pid` named by the firmware's
+  `ProductID` enum, `models.PRODUCT_NAMES` from `models/btmesh_product_ids.js`
+  — `PushButton2gang`, `DimmerAct1gang2input`), else the function type.
+  `device_info` reads both at registration; `_apply_device_info` rewrites
+  registered rows when the gateway version, the properties or the identities
+  arrive or change later (hub, listed non-colliding slugs only; unknown
+  values never written). The hub's `configuration_url` is
+  `https://<host>/` (`const.gateway_configuration_url`: nginx proxies `/` to
+  the api-server's webview landing page; a host change reloads the entry,
+  which re-registers it). The state DB's defaults `"0.0.0"`/`"0"` mean "not
+  read yet".
 - Scenes arrive over the WS `scenes` broadcasts (plus a setup-time REST fetch)
   — the full list, on connect and on change; the `scenes-new` /
   `scenes-deleted` frames that follow a change carry only id strings and are
@@ -263,9 +277,13 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `total_device_energy_use` in **Wh** and `total_device_power_on_time` in h
   on `SocketEnergy` (cumulative energy the README says is missing — it is a
   property, never a state, so `/functions/` cannot carry it),
-  `software_revision` `[2, 2, 0, 2]` on every push button (device firmware
-  2.2.0.2 confirmed per device; `[2, 2, 0, 1]` on lights — a per-device
-  doubled-firmware detector for the duplicate-suppression default), `key_mode`
+  `software_revision` (a **node** property: `[2, 2, 0, 2]` / `[2, 2, 0, 1]`
+  where filled, but only 2 of 20 push-button functions and not every light
+  carried a value — the rest read `null`; every function's revision state
+  sits at its node's main-element unicast, `model.address`, the Generic
+  Property models being bound to element 0 —
+  `services/products_service.js:29-33` — and each null one shares that
+  address with a function that read the node's revision), `key_mode`
   (6 = gateway on 19 of 20 buttons), `switch_operation_mode`,
   `device_key_lock`. No cover in the network, so `move_operation_mode` is
   still unverified. Raw sample: `disk_dump/devices-verbose-20260916.json`
@@ -279,11 +297,16 @@ JUNG HOME Gateway over its REST API and WebSocket.
   `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s. Drives the `total_energy`
   sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that
   only at registration, so counters registered earlier stay Wh;
-  `TOTAL_INCREASING`, `sensor.<socket>_total_energy`) and the
-  per-device duplicate-suppression exemption
-  (`button_reports_each_tap_once`: revision known AND < 2.2.0) and each
-  tunable-white light's Kelvin range (colour-temperature bullet above). Reachability
-  is diagnostics-only — availability semantics are a settled decision.
+  `TOTAL_INCREASING`, `sensor.<socket>_total_energy`), each tunable-white
+  light's Kelvin range (colour-temperature bullet above), each device page's
+  `sw_version` and the per-device duplicate-suppression exemption
+  (`button_reports_each_tap_once`: revision known AND < 2.2.0) — both
+  through `coordinator.software_revision_for`, which resolves a null
+  revision per node (same revision-state address, or same node UUID from the
+  export; disagreeing values on one node → unknown, so suppression stays
+  on). Device diagnostics carry the function's properties, the resolved node
+  revision and its rename anchor. Reachability is diagnostics-only —
+  availability semantics are a settled decision.
 
 ## Gateway reference — read `docs/` first
 

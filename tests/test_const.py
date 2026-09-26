@@ -12,6 +12,7 @@ from custom_components.junghome.const import (
     device_slug,
     entry_anchor,
     entry_scope,
+    gateway_configuration_url,
     gateway_device_id,
     is_presence_quantity,
     stable_unique_id,
@@ -157,3 +158,19 @@ def test_entry_anchor_prefers_frozen_anchor_then_unique_id_then_entry_id():
         data={"identity_anchor": ""}, unique_id="uid", entry_id="eid"
     )
     assert entry_anchor(blank) == "uid"
+
+
+def test_gateway_configuration_url_is_the_gateway_web_page():
+    """``https://<host>/``, as the integration reaches the gateway — or nothing.
+
+    The device registry raises on a URL without a host, so a stored host that
+    cannot make one must yield None rather than fail setup.
+    """
+    assert gateway_configuration_url("192.168.1.50") == "https://192.168.1.50/"
+    assert gateway_configuration_url(" junghome-0022d1059602.local ") == (
+        "https://junghome-0022d1059602.local/"
+    )
+    assert gateway_configuration_url("fe80::1") == "https://[fe80::1]/"
+    assert gateway_configuration_url("[fe80::1]") == "https://[fe80::1]/"
+    for bad in (None, 5, "", "  ", "@", "h:x"):
+        assert gateway_configuration_url(bad) is None, bad

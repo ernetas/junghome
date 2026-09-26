@@ -96,6 +96,9 @@ async def test_hub_device_diagnostics_do_not_leak_the_anchor(
     assert diag["last_error"].startswith("Cannot connect to host **REDACTED**:443")
     # The hub is not one of the gateway's functions, so it has no payload.
     assert diag["device"] is None
+    assert diag["device_properties"] is None
+    assert diag["node_software_revision"] is None
+    assert diag["function_anchor"] is None
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

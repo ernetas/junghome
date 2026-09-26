@@ -816,3 +816,50 @@ async def test_suppression_follows_the_button_firmware(
         bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * clicks
     )
     await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("revision", "clicks"),
+    [([2, 1, 4, 0], 2), ([2, 2, 0, 2], 1)],
+)
+async def test_suppression_follows_the_firmware_of_the_buttons_node(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    bus_events,
+    revision: list[int],
+    clicks: int,
+) -> None:
+    """A button whose own revision is null takes its node's.
+
+    The gateway fills the node-wide revision only on the function at the
+    node's main element (18 of 20 buttons read ``null`` in the 2026-09-16
+    probe); every function carries the revision state at that element's
+    address, which is how the button finds its node's value.
+    """
+
+    def _function(device_id: str, value: list[int] | None) -> dict:
+        return {
+            "device_id": device_id,
+            "device_type": "PushButton",
+            "states": {},
+            "property": {
+                "software_revision": {
+                    "state_type": "software_revision",
+                    "value": value,
+                    "model": {"address": 562, "category": "property"},
+                }
+            },
+        }
+
+    firmware = [_function("idlight1", revision), _function("idrock1", None)]
+    with patch.object(
+        JungHomeDataUpdateCoordinator,
+        "_fetch_devices_verbose_from_api",
+        AsyncMock(return_value=firmware),
+    ):
+        entry = await _setup_with_options(hass, {})
+    await _Rocker(hass, freezer, entry.runtime_data).tap()
+    assert (
+        bus_events == [("up", "pressed"), ("up", "depressed"), ("up", "click")] * clicks
+    )
+    await hass.config_entries.async_unload(entry.entry_id)
