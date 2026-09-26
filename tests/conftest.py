@@ -283,6 +283,12 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
+        "real_health_fetch: let the test run the real health-log and config "
+        "parameter reads (pair with aioclient_mock); by default they are "
+        "stubbed.",
+    )
+    config.addinivalue_line(
+        "markers",
         "real_tls_probe: let the test run the real certificate-fingerprint "
         "learn (a TLS handshake — pair with a local TLS server or "
         "aioclient_mock); by default it is stubbed to FAKE_FINGERPRINT.",
@@ -436,6 +442,34 @@ def mock_device_properties_fetch(request):
         patch.object(
             JungHomeDataUpdateCoordinator,
             "_fetch_device_verbose_from_api",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_health_status_fetch(request):
+    """Keep the gateway health-log reads off the network.
+
+    ``async_setup_entry`` reads ``GET /healthstatus/`` once after the first
+    refresh and the coordinator re-reads it every 15 minutes (plus
+    ``config/parameter/time_error`` while the log shows a time-sync error).
+    Defaults to "not readable" — no health issues, no health log in
+    diagnostics — so every other test behaves as before.
+    """
+    if request.node.get_closest_marker("real_health_fetch") is not None:
+        yield
+        return
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_health_status_from_api",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_config_parameter_from_api",
             AsyncMock(return_value=None),
         ),
     ):

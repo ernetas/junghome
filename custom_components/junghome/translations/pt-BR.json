@@ -244,6 +244,30 @@
           "different_gateway": "O endereço responde, mas pertence a um gateway Jung Home diferente desta entrada. Use Reconfigurar para alterar o endereço."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Dispositivos Jung Home com nomes em conflito",
+      "description": "Alguns dispositivos do gateway Jung Home em {host} têm nomes que o Home Assistant não consegue distinguir, porque diferem apenas em maiúsculas/minúsculas, espaços ou pontuação:\n\n{labels}\n\nApenas um dispositivo de cada grupo recebe entidades no Home Assistant. Renomeie os demais no aplicativo Jung Home. Este problema desaparece sozinho assim que os nomes forem distintos."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Falha de Bluetooth no gateway Jung Home",
+      "description": "O gateway Jung Home em {host} informa que seu chip Bluetooth não iniciou, portanto ele não consegue alcançar seus dispositivos Jung Home. Reinicie o gateway desconectando-o da energia por um instante. Se o problema persistir, redefina o gateway e adicione-o novamente ao seu projeto no aplicativo Jung Home. Este problema desaparece assim que o gateway reiniciar sem o erro."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "O gateway Jung Home ficou sem números de sequência",
+      "description": "O gateway Jung Home em {host} informa que esgotou os números de sequência do Bluetooth Mesh, portanto talvez não consiga mais enviar comandos aos seus dispositivos Jung Home. Se os dispositivos pararem de responder, redefina o gateway e adicione-o novamente ao seu projeto no aplicativo Jung Home. Este problema desaparece assim que o gateway reiniciar sem o erro."
+    },
+    "gateway_time_sync_failure": {
+      "title": "O relógio do gateway Jung Home não está sincronizado",
+      "description": "O gateway Jung Home em {host} não consegue sincronizar seu relógio com um servidor de horário há mais de 24 horas. Verifique se o gateway tem acesso à internet. Este problema desaparece sozinho assim que o relógio for sincronizado novamente."
+    },
+    "gateway_project_missing": {
+      "title": "O gateway Jung Home não tem projeto",
+      "description": "O gateway Jung Home em {host} informa que não recebeu o projeto do aplicativo Jung Home, portanto não conhece seus dispositivos. Abra o aplicativo Jung Home na mesma rede local do gateway para que ele possa enviar o projeto novamente. Este problema desaparece assim que o gateway receber um novo projeto."
+    },
+    "gateway_project_incomplete": {
+      "title": "O projeto do gateway Jung Home está incompleto",
+      "description": "O gateway Jung Home em {host} informa que faltam dados de dispositivos em seu projeto, portanto nomes de dispositivos, cômodos e cenas podem estar ausentes ou incorretos. Sincronize o projeto manualmente no aplicativo Jung Home. Este problema desaparece assim que o gateway receber um novo projeto."
     }
   }
 }

@@ -244,6 +244,30 @@
           "different_gateway": "Adresas atsako, bet priklauso kitam Jung Home šliuzui nei šis įrašas. Adresui pakeisti naudokite Konfigūruoti iš naujo."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "„Jung Home“ įrenginiai su konfliktuojančiais pavadinimais",
+      "description": "Kai kurių „Jung Home“ sietuvo adresu {host} įrenginių pavadinimų „Home Assistant“ negali atskirti, nes jie skiriasi tik didžiosiomis ir mažosiomis raidėmis, tarpais arba skyrybos ženklais:\n\n{labels}\n\nTik vienas kiekvienos grupės įrenginys gauna objektus „Home Assistant“. Pervadinkite kitus programėlėje „Jung Home“. Ši problema išnyks savaime, kai tik pavadinimai skirsis."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "„Jung Home“ sietuvo „Bluetooth“ gedimas",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad nepasileido jo „Bluetooth“ lustas, todėl jis negali susisiekti su jūsų „Jung Home“ įrenginiais. Paleiskite sietuvą iš naujo trumpam atjungę jo maitinimą. Jei problema išlieka, atkurkite sietuvo gamyklinius nustatymus ir vėl pridėkite jį prie projekto programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas bus paleistas iš naujo be šios klaidos."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "„Jung Home“ sietuvui baigėsi eilės numeriai",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad jam baigėsi „Bluetooth Mesh“ eilės numeriai, todėl jis gali nebegalėti siųsti komandų jūsų „Jung Home“ įrenginiams. Jei įrenginiai nustoja reaguoti, atkurkite sietuvo gamyklinius nustatymus ir vėl pridėkite jį prie projekto programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas bus paleistas iš naujo be šios klaidos."
+    },
+    "gateway_time_sync_failure": {
+      "title": "„Jung Home“ sietuvo laikrodis nesinchronizuotas",
+      "description": "„Jung Home“ sietuvas adresu {host} daugiau nei 24 valandas nepajėgė sinchronizuoti savo laikrodžio su laiko serveriu. Patikrinkite, ar sietuvas turi interneto prieigą. Ši problema išnyks savaime, kai tik laikrodis vėl bus sinchronizuotas."
+    },
+    "gateway_project_missing": {
+      "title": "„Jung Home“ sietuvas neturi projekto",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad negavo projekto iš programėlės „Jung Home“, todėl nežino jūsų įrenginių. Atidarykite programėlę „Jung Home“ tame pačiame vietiniame tinkle kaip ir sietuvas, kad ji galėtų vėl įkelti projektą. Ši problema išnyks, kai sietuvas gaus naują projektą."
+    },
+    "gateway_project_incomplete": {
+      "title": "„Jung Home“ sietuvo projektas neišsamus",
+      "description": "„Jung Home“ sietuvas adresu {host} praneša, kad jo projekte trūksta įrenginių duomenų, todėl įrenginių pavadinimų, patalpų ir scenų gali trūkti arba jie gali būti neteisingi. Sinchronizuokite projektą rankiniu būdu programėlėje „Jung Home“. Ši problema išnyks, kai sietuvas gaus naują projektą."
     }
   }
 }

@@ -244,6 +244,30 @@
           "different_gateway": "La dirección responde, pero pertenece a una pasarela Jung Home distinta de esta entrada. Usa Reconfigurar para cambiar la dirección."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Dispositivos Jung Home con nombres en conflicto",
+      "description": "Algunos dispositivos de la pasarela Jung Home en {host} tienen nombres que Home Assistant no puede distinguir, porque solo se diferencian en mayúsculas, espacios o signos de puntuación:\n\n{labels}\n\nSolo un dispositivo de cada grupo obtiene entidades en Home Assistant. Cambia el nombre de los demás en la aplicación Jung Home. Este problema desaparece por sí solo cuando los nombres sean distintos."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Fallo de Bluetooth en la pasarela Jung Home",
+      "description": "La pasarela Jung Home en {host} informa de que su chip Bluetooth no se ha iniciado, por lo que no puede comunicarse con tus dispositivos Jung Home. Reinicia la pasarela desconectándola brevemente de la alimentación. Si el problema persiste, restablece la pasarela y vuelve a añadirla a tu proyecto en la aplicación Jung Home. Este problema desaparece cuando la pasarela se ha reiniciado sin el error."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "La pasarela Jung Home se ha quedado sin números de secuencia",
+      "description": "La pasarela Jung Home en {host} informa de que se ha quedado sin números de secuencia de Bluetooth Mesh, por lo que es posible que ya no pueda enviar órdenes a tus dispositivos Jung Home. Si los dispositivos dejan de responder, restablece la pasarela y vuelve a añadirla a tu proyecto en la aplicación Jung Home. Este problema desaparece cuando la pasarela se ha reiniciado sin el error."
+    },
+    "gateway_time_sync_failure": {
+      "title": "El reloj de la pasarela Jung Home no está sincronizado",
+      "description": "La pasarela Jung Home en {host} no ha podido sincronizar su reloj con un servidor de hora durante más de 24 horas. Comprueba que la pasarela tenga acceso a Internet. Este problema desaparece por sí solo cuando el reloj vuelva a estar sincronizado."
+    },
+    "gateway_project_missing": {
+      "title": "La pasarela Jung Home no tiene ningún proyecto",
+      "description": "La pasarela Jung Home en {host} informa de que no ha recibido el proyecto de la aplicación Jung Home, por lo que no conoce tus dispositivos. Abre la aplicación Jung Home en la misma red local que la pasarela para que pueda volver a subir el proyecto. Este problema desaparece cuando la pasarela ha recibido un proyecto nuevo."
+    },
+    "gateway_project_incomplete": {
+      "title": "El proyecto de la pasarela Jung Home está incompleto",
+      "description": "La pasarela Jung Home en {host} informa de que a su proyecto le faltan datos de los dispositivos, por lo que los nombres de los dispositivos, las estancias y las escenas pueden faltar o ser incorrectos. Sincroniza el proyecto manualmente en la aplicación Jung Home. Este problema desaparece cuando la pasarela ha recibido un proyecto nuevo."
     }
   }
 }

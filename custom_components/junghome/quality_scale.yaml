@@ -128,7 +128,13 @@ rules:
       coming back resolves it. A gateway presenting a certificate other than
       the pinned one raises the fixable error issue `tls_certificate_changed`
       (repairs.py): the integration stops sending anything — the token
-      included — until the user confirms the change, which re-pins.
+      included — until the user confirms the change, which re-pins. The
+      gateway's own health log (GET /healthstatus/, polled every 15 min)
+      raises one non-fixable issue per serious condition it reports (Bluetooth
+      chip failure, out of sequence numbers, time sync, project missing or
+      incomplete), withdrawn when the log no longer shows it; two labels the
+      integration cannot tell apart raise `duplicate_device_labels` until one
+      is renamed in the app.
   stale-devices: done
 
   # Platinum

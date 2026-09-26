@@ -244,6 +244,30 @@
           "different_gateway": "该地址有应答，但属于与此条目不同的 Jung Home 网关。请改用“重新配置”来更改地址。"
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home 设备名称冲突",
+      "description": "位于 {host} 的 Jung Home 网关上的部分设备名称仅在大小写、空格或标点上有所不同，Home Assistant 无法区分它们：\n\n{labels}\n\n每组中只有一个设备会在 Home Assistant 中获得实体。请在 Jung Home 应用中为其余设备重命名。名称不再冲突后，此问题将自动消失。"
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Jung Home 网关蓝牙故障",
+      "description": "位于 {host} 的 Jung Home 网关报告其蓝牙芯片未能启动，因此无法与您的 Jung Home 设备通信。请短暂断开网关电源以重新启动。如果问题仍然存在，请重置网关，并在 Jung Home 应用中将其重新添加到您的项目。网关在没有此错误的情况下重新启动后，此问题将消失。"
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home 网关的序列号已用尽",
+      "description": "位于 {host} 的 Jung Home 网关报告其蓝牙 Mesh 序列号已用尽，因此可能无法再向您的 Jung Home 设备发送命令。如果设备停止响应，请重置网关，并在 Jung Home 应用中将其重新添加到您的项目。网关在没有此错误的情况下重新启动后，此问题将消失。"
+    },
+    "gateway_time_sync_failure": {
+      "title": "Jung Home 网关时钟未同步",
+      "description": "位于 {host} 的 Jung Home 网关已超过 24 小时无法与时间服务器同步时钟。请检查网关是否可以访问互联网。时钟重新同步后，此问题将自动消失。"
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home 网关没有项目",
+      "description": "位于 {host} 的 Jung Home 网关报告尚未从 Jung Home 应用收到项目，因此不认识您的设备。请在与网关相同的本地网络中打开 Jung Home 应用，以便重新上传项目。网关收到新项目后，此问题将消失。"
+    },
+    "gateway_project_incomplete": {
+      "title": "Jung Home 网关项目不完整",
+      "description": "位于 {host} 的 Jung Home 网关报告其项目缺少设备信息，因此设备名称、房间和场景可能缺失或不正确。请在 Jung Home 应用中手动同步项目。网关收到新项目后，此问题将消失。"
     }
   }
 }

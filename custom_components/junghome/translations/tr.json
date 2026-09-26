@@ -244,6 +244,30 @@
           "different_gateway": "Adres yanıt veriyor ancak bu kayıttan farklı bir Jung Home ağ geçidine ait. Adresi değiştirmek için Yeniden yapılandır'ı kullanın."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Adları çakışan Jung Home cihazları",
+      "description": "{host} adresindeki Jung Home ağ geçidindeki bazı cihazların adları yalnızca büyük/küçük harf, boşluk veya noktalama işaretleriyle farklılaştığı için Home Assistant bunları birbirinden ayıramıyor:\n\n{labels}\n\nHer gruptan yalnızca bir cihaz Home Assistant'ta varlık alır. Diğerlerini Jung Home uygulamasında yeniden adlandırın. Adlar farklı hale geldiğinde bu sorun kendiliğinden kaybolur."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Jung Home ağ geçidinde Bluetooth arızası",
+      "description": "{host} adresindeki Jung Home ağ geçidi, Bluetooth yongasının başlamadığını bildiriyor; bu nedenle Jung Home cihazlarınıza ulaşamıyor. Ağ geçidinin gücünü kısa bir süre keserek yeniden başlatın. Sorun devam ederse ağ geçidini sıfırlayın ve Jung Home uygulamasında projenize yeniden ekleyin. Ağ geçidi bu hata olmadan yeniden başladığında bu sorun kaybolur."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home ağ geçidinin sıra numaraları tükendi",
+      "description": "{host} adresindeki Jung Home ağ geçidi, Bluetooth Mesh sıra numaralarının tükendiğini bildiriyor; bu nedenle Jung Home cihazlarınıza artık komut gönderemeyebilir. Cihazlar yanıt vermeyi bırakırsa ağ geçidini sıfırlayın ve Jung Home uygulamasında projenize yeniden ekleyin. Ağ geçidi bu hata olmadan yeniden başladığında bu sorun kaybolur."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Jung Home ağ geçidinin saati senkronize değil",
+      "description": "{host} adresindeki Jung Home ağ geçidi 24 saatten uzun süredir saatini bir zaman sunucusuyla senkronize edemiyor. Ağ geçidinin internet erişimi olduğundan emin olun. Saat yeniden senkronize edildiğinde bu sorun kendiliğinden kaybolur."
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home ağ geçidinde proje yok",
+      "description": "{host} adresindeki Jung Home ağ geçidi, Jung Home uygulamasından projeyi almadığını bildiriyor; bu nedenle cihazlarınızı tanımıyor. Projeyi yeniden yükleyebilmesi için Jung Home uygulamasını ağ geçidiyle aynı yerel ağda açın. Ağ geçidi yeni bir proje aldığında bu sorun kaybolur."
+    },
+    "gateway_project_incomplete": {
+      "title": "Jung Home ağ geçidinin projesi eksik",
+      "description": "{host} adresindeki Jung Home ağ geçidi, projesinde cihaz bilgilerinin eksik olduğunu bildiriyor; bu nedenle cihaz adları, odalar ve sahneler eksik veya hatalı olabilir. Projeyi Jung Home uygulamasında elle senkronize edin. Ağ geçidi yeni bir proje aldığında bu sorun kaybolur."
     }
   }
 }

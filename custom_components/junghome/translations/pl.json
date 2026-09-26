@@ -244,6 +244,30 @@
           "different_gateway": "Adres odpowiada, ale należy do innej bramki Jung Home niż ten wpis. Użyj opcji Skonfiguruj ponownie, aby zmienić adres."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Urządzenia Jung Home o kolidujących nazwach",
+      "description": "Niektóre urządzenia na bramce Jung Home pod adresem {host} mają nazwy, których Home Assistant nie potrafi rozróżnić, ponieważ różnią się tylko wielkością liter, spacjami lub interpunkcją:\n\n{labels}\n\nTylko jedno urządzenie z każdej grupy otrzymuje encje w Home Assistant. Zmień nazwy pozostałych w aplikacji Jung Home. Ten problem zniknie sam, gdy nazwy będą różne."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Awaria Bluetooth bramki Jung Home",
+      "description": "Bramka Jung Home pod adresem {host} zgłasza, że jej układ Bluetooth nie uruchomił się, więc nie może komunikować się z Twoimi urządzeniami Jung Home. Uruchom bramkę ponownie, na chwilę odłączając zasilanie. Jeśli problem nie ustąpi, zresetuj bramkę i ponownie dodaj ją do projektu w aplikacji Jung Home. Ten problem zniknie, gdy bramka uruchomi się ponownie bez tego błędu."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Bramce Jung Home skończyły się numery sekwencyjne",
+      "description": "Bramka Jung Home pod adresem {host} zgłasza, że wyczerpała numery sekwencyjne Bluetooth Mesh, więc może już nie być w stanie wysyłać poleceń do Twoich urządzeń Jung Home. Jeśli urządzenia przestaną reagować, zresetuj bramkę i ponownie dodaj ją do projektu w aplikacji Jung Home. Ten problem zniknie, gdy bramka uruchomi się ponownie bez tego błędu."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Zegar bramki Jung Home nie jest zsynchronizowany",
+      "description": "Bramka Jung Home pod adresem {host} od ponad 24 godzin nie może zsynchronizować zegara z serwerem czasu. Sprawdź, czy bramka ma dostęp do internetu. Ten problem zniknie sam, gdy zegar zostanie ponownie zsynchronizowany."
+    },
+    "gateway_project_missing": {
+      "title": "Bramka Jung Home nie ma projektu",
+      "description": "Bramka Jung Home pod adresem {host} zgłasza, że nie otrzymała projektu z aplikacji Jung Home, więc nie zna Twoich urządzeń. Otwórz aplikację Jung Home w tej samej sieci lokalnej co bramka, aby mogła ponownie przesłać projekt. Ten problem zniknie, gdy bramka otrzyma nowy projekt."
+    },
+    "gateway_project_incomplete": {
+      "title": "Projekt bramki Jung Home jest niekompletny",
+      "description": "Bramka Jung Home pod adresem {host} zgłasza, że w jej projekcie brakuje danych urządzeń, więc nazwy urządzeń, pomieszczenia i sceny mogą być niedostępne lub błędne. Zsynchronizuj projekt ręcznie w aplikacji Jung Home. Ten problem zniknie, gdy bramka otrzyma nowy projekt."
     }
   }
 }

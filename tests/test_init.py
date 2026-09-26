@@ -51,10 +51,12 @@ from custom_components.junghome.const import (
     gateway_device_id,
 )
 from custom_components.junghome.coordinator import (
+    ISSUE_DUPLICATE_LABELS,
     ISSUE_PUSH_FAILURE,
     ISSUE_TLS_MISMATCH,
     NODE_IDENTITY_REFETCH_INTERVAL,
     JungHomeDataUpdateCoordinator,
+    entry_derived_issue_ids,
 )
 from custom_components.junghome.diagnostics import (
     _scrub,
@@ -2291,6 +2293,76 @@ def test_duplicate_slugs_reports_only_collisions() -> None:
     assert duplicate_slugs([]) == {}
 
 
+async def test_colliding_labels_raise_a_repair_issue_until_renamed(
+    hass: HomeAssistant,
+) -> None:
+    """The losing device of a slug collision is invisible; the issue names it.
+
+    Raised by the capability watcher's pass over each adopted list, listing
+    every colliding group; withdrawn on the first list without a collision
+    (the user renamed one in the app), and by unload.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
+    )
+    entry.add_to_hass(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = copy.deepcopy(DEVICES)[:4]
+    devices[0]["label"] = "Hall Light"
+    devices[1]["label"] = "Hall-Light"
+    devices[2]["label"] = "Lamp 1"
+    devices[3]["label"] = "lamp_1"
+    fetch = AsyncMock(return_value=devices)
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_key == ISSUE_DUPLICATE_LABELS
+        assert issue.severity is ir.IssueSeverity.WARNING
+        assert not issue.is_fixable
+        assert issue.translation_placeholders == {
+            "host": "1.2.3.4",
+            "labels": '- "Hall Light", "Hall-Light"\n- "Lamp 1", "lamp_1"',
+        }
+
+        # One group renamed apart: the issue now lists the other only.
+        renamed = copy.deepcopy(devices)
+        renamed[3]["label"] = "Lamp 2"
+        fetch.return_value = renamed
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue is not None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Hall Light", "Hall-Light"'
+        )
+
+        # Both resolved: withdrawn.
+        renamed[1]["label"] = "Hall Lamp"
+        fetch.return_value = copy.deepcopy(renamed)
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+        # A collision again, then unload: stop() takes it with it.
+        fetch.return_value = copy.deepcopy(devices)
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_user_can_delete_a_device_the_gateway_dropped(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -3930,7 +4002,6 @@ async def test_unmatched_push_refresh_is_cancelled_with_the_entry(
     assert was_cancelled
 
 
-
 def _awning(label: str = "Patio Awning", function_id: str = "idawning") -> dict:
     """A position-only cover (an awning once the user flags it inverted)."""
     return {
@@ -4552,25 +4623,26 @@ async def test_removing_an_entry_that_never_loaded_withdraws_its_issues(
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "t"})
     entry.add_to_hass(hass)
     registry = ir.async_get(hass)
-    for key in (ISSUE_TLS_MISMATCH, ISSUE_PUSH_FAILURE):
+    issue_ids = [
+        f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
+        f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+        # The gateway-health and colliding-label issues.
+        *entry_derived_issue_ids(entry.entry_id),
+    ]
+    assert len(issue_ids) == 8
+    for issue_id in issue_ids:
         ir.async_create_issue(
             hass,
             DOMAIN,
-            f"{key}_{entry.entry_id}",
+            issue_id,
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
-            translation_key=key,
+            translation_key=issue_id.removesuffix(f"_{entry.entry_id}"),
         )
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
-    assert (
-        registry.async_get_issue(DOMAIN, f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}")
-        is None
-    )
-    assert (
-        registry.async_get_issue(DOMAIN, f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}")
-        is None
-    )
+    for issue_id in issue_ids:
+        assert registry.async_get_issue(DOMAIN, issue_id) is None, issue_id
 
 
 async def test_an_empty_export_re_read_keeps_the_known_identities(

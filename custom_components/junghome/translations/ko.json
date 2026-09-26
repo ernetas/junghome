@@ -244,6 +244,30 @@
           "different_gateway": "이 주소는 응답하지만 이 항목과 다른 Jung Home 게이트웨이에 속합니다. 주소를 변경하려면 재구성을 사용하세요."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "이름이 충돌하는 Jung Home 기기",
+      "description": "{host}의 Jung Home 게이트웨이에 있는 일부 기기는 대소문자, 공백 또는 문장 부호만 다른 이름을 가지고 있어 Home Assistant가 구분할 수 없습니다:\n\n{labels}\n\n각 그룹에서 기기 하나만 Home Assistant에서 엔터티를 갖습니다. Jung Home 앱에서 나머지 기기의 이름을 바꾸세요. 이름이 서로 달라지면 이 문제는 자동으로 사라집니다."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Jung Home 게이트웨이 Bluetooth 오류",
+      "description": "{host}의 Jung Home 게이트웨이가 Bluetooth 칩이 시작되지 않았다고 보고했습니다. 따라서 Jung Home 기기와 통신할 수 없습니다. 전원을 잠시 뽑았다가 다시 연결하여 게이트웨이를 다시 시작하세요. 문제가 계속되면 게이트웨이를 초기화하고 Jung Home 앱에서 프로젝트에 다시 추가하세요. 게이트웨이가 이 오류 없이 다시 시작되면 이 문제는 사라집니다."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Jung Home 게이트웨이의 시퀀스 번호가 소진되었습니다",
+      "description": "{host}의 Jung Home 게이트웨이가 Bluetooth Mesh 시퀀스 번호를 모두 소진했다고 보고했습니다. 따라서 더 이상 Jung Home 기기에 명령을 보내지 못할 수 있습니다. 기기가 응답하지 않으면 게이트웨이를 초기화하고 Jung Home 앱에서 프로젝트에 다시 추가하세요. 게이트웨이가 이 오류 없이 다시 시작되면 이 문제는 사라집니다."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Jung Home 게이트웨이 시계가 동기화되지 않았습니다",
+      "description": "{host}의 Jung Home 게이트웨이가 24시간 넘게 시간 서버와 시계를 동기화하지 못했습니다. 게이트웨이가 인터넷에 접속할 수 있는지 확인하세요. 시계가 다시 동기화되면 이 문제는 자동으로 사라집니다."
+    },
+    "gateway_project_missing": {
+      "title": "Jung Home 게이트웨이에 프로젝트가 없습니다",
+      "description": "{host}의 Jung Home 게이트웨이가 Jung Home 앱에서 프로젝트를 받지 못했다고 보고했습니다. 따라서 기기를 알지 못합니다. 게이트웨이와 같은 로컬 네트워크에서 Jung Home 앱을 열어 프로젝트를 다시 업로드할 수 있게 하세요. 게이트웨이가 새 프로젝트를 받으면 이 문제는 사라집니다."
+    },
+    "gateway_project_incomplete": {
+      "title": "Jung Home 게이트웨이 프로젝트가 불완전합니다",
+      "description": "{host}의 Jung Home 게이트웨이가 프로젝트에 기기 정보가 누락되었다고 보고했습니다. 따라서 기기 이름, 방, 장면이 누락되거나 잘못될 수 있습니다. Jung Home 앱에서 프로젝트를 수동으로 동기화하세요. 게이트웨이가 새 프로젝트를 받으면 이 문제는 사라집니다."
     }
   }
 }

@@ -244,6 +244,30 @@
           "different_gateway": "Adresa răspunde, dar aparține unui alt gateway Jung Home decât această intrare. Folosiți Reconfigurare pentru a schimba adresa."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Dispozitive Jung Home cu nume în conflict",
+      "description": "Unele dispozitive de pe gateway-ul Jung Home de la {host} au nume pe care Home Assistant nu le poate deosebi, deoarece diferă doar prin majuscule, spații sau punctuație:\n\n{labels}\n\nDoar un dispozitiv din fiecare grup primește entități în Home Assistant. Redenumește-le pe celelalte în aplicația Jung Home. Această problemă dispare de la sine după ce numele devin distincte."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Defecțiune Bluetooth la gateway-ul Jung Home",
+      "description": "Gateway-ul Jung Home de la {host} raportează că cipul său Bluetooth nu a pornit, așa că nu poate comunica cu dispozitivele tale Jung Home. Repornește gateway-ul deconectându-l scurt de la alimentare. Dacă problema persistă, resetează gateway-ul și adaugă-l din nou în proiectul tău din aplicația Jung Home. Această problemă dispare după ce gateway-ul a repornit fără eroare."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "Gateway-ul Jung Home a rămas fără numere de secvență",
+      "description": "Gateway-ul Jung Home de la {host} raportează că a epuizat numerele de secvență Bluetooth Mesh, așa că este posibil să nu mai poată trimite comenzi dispozitivelor tale Jung Home. Dacă dispozitivele nu mai răspund, resetează gateway-ul și adaugă-l din nou în proiectul tău din aplicația Jung Home. Această problemă dispare după ce gateway-ul a repornit fără eroare."
+    },
+    "gateway_time_sync_failure": {
+      "title": "Ceasul gateway-ului Jung Home nu este sincronizat",
+      "description": "Gateway-ul Jung Home de la {host} nu a reușit să își sincronizeze ceasul cu un server de timp de peste 24 de ore. Verifică dacă gateway-ul are acces la internet. Această problemă dispare de la sine după ce ceasul este sincronizat din nou."
+    },
+    "gateway_project_missing": {
+      "title": "Gateway-ul Jung Home nu are niciun proiect",
+      "description": "Gateway-ul Jung Home de la {host} raportează că nu a primit proiectul din aplicația Jung Home, așa că nu îți cunoaște dispozitivele. Deschide aplicația Jung Home în aceeași rețea locală cu gateway-ul, ca să poată încărca din nou proiectul. Această problemă dispare după ce gateway-ul a primit un proiect nou."
+    },
+    "gateway_project_incomplete": {
+      "title": "Proiectul gateway-ului Jung Home este incomplet",
+      "description": "Gateway-ul Jung Home de la {host} raportează că în proiectul său lipsesc date despre dispozitive, așa că numele dispozitivelor, camerele și scenele pot lipsi sau pot fi greșite. Sincronizează proiectul manual în aplicația Jung Home. Această problemă dispare după ce gateway-ul a primit un proiect nou."
     }
   }
 }

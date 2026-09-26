@@ -244,6 +244,30 @@
           "different_gateway": "Het adres antwoordt, maar hoort bij een andere Jung Home-gateway dan dit item. Gebruik Opnieuw configureren om het adres te wijzigen."
         }
       }
+    },
+    "duplicate_device_labels": {
+      "title": "Jung Home-apparaten met conflicterende namen",
+      "description": "Sommige apparaten op de Jung Home-gateway op {host} hebben namen die Home Assistant niet uit elkaar kan houden, omdat ze alleen verschillen in hoofdletters, spaties of leestekens:\n\n{labels}\n\nAlleen één apparaat van elke groep krijgt entiteiten in Home Assistant. Geef de andere een nieuwe naam in de Jung Home-app. Dit probleem verdwijnt vanzelf zodra de namen verschillend zijn."
+    },
+    "gateway_bluetooth_failure": {
+      "title": "Bluetooth-storing op de Jung Home-gateway",
+      "description": "De Jung Home-gateway op {host} meldt dat de Bluetooth-chip niet is gestart, waardoor hij je Jung Home-apparaten niet kan bereiken. Herstart de gateway door de stroom even los te koppelen. Blijft het probleem bestaan, reset de gateway dan en voeg hem opnieuw toe aan je project in de Jung Home-app. Dit probleem verdwijnt zodra de gateway zonder de fout opnieuw is opgestart."
+    },
+    "gateway_out_of_sequence_numbers": {
+      "title": "De Jung Home-gateway heeft geen volgnummers meer",
+      "description": "De Jung Home-gateway op {host} meldt dat zijn Bluetooth Mesh-volgnummers op zijn, waardoor hij mogelijk geen opdrachten meer naar je Jung Home-apparaten kan sturen. Reageren apparaten niet meer, reset de gateway dan en voeg hem opnieuw toe aan je project in de Jung Home-app. Dit probleem verdwijnt zodra de gateway zonder de fout opnieuw is opgestart."
+    },
+    "gateway_time_sync_failure": {
+      "title": "De klok van de Jung Home-gateway is niet gesynchroniseerd",
+      "description": "De Jung Home-gateway op {host} kon zijn klok al meer dan 24 uur niet synchroniseren met een tijdserver. Controleer of de gateway internettoegang heeft. Dit probleem verdwijnt vanzelf zodra de klok weer gesynchroniseerd is."
+    },
+    "gateway_project_missing": {
+      "title": "De Jung Home-gateway heeft geen project",
+      "description": "De Jung Home-gateway op {host} meldt dat hij het project uit de Jung Home-app niet heeft ontvangen, waardoor hij je apparaten niet kent. Open de Jung Home-app op hetzelfde lokale netwerk als de gateway, zodat die het project opnieuw kan uploaden. Dit probleem verdwijnt zodra de gateway een nieuw project heeft ontvangen."
+    },
+    "gateway_project_incomplete": {
+      "title": "Het project van de Jung Home-gateway is onvolledig",
+      "description": "De Jung Home-gateway op {host} meldt dat in zijn project apparaatgegevens ontbreken, waardoor apparaatnamen, ruimtes en scènes kunnen ontbreken of onjuist zijn. Synchroniseer het project handmatig in de Jung Home-app. Dit probleem verdwijnt zodra de gateway een nieuw project heeft ontvangen."
     }
   }
 }
