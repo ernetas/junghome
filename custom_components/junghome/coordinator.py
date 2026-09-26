@@ -140,8 +140,10 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # re-read from the deprecated verbose device endpoint (`GET /devices/{id}?
 # verbose=true`, ~8 KB per device — probed 2026-09-16): a metering socket's
 # cumulative energy counter, every device's firmware revision, reachability.
-# The middleware itself re-polls a device's properties every five minutes
-# (`profile.dirtyAfterSeconds` 300), so reading more often buys nothing. Only
+# The middleware re-reads the energy counter from the device only hourly
+# (`TotalDeviceEnergyUse.js:65`, `dirtyAfterSeconds` POLL_60MIN = 3600 s;
+# `software_revision` likewise), so the sensor moves in hourly steps; this
+# cheap 5-minute re-read only bounds how late a step shows up here. Only
 # the devices with an energy counter are re-read each interval; the full list
 # (~190 KB on 49 devices) is read once at setup and again only when a function
 # appears that the last answer did not list (one the endpoint omits is not
@@ -407,10 +409,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None when the owning device carries no id, which entities treat as
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
-        # Gateway firmware version, reported by the WebSocket "version" frame.
         # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
-        # over REST (`async_fetch_gateway_version`). This is what a device page
-        # should show as `sw_version`.
+        # over REST `GET /version/` (`async_fetch_gateway_version`) at setup
+        # and again on each stable WebSocket session — never from the WS
+        # "version" frame, which is the API version (`api_version`). This is
+        # what a device page should show as `sw_version`.
         self.gateway_version: str | None = None
         # Device-registry id of the synthetic gateway (hub) device, set by
         # ``async_setup_entry`` right after it registers the hub and before any
@@ -431,7 +434,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
         # Last `groups` broadcast (per-room capability metadata, e.g. which groups
-        # advertise color_temperature_range). Read by `area_for_device` and
+        # list color_temperature_range among their `function_types`). Read by `area_for_device` and
         # `color_temp_range_for_device`, and surfaced in diagnostics so the
         # capabilities we do not yet implement stay visible.
         self.groups: list[dict[str, Any]] = []
@@ -1857,15 +1860,18 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         **No firmware is known to send this.** Captured ``groups`` broadcasts
         (``disk_dump/ws-capture*/groups.json``, 14 real groups) carry only
         ``id`` / ``address`` / ``name`` / ``related_functions`` /
-        ``function_types`` — there is no colour-temperature field, and the name
-        ``color_temperature_range`` traces back to a speculative comment rather
-        than a capture. Nothing wires this into an entity yet for exactly that
-        reason; see the light-platform note in ``light.py``.
+        ``function_types`` — no colour-temperature *field*. The name is real,
+        though: ``color_temperature_range`` is the middleware's
+        ``ColorTemperatureRange`` state type (the fixture's Light CTL
+        Temperature Range, read from the mesh), and a tunable-white group lists
+        it as a bare string in ``function_types`` — with no values. The values
+        reach the API only through ``GET /devices/?verbose=true``
+        (``states.color_temperature_range.value``; the state maps to no
+        datapoint, ``datapoint_helper_methods.js:97``). Nothing wires this
+        parser into an entity; see the light-platform note in ``light.py``.
 
-        It is kept because the ``groups`` broadcast is the only plausible source
-        for a per-fixture range, and having the parser and its tests in place
-        means confirming the field later is a one-line change instead of a
-        design question. Both plausible encodings are accepted
+        It is kept so that a future firmware adding the field is a one-line
+        change instead of a design question. Both plausible encodings are accepted
         (``{"min": .., "max": ..}`` and ``[min, max]``); anything unrecognised
         or implausible is rejected rather than guessed at.
 
@@ -2604,11 +2610,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     def _apply_gateway_version(self) -> None:
         """Push the firmware version onto our devices in the registry.
 
-        An entity's ``device_info`` is only read when it is first added, which
-        may happen before the WebSocket ``version`` frame arrives. Update the
-        registry directly so the device page shows the version without needing a
-        reload. Combined with the ``device_info`` fallback this covers either
-        ordering (entities created before or after the frame).
+        An entity's ``device_info`` is only read when it is first added. The
+        version comes from REST ``GET /version/`` — read at setup before the
+        platforms load, and re-read on each stable WebSocket session, which is
+        when a gateway update (it reboots the gateway) shows a new one — so a
+        value that arrives after the devices were registered (a failed setup
+        read, an updated gateway) must be written to the registry directly for
+        the device page to show it without a reload. Combined with the
+        ``device_info`` fallback this covers either ordering.
 
         The value written per device mirrors ``JungHomeEntity.device_info``
         exactly: a device that reports its **own** ``sw_version`` keeps it, and
