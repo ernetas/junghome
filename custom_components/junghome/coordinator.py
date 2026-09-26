@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import math
 import random
 import time
 from collections import deque
@@ -216,13 +215,6 @@ def _truncate_frame(raw: str) -> str:
     return raw
 
 
-# Sanity bounds for a gateway-advertised colour-temperature range. Anything
-# outside this is not a plausible tunable-white range and is treated as an
-# unrecognised payload rather than trusted (a bogus range would otherwise be
-# declared to Home Assistant, which enforces it against the user).
-MIN_PLAUSIBLE_KELVIN = 1000
-MAX_PLAUSIBLE_KELVIN = 20000
-
 # The gateway state DB's declared defaults for the `version` topic: the
 # middleware ships these until the board controller has answered
 # `MSG_SW_VERSION_IND`, so they mean "not known yet", not "version 0".
@@ -264,68 +256,6 @@ def poll_interval_from_options(options: Mapping[str, Any]) -> int:
     except (ValueError, OverflowError):
         return DEFAULT_POLL_INTERVAL_SECONDS
     return max(MIN_POLL_INTERVAL_SECONDS, min(MAX_POLL_INTERVAL_SECONDS, seconds))
-
-
-def _as_kelvin(raw: Any) -> int | None:
-    """Coerce one end of a gateway range to Kelvin, or None if it isn't a number.
-
-    Gateway numerics arrive as strings as often as numbers, so ``"2700"`` and
-    ``2700`` are both accepted. ``bool`` is rejected explicitly (it is an ``int``
-    subclass, and ``True`` is not a temperature).
-
-    Every conversion below can raise on untrusted JSON, and none of them raise
-    only ``ValueError``:
-
-    - ``float()`` on a huge ``int`` raises ``OverflowError``. ``json.loads``
-      parses integer literals at arbitrary precision, so a frame carrying a
-      400-digit integer reaches this function as an ``int`` Python cannot
-      represent as a float. (A huge *string* is safe — it becomes ``inf``.)
-    - ``json.loads`` also accepts the bare ``NaN`` / ``Infinity`` literals, and
-      ``round()`` rejects both: ``ValueError`` for NaN, ``OverflowError`` for
-      infinity. ``math.isfinite`` screens them out first so the intent is
-      explicit rather than incidental.
-
-    Catching the union keeps a malformed frame a no-op here instead of an
-    exception escaping into ``JungHomeLight.__init__`` and taking down the whole
-    light platform.
-    """
-    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
-        return None
-    try:
-        kelvin = float(raw)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if not math.isfinite(kelvin):
-        return None
-    try:
-        return round(kelvin)
-    except (ValueError, OverflowError):  # pragma: no cover - isfinite guards it
-        return None
-
-
-def _parse_color_temp_range(raw: Any) -> tuple[int, int] | None:
-    """Parse a gateway colour-temperature range, or None if unusable.
-
-    Accepts ``{"min": 2700, "max": 6500}`` and ``[2700, 6500]``. Rejects
-    non-numeric, reversed, zero-width and implausible ranges — the caller then
-    falls back to the light platform's defaults.
-    """
-    if isinstance(raw, dict):
-        low, high = raw.get("min"), raw.get("max")
-    elif isinstance(raw, (list, tuple)) and len(raw) == 2:
-        low, high = raw[0], raw[1]
-    else:
-        return None
-    low_k, high_k = _as_kelvin(low), _as_kelvin(high)
-    if low_k is None or high_k is None:
-        return None
-    # Reversed and zero-width ranges are both nonsense; Home Assistant would
-    # reject (or mis-render) a min >= max colour-temperature entity.
-    if low_k >= high_k:
-        return None
-    if low_k < MIN_PLAUSIBLE_KELVIN or high_k > MAX_PLAUSIBLE_KELVIN:
-        return None
-    return low_k, high_k
 
 
 # Registry lookups scoped to one config entry, on every supported core.
@@ -430,10 +360,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # platform discovers from this; recall goes over REST because the
         # WebSocket `scene` command is unimplemented on the gateway.
         self.scenes: list[Scene] = []
-        # Last `groups` broadcast (per-room capability metadata, e.g. which groups
-        # advertise color_temperature_range). Read by `area_for_device` and
-        # `color_temp_range_for_device`, and surfaced in diagnostics so the
-        # capabilities we do not yet implement stay visible.
+        # Last `groups` broadcast (rooms: name, members, and `function_types` —
+        # the member states' type names, never a value; the firmware's
+        # `groups_service.js:37-58`). Read by `area_for_device` and surfaced in
+        # diagnostics.
         self.groups: list[dict[str, Any]] = []
         # Unmapped quantity units the sensor platform has already warned about,
         # once per unit per entry (kept here so it resets on reload and is not
@@ -534,7 +464,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._node_identity_task: asyncio.Task[None] | None = None
         # Function id -> what the verbose device endpoint adds to that function
         # (`models.DeviceProperties`): the energy counter of a metering socket,
-        # the device's firmware revision, reachability. Read once at setup
+        # the device's firmware revision, reachability, a tunable-white light's
+        # Kelvin range. Read once at setup
         # (`async_fetch_device_properties`), the energy counters re-read every
         # DEVICE_PROPERTIES_REFRESH_INTERVAL (`_async_refresh_device_properties`,
         # armed by `start`). Replaced wholesale, never mutated. Empty on
@@ -1819,10 +1750,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         returns the first group name found (a device is normally in one room).
         Returns ``None`` when the device has no group or none resolve to a name.
 
-        Hardened exactly like ``color_temp_range_for_device`` below: groups and
-        parent ids are untrusted gateway JSON, and an unhashable id (a list, a
-        dict) must not raise ``TypeError`` out of the ``_assign_areas``
-        coordinator listener. (HA's ``async_update_listeners`` does contain a
+        Groups and parent ids are untrusted gateway JSON, and an unhashable
+        id (a list, a dict) must not raise ``TypeError`` out of the
+        ``_assign_areas`` coordinator listener. (HA's ``async_update_listeners`` does contain a
         raising listener — each callback runs in its own try/except and the
         rest still dispatch — but that containment logs a full traceback for
         what is merely malformed gateway data, on every refresh, and area
@@ -1840,8 +1770,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 continue
             name = group.get("name") or group.get("label")
             if name:
-                # First occurrence wins on a duplicated id, matching the
-                # documented order in color_temp_range_for_device.
+                # First occurrence wins on a duplicated id.
                 by_id.setdefault(group_id, str(name))
         for parent in parents:
             if not isinstance(parent, (str, int)) or isinstance(parent, bool):
@@ -1849,59 +1778,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             name = by_id.get(parent)
             if name is not None:
                 return name
-        return None
-
-    def color_temp_range_for_device(self, device: Device) -> tuple[int, int] | None:
-        """Return the (min, max) Kelvin range a device's groups advertise.
-
-        **No firmware is known to send this.** Captured ``groups`` broadcasts
-        (``disk_dump/ws-capture*/groups.json``, 14 real groups) carry only
-        ``id`` / ``address`` / ``name`` / ``related_functions`` /
-        ``function_types`` — there is no colour-temperature field, and the name
-        ``color_temperature_range`` traces back to a speculative comment rather
-        than a capture. Nothing wires this into an entity yet for exactly that
-        reason; see the light-platform note in ``light.py``.
-
-        It is kept because the ``groups`` broadcast is the only plausible source
-        for a per-fixture range, and having the parser and its tests in place
-        means confirming the field later is a one-line change instead of a
-        design question. Both plausible encodings are accepted
-        (``{"min": .., "max": ..}`` and ``[min, max]``); anything unrecognised
-        or implausible is rejected rather than guessed at.
-
-        Returns the range from the **first** parent group that advertises a
-        usable one. That is arbitrary when a device sits in several groups with
-        different ranges — it depends on the gateway's array order — so any
-        future caller must decide whether first-wins, intersection or union is
-        correct for its use. It is only defensible today because nothing
-        consumes the result.
-        """
-        parents = device.get("parent_groups") or []
-        # Untrusted gateway JSON: a non-list `parent_groups`, or an unhashable
-        # group id, must not raise out of a caller's constructor.
-        if not isinstance(parents, (list, tuple)) or not parents:
-            return None
-        by_id: dict[Any, dict[str, Any]] = {}
-        for group in self.groups:
-            if not isinstance(group, dict):
-                continue
-            group_id = group.get("id")
-            if not isinstance(group_id, (str, int)) or isinstance(group_id, bool):
-                continue
-            # First occurrence wins, matching the documented order above; a
-            # plain dict comprehension would silently keep the last duplicate.
-            by_id.setdefault(group_id, group)
-        for parent in parents:
-            if not isinstance(parent, (str, int)) or isinstance(parent, bool):
-                continue
-            parent_group = by_id.get(parent)
-            if parent_group is None:
-                continue
-            parsed = _parse_color_temp_range(
-                parent_group.get("color_temperature_range")
-            )
-            if parsed is not None:
-                return parsed
         return None
 
     def known_unique_ids(self, domain: str) -> set[str]:

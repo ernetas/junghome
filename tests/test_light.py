@@ -1,6 +1,7 @@
 """Light / dimmer / color-light platform tests for Jung Home."""
 
 import json
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,13 +19,13 @@ from custom_components.junghome.light import (
     DEFAULT_MIN_KELVIN,
     JungHomeLight,
 )
+from custom_components.junghome.models import DeviceProperties
 from tests.conftest import bare_coordinator
 
 
 def _color_light(
     coordinator: JungHomeDataUpdateCoordinator,
     *,
-    parent_groups: list | None = None,
     color_temp: str = "3000",
     brightness: str = "50",
 ) -> JungHomeLight:
@@ -50,8 +51,6 @@ def _color_light(
             },
         ],
     }
-    if parent_groups is not None:
-        device["parent_groups"] = parent_groups
     return JungHomeLight(coordinator, device, device["datapoints"][0])
 
 
@@ -271,8 +270,8 @@ async def test_color_temp_request_is_clamped_before_sending(
     """An out-of-range Kelvin request is clamped to the declared range first.
 
     `light.turn_on` does not validate `color_temp_kelvin` against the entity's
-    min/max, and the gateway clamps every write to 2000-6000 K anyway — so
-    6500 K used to go out as 6500, come back confirmed as 6000, and the entity
+    min/max, and the gateway clamps every write to the device's range anyway
+    (2000-6000 K until the device's own is known) — so 6500 K used to go out as 6500, come back confirmed as 6000, and the entity
     then showed 6500: above its own `max_color_temp_kelvin`, until the next
     push corrected it. What is sent must be what can be confirmed.
     """
@@ -504,7 +503,7 @@ async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) 
         )
         == 0
     )
-    # Color temp outside the advertised 2000-6000 K window is clamped (the
+    # Color temp outside the default 2000-6000 K window is clamped (the
     # gateway middleware enforces the same range on writes — see light.py).
     assert (
         light._get_color_temp_from_datapoint(
@@ -520,78 +519,105 @@ async def test_light_brightness_and_color_temp_are_clamped(hass: HomeAssistant) 
     )
 
 
-async def test_light_ignores_any_gateway_advertised_color_temp_range(
-    hass: HomeAssistant,
+def _with_range(
+    coordinator: JungHomeDataUpdateCoordinator,
+    kelvin_range: tuple[int, int] | None,
+    device_id: str = "c",
 ) -> None:
-    """A group range never reaches the entity — the module defaults are it.
+    """Hand the coordinator the verbose endpoint's range for one device."""
+    coordinator.device_properties = MappingProxyType(
+        {device_id: DeviceProperties(color_temp_range=kelvin_range)}
+    )
 
-    The coordinator can parse `color_temperature_range` off a group, but no
-    captured firmware sends that field and consuming it is unresolved (asymmetric
-    clamping, group-vs-fixture semantics). This pins that the parser stays
-    disconnected, so wiring it up has to be a deliberate change with a capture
-    behind it rather than something that drifts in.
+
+async def test_light_kelvin_range_comes_from_the_device(hass: HomeAssistant) -> None:
+    """The gateway clamps to the node's own CTL range; the entity declares it.
+
+    2000-6000 K is only the middleware's constructor default: once it has read
+    the node's Light CTL Temperature Range it clamps writes to that instead
+    (ColorTemperatureState.js:94-103, :190-197). A 2700-6500 K fixture must
+    not be offered 2000-2699 K, nor denied 6001-6500 K.
     """
     coordinator = bare_coordinator(hass)
-    coordinator.groups = [
-        {
-            "id": "g1",
-            "name": "Living room",
-            "color_temperature_range": {"min": 2700, "max": 4000},
-        }
-    ]
-    # The coordinator does resolve it...
-    assert coordinator.color_temp_range_for_device(
-        {"id": "d1", "parent_groups": ["g1"]}
-    ) == (2700, 4000)
-    # ...but the light is unaffected, and does not clamp a read into it.
-    light = _color_light(coordinator, parent_groups=["g1"], color_temp="6000")
-    assert light.min_color_temp_kelvin == 2000
-    assert light.max_color_temp_kelvin == 6000
-    assert light.color_temp_kelvin == 6000
+    _with_range(coordinator, (2700, 6500))
+    light = _color_light(coordinator, color_temp="6500")
+    assert (light.min_color_temp_kelvin, light.max_color_temp_kelvin) == (2700, 6500)
+    assert light.color_temp_kelvin == 6500  # not capped at the old 6000
+    # Reads clamp to the device's window.
+    for raw, expected in (("2000", 2700), ("9000", 6500), ("3500", 3500)):
+        assert (
+            light._get_color_temp_from_datapoint(
+                {"id": "x", "values": [{"key": "color_temperature", "value": raw}]}
+            )
+            == expected
+        ), raw
 
 
-async def test_light_color_temp_range_uses_module_defaults(
+async def test_light_kelvin_range_falls_back_to_the_gateway_default(
     hass: HomeAssistant,
 ) -> None:
-    """Every group shape leaves the module defaults in place, valid or not."""
+    """No properties, no range, or another device's range: 2000-6000 K."""
     coordinator = bare_coordinator(hass)
-    for groups in (
-        [],  # no groups known yet
-        [{"id": "g1", "name": "Living room"}],  # group without the capability
-        [{"id": "g1", "color_temperature_range": "2700-4000"}],  # garbage
-        [{"id": "g1", "color_temperature_range": {"min": 4000, "max": 2700}}],
-        [{"id": "g1", "color_temperature_range": {"min": 4000, "max": 4000}}],
-        [{"id": "g1", "color_temperature_range": {"min": 2700, "max": 4000}}],  # valid
+    for kelvin_range, device_id in (
+        (None, "c"),  # the device is listed, its range is not usable
+        ((2700, 6500), "other"),  # someone else's range
     ):
-        coordinator.groups = groups
-        light = _color_light(coordinator, parent_groups=["g1"])
-        assert light.min_color_temp_kelvin == DEFAULT_MIN_KELVIN, groups
-        assert light.max_color_temp_kelvin == DEFAULT_MAX_KELVIN, groups
-    # A device in no group at all also keeps the defaults.
-    light = _color_light(coordinator)
-    assert (light.min_color_temp_kelvin, light.max_color_temp_kelvin) == (
-        DEFAULT_MIN_KELVIN,
-        DEFAULT_MAX_KELVIN,
-    )
+        _with_range(coordinator, kelvin_range, device_id)
+        light = _color_light(coordinator, color_temp="9000")
+        assert (light.min_color_temp_kelvin, light.max_color_temp_kelvin) == (
+            DEFAULT_MIN_KELVIN,
+            DEFAULT_MAX_KELVIN,
+        ), kelvin_range
+        assert light.color_temp_kelvin == DEFAULT_MAX_KELVIN
+    coordinator.device_properties = MappingProxyType({})  # endpoint never answered
+    light = _color_light(coordinator, color_temp="1000")
+    assert light.min_color_temp_kelvin == DEFAULT_MIN_KELVIN
+    assert light.color_temp_kelvin == DEFAULT_MIN_KELVIN
 
 
-async def test_light_clamps_reads_to_the_module_defaults(hass: HomeAssistant) -> None:
-    """Reads clamp to the module defaults, which is the only range in play."""
-    coordinator = bare_coordinator(hass)
-    light = _color_light(coordinator, color_temp="9000")
-    assert light.color_temp_kelvin == DEFAULT_MAX_KELVIN
-    assert (
-        light._get_color_temp_from_datapoint(
-            {"id": "x", "values": [{"key": "color_temperature", "value": "1000"}]}
-        )
-        == DEFAULT_MIN_KELVIN
+async def test_light_picks_up_a_range_learned_after_creation(
+    hass: HomeAssistant, init_integration, entity_registry: er.EntityRegistry
+) -> None:
+    """A range that arrives once the entity exists reaches its state and registry.
+
+    The verbose read can land after the light was created (a light added at
+    runtime, a setup-time read that failed and is retried every interval).
+    The range is read live, and the properties refresh's listener dispatch
+    writes the new min/max — and re-clamps the shown value into it.
+    """
+    coordinator = init_integration.runtime_data
+    state = hass.states.get("light.strip")
+    assert state.attributes["max_color_temp_kelvin"] == DEFAULT_MAX_KELVIN
+    assert state.attributes["color_temp_kelvin"] == 2700
+    _with_range(coordinator, (3000, 6500), "idcolor1")
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    state = hass.states.get("light.strip")
+    assert state.attributes["min_color_temp_kelvin"] == 3000
+    assert state.attributes["max_color_temp_kelvin"] == 6500
+    assert state.attributes["color_temp_kelvin"] == 3000  # 2700 is out of range now
+    capabilities = entity_registry.async_get("light.strip").capabilities
+    assert capabilities["min_color_temp_kelvin"] == 3000
+    assert capabilities["max_color_temp_kelvin"] == 6500
+
+
+@pytest.mark.parametrize(
+    ("requested", "sent"), [(7000, 6500), (6300, 6300), (2000, 2700)]
+)
+async def test_color_temp_request_is_clamped_to_the_device_range(
+    hass: HomeAssistant, init_integration, requested: int, sent: int
+) -> None:
+    """Writes clamp to the device's own window, not the 2000-6000 K default."""
+    coordinator = init_integration.runtime_data
+    _with_range(coordinator, (2700, 6500), "idcolor1")
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "color_temp_kelvin": requested},
+        blocking=True,
     )
-    assert (
-        light._get_color_temp_from_datapoint(
-            {"id": "x", "values": [{"key": "color_temperature", "value": "3500"}]}
-        )
-        == 3500
-    )
+    assert _sent_value(coordinator, "color_temperature") == str(sent)
+    assert hass.states.get("light.strip").attributes["color_temp_kelvin"] == sent
 
 
 async def test_colortemp_light_without_brightness(hass: HomeAssistant) -> None:

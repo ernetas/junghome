@@ -1627,14 +1627,13 @@ async def test_fuzz_dispatch_never_raises_or_corrupts(hass: HomeAssistant) -> No
     assert coordinator._poll_push_overlay is None
     assert coordinator._pending_replies == {}
     # The storm may have stored arbitrary garbage in groups/scenes; the
-    # resolvers must still tolerate it together with malformed devices.
+    # resolver must still tolerate it together with malformed devices.
     for device in (
         {"id": "d", "parent_groups": ["g1", ["x"], {"y": 1}, True]},
         {"id": "d", "parent_groups": "not-a-list"},
         {"id": "d"},
     ):
         coordinator.area_for_device(device)
-        coordinator.color_temp_range_for_device(device)
     await coordinator.async_shutdown()
 
 
