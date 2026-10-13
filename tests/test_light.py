@@ -252,13 +252,89 @@ async def test_light_external_change_applied(
     assert hass.states.get("light.strip").attributes["color_temp_kelvin"] == 5000
 
 
-def _sent_value(coordinator: JungHomeDataUpdateCoordinator, dp_type: str) -> str:
-    """Return the value of the last ``dp_type`` set the fake socket was sent."""
-    frames = [
+def _sent_frames(coordinator: JungHomeDataUpdateCoordinator) -> list[dict]:
+    """Return every datapoint set the fake socket was sent, in order."""
+    return [
         json.loads(c.args[0]) for c in coordinator.websocket.send_str.call_args_list
     ]
-    frame = next(f for f in reversed(frames) if f["data"].get("type") == dp_type)
+
+
+def _sent_types(coordinator: JungHomeDataUpdateCoordinator) -> list[str]:
+    """Return the datapoint ``type`` of each set, in send order."""
+    return [f["data"]["type"] for f in _sent_frames(coordinator)]
+
+
+def _sent_value(coordinator: JungHomeDataUpdateCoordinator, dp_type: str) -> str:
+    """Return the value of the last ``dp_type`` set the fake socket was sent."""
+    frame = next(f for f in reversed(_sent_frames(coordinator)) if f["data"].get("type") == dp_type)
     return str(frame["data"]["values"][0]["value"])
+
+
+async def test_turn_on_with_brightness_skips_switch(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Brightness alone turns the dimmer on — no preceding switch=1 flash.
+
+    switch-then-brightness restored the device's last level (often full)
+    before the brightness set arrived. switch-after-brightness is the
+    power-on path that overwrites the level on some devices. So an
+    explicit brightness must be the only On path.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    coordinator.websocket.send_str.reset_mock()
+
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200},
+        blocking=True,
+    )
+    assert _sent_types(coordinator) == ["brightness"]
+    assert _sent_value(coordinator, "brightness") == "78"
+    assert hass.states.get("light.strip").state == "on"
+
+
+async def test_turn_on_with_brightness_and_color_temp_skips_switch(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Brightness + colour-temp: no OnOff set, colour-temp after brightness."""
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    coordinator.websocket.send_str.reset_mock()
+
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {
+            "entity_id": "light.strip",
+            "brightness": 255,
+            "color_temp_kelvin": 3000,
+        },
+        blocking=True,
+    )
+    assert _sent_types(coordinator) == ["brightness", "color_temperature"]
+
+
+async def test_plain_turn_on_still_uses_switch(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Bare on has no brightness to carry the On — still send switch=1."""
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    coordinator.websocket.send_str.reset_mock()
+
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    )
+    assert _sent_types(coordinator) == ["switch"]
+    assert _sent_value(coordinator, "switch") == "1"
 
 
 @pytest.mark.parametrize(

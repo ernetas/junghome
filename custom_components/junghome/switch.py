@@ -118,15 +118,27 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
         """Turn the socket on."""
         _LOGGER.debug("Turning on socket %s", self._name)
         await self.coordinator.turn_on_switch(self._datapoint["id"])
-        self._is_on = True
+        # Re-read after the await: the confirmation — and any fresher push
+        # that landed before this coroutine resumed — already updated
+        # coordinator.data. A hard-coded True here raced those updates and
+        # could leave HA on while the device was already off.
+        self._is_on = self._switch_state_after_command(fallback=True)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the socket off."""
         _LOGGER.debug("Turning off socket %s", self._name)
         await self.coordinator.turn_off_switch(self._datapoint["id"])
-        self._is_on = False
+        self._is_on = self._switch_state_after_command(fallback=False)
         self.async_write_ha_state()
+
+    def _switch_state_after_command(self, *, fallback: bool) -> bool | None:
+        """Adopt the coordinator's switch value after a command await."""
+        datapoint = self._find_datapoint(self._datapoint["id"])
+        if datapoint is None:
+            return fallback
+        state = self._get_state_from_datapoint(datapoint)
+        return fallback if state is None else state
 
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
         """Extract the state of the socket from its datapoint.
