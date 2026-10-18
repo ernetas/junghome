@@ -25,7 +25,9 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -1034,6 +1036,41 @@ async def test_device_pages_show_the_node_firmware(hass: HomeAssistant) -> None:
             assert find_device(hass, "boiler").sw_version == "2.1.3 (2840)"
             hub = find_device(hass, gateway_device_id(entry))
             assert hub.sw_version == "2.1.3 (2840)"
+
+
+async def test_a_properties_read_outliving_a_reload_writes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    """A read still in flight when the entry reloads must not touch the registry.
+
+    The periodic refresh runs as a Home Assistant task that the unload does
+    not cancel, so a full verbose read (~190 KB) can return after the reloaded
+    entry's coordinator has written its own values onto the same rows; the
+    dead coordinator's identities and properties are stale by then.
+    """
+    gate = asyncio.Event()
+
+    async def slow_read(*_: object) -> list[dict]:
+        await gate.wait()
+        return [*_node_of_two(), _verbose(SOCKET, revision=(2, 2, 0, 1))]
+
+    async with _running(hass, None) as entry:
+        old = entry.runtime_data
+        with patch.object(old, "_fetch_devices_verbose_from_api", slow_read):
+            # Untracked, so waiting for the reload does not wait for it.
+            refresh = asyncio.get_running_loop().create_task(
+                old._async_refresh_device_properties(dt_util.utcnow())
+            )
+            await asyncio.sleep(0)
+            await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+            assert entry.runtime_data is not old
+            button = find_device(hass, "button_a")
+            dr.async_get(hass).async_update_device(button.id, sw_version="2.2.0.9")
+            gate.set()
+            await refresh
+        assert find_device(hass, "button_a").sw_version == "2.2.0.9"
+        assert old.device_properties == {}
 
 
 async def test_revisions_read_after_the_pages_exist_reach_them(

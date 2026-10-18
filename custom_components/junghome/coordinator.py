@@ -1604,7 +1604,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.debug("Could not read the verbose device list: %s", err)
             return
-        if raw is None:
+        if raw is None or self._closing:
+            # A read that outlived ``stop()``: the periodic refresh runs as a
+            # Home Assistant task no unload cancels, and the reloaded entry's
+            # coordinator owns the registry rows by now.
             return
         # The endpoint answered: whatever live function it left out, it will
         # leave out next time too, so the periodic refresh stops asking for
@@ -1666,7 +1669,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 updated[device_id] = fresh
                 changed = True
                 revised |= fresh.software_revision != props.software_revision
-        if changed:
+        if changed and not self._closing:
             self.device_properties = MappingProxyType(updated)
             if revised:  # a socket updated in place: its page shows the new one
                 self._apply_device_info()
@@ -2881,6 +2884,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         entry = self.config_entry
         if entry is None:  # pragma: no cover - an entry coordinator always has one
             return
+        if self._closing:
+            return  # stopped: a reloaded entry's coordinator owns the rows now
         devices = self.data or []
         colliding = duplicate_slugs(devices)
         by_slug = {
