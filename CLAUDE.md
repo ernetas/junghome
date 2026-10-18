@@ -787,7 +787,12 @@ guarded with `duplicate_slugs`. Availability: `last_update_success` only;
 events), never grant availability. A flow-side "did the listener reload?"
 check reads `entry.state` BEFORE `async_update_entry` (listeners dispatch
 eagerly — the zeroconf bullet seen from the other side).
-Optimistic entity writes happen only after the awaited command returns.
+Optimistic entity writes happen only after the awaited command returns,
+and an on/off state is then read back (`JungHomeEntity._bool_after_command`),
+never hard-coded: a push can land between the confirmation and the resume.
+A value the command implies but the gateway does not echo (a Brightness
+Set's on) goes into `coordinator.data` via `adopt_implied_value`, unless
+`datapoint_push_count` shows the gateway reported that datapoint meanwhile.
 Quantified claims in comments ("10 consecutive polls", "5 s", "60 s") must
 match what the code actually measures — same quantity, same unit, same
 trigger. When two sibling code paths handle the same untrusted input, their

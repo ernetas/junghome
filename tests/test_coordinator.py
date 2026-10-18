@@ -172,6 +172,57 @@ async def test_push_during_poll_wins_over_the_stale_snapshot(
     assert coordinator._poll_push_overlay is None
 
 
+async def test_implied_value_survives_a_racing_poll_and_counts_no_push(
+    hass: HomeAssistant,
+) -> None:
+    """A value a confirmed command implies is stored like a push, minus the push.
+
+    It must win over the snapshot of a poll in flight (which may predate the
+    command) exactly as a push does, but it is not a gateway report: the
+    per-datapoint push count, which entities compare across a command await,
+    must not move, and no listener is dispatched.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    listener = Mock()
+    unsub = coordinator.async_add_listener(listener)
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def _slow_fetch(host: str, token: str) -> list[dict]:
+        fetch_started.set()
+        await release_fetch.wait()
+        return [_switch_device("0")]  # snapshot predating the command
+
+    on = {"values": [{"key": "switch", "value": "1"}]}
+    with patch.object(coordinator, "_fetch_devices_from_api", _slow_fetch):
+        poll = asyncio.ensure_future(coordinator._async_update_data())
+        await fetch_started.wait()
+        coordinator.adopt_implied_value("dp-1", on)
+        # An id nothing holds is a no-op, not an error.
+        coordinator.adopt_implied_value("dp-unknown", on)
+        assert coordinator.data[0]["datapoints"][0]["values"] == on["values"]
+        release_fetch.set()
+        result = await poll
+
+    assert result[0]["datapoints"][0]["values"] == on["values"]
+    assert coordinator.datapoint_push_count("dp-1") == 0
+    listener.assert_not_called()
+    unsub()
+
+
+def test_datapoint_push_count_counts_each_merged_push(hass: HomeAssistant) -> None:
+    """Each push merged into a datapoint moves that datapoint's count only."""
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    for _ in range(2):
+        coordinator._handle_datapoint_push(
+            {}, {"id": "dp-1", "values": [{"key": "switch", "value": "1"}]}
+        )
+    assert coordinator.datapoint_push_count("dp-1") == 2
+    assert coordinator.datapoint_push_count("dp-other") == 0
+
+
 async def test_push_for_a_device_the_poll_discovers_survives_it(
     hass: HomeAssistant,
 ) -> None:

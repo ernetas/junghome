@@ -118,27 +118,21 @@ class JungHomeSocket(JungHomeEntity, SwitchEntity):
         """Turn the socket on."""
         _LOGGER.debug("Turning on socket %s", self._name)
         await self.coordinator.turn_on_switch(self._datapoint["id"])
-        # Re-read after the await: the confirmation — and any fresher push
-        # that landed before this coroutine resumed — already updated
-        # coordinator.data. A hard-coded True here raced those updates and
-        # could leave HA on while the device was already off.
-        self._is_on = self._switch_state_after_command(fallback=True)
+        # Re-read after the await (see `_bool_after_command`): a hard-coded
+        # True here overwrote a fresher off pushed before this resumed.
+        self._is_on = self._bool_after_command(
+            self._datapoint["id"], "switch", fallback=True
+        )
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the socket off."""
         _LOGGER.debug("Turning off socket %s", self._name)
         await self.coordinator.turn_off_switch(self._datapoint["id"])
-        self._is_on = self._switch_state_after_command(fallback=False)
+        self._is_on = self._bool_after_command(
+            self._datapoint["id"], "switch", fallback=False
+        )
         self.async_write_ha_state()
-
-    def _switch_state_after_command(self, *, fallback: bool) -> bool | None:
-        """Adopt the coordinator's switch value after a command await."""
-        datapoint = self._find_datapoint(self._datapoint["id"])
-        if datapoint is None:
-            return fallback
-        state = self._get_state_from_datapoint(datapoint)
-        return fallback if state is None else state
 
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
         """Extract the state of the socket from its datapoint.
@@ -187,16 +181,20 @@ class JungHomeSwitch(JungHomeEntity, SwitchEntity):
         """Turn the status LED on."""
         _LOGGER.debug("Turning on switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], True)
-        # Optimistic update (only reached if the command was actually sent),
-        # matching the socket/light behaviour.
-        self._attr_is_on = True
+        # Re-read after the await, as the socket does (see
+        # `_bool_after_command`); only reached once the command was confirmed.
+        self._attr_is_on = self._bool_after_command(
+            self._datapoint["id"], "status_led", fallback=True
+        )
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the status LED off."""
         _LOGGER.debug("Turning off switch %s", self._attr_unique_id)
         await self.coordinator.set_status_led(self._datapoint["id"], False)
-        self._attr_is_on = False
+        self._attr_is_on = self._bool_after_command(
+            self._datapoint["id"], "status_led", fallback=False
+        )
         self.async_write_ha_state()
 
     @callback

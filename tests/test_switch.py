@@ -501,3 +501,84 @@ async def test_nan_status_led_reads_unknown_not_off(
     await hass.async_block_till_done()
 
     assert hass.states.get("switch.button_a_status_led").state == "unknown"
+
+
+def _reply_then_push(coordinator, push: dict | None) -> None:
+    """Make the fake socket confirm each set, then deliver ``push`` if given.
+
+    Both land before the awaiting command resumes. With ``push`` None the
+    confirmation itself carries ``"NaN"`` (the gateway gave up reading the
+    node), which leaves nothing usable to read back.
+    """
+
+    def _send(raw: str) -> None:
+        sent = json.loads(raw)
+        data = sent["data"]
+        if push is None:
+            key = data["values"][0]["key"]
+            data = {**data, "values": [{"key": key, "value": "NaN"}]}
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
+            )
+        )
+        if push is not None:
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "datapoint", "data": push})
+            )
+
+    coordinator.websocket.send_str.side_effect = _send
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        ("switch.boiler", "idsock1-001", "switch"),
+        ("switch.button_a_status_led", "idrock1-00e", "status_led"),
+    ],
+)
+@pytest.mark.parametrize("case", [("turn_on", "0", "off"), ("turn_off", "1", "on")])
+async def test_report_after_the_confirmation_wins(
+    hass: HomeAssistant,
+    init_integration,
+    target: tuple[str, str, str],
+    case: tuple[str, str, str],
+) -> None:
+    """A push that lands before the command resumes is not overwritten.
+
+    The confirmation is merged and dispatched before the service coroutine
+    resumes, and so is any later push on the same session (another client,
+    the wall, an overlapping HA command finishing out of mesh order). A
+    hard-coded on/off after the await overwrote that fresher value until the
+    next poll.
+    """
+    entity_id, dp_id, key = target
+    service, pushed, expected = case
+    coordinator = init_integration.runtime_data
+    _reply_then_push(
+        coordinator, {"id": dp_id, "values": [{"key": key, "value": pushed}]}
+    )
+    await hass.services.async_call(
+        "switch", service, {"entity_id": entity_id}, blocking=True
+    )
+    assert hass.states.get(entity_id).state == expected
+
+
+@pytest.mark.parametrize("entity_id", ["switch.boiler", "switch.button_a_status_led"])
+@pytest.mark.parametrize(
+    ("service", "expected"), [("turn_on", "on"), ("turn_off", "off")]
+)
+async def test_commanded_state_stands_in_for_an_unusable_read_back(
+    hass: HomeAssistant,
+    init_integration,
+    entity_id: str,
+    service: str,
+    expected: str,
+) -> None:
+    """With nothing usable to read back, the confirmed command's state shows."""
+    coordinator = init_integration.runtime_data
+    _reply_then_push(coordinator, None)
+    await hass.services.async_call(
+        "switch", service, {"entity_id": entity_id}, blocking=True
+    )
+    assert hass.states.get(entity_id).state == expected
