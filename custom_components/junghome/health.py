@@ -172,6 +172,10 @@ class HealthState:
     entries: tuple[HealthEntry, ...] | None = None
     # The condition keys that read raised as repair issues.
     conditions: frozenset[str] = frozenset()
+    # Whether the gateway last reported its clock synchronised (``time_error``
+    # false) while the log showed the time-sync condition; None when unknown
+    # or the condition is not logged. An unreadable flag falls back to it.
+    time_synced: bool | None = None
     # The periodic re-read's timer, and whether a read is running (reads are
     # not stacked).
     unsub: Callable[[], None] | None = None

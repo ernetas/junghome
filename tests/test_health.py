@@ -312,6 +312,41 @@ async def test_time_sync_issue_follows_the_gateways_time_error_flag(
         assert time_error.await_count == calls
 
 
+@pytest.mark.parametrize(
+    "unreadable",
+    [
+        {"return_value": None},
+        {"side_effect": aiohttp.ClientError("boom")},
+        {"side_effect": TimeoutError()},
+    ],
+    ids=["non-200", "client-error", "timeout"],
+)
+async def test_an_unreadable_flag_after_a_recovery_keeps_the_issue_withdrawn(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, unreadable: dict
+) -> None:
+    """One failed `time_error` read must not re-raise a withdrawn issue.
+
+    A gateway that recovered without restarting keeps the > 24 h entry as its
+    newest time entry for months; the flag is a separate request, so one
+    failed read of it would otherwise re-create the issue as new and
+    un-ignored, telling the user a clock that is fine has not synchronised.
+    """
+    health = AsyncMock(return_value=[TIME_SYNC, TIME_ERROR, UP_AND_RUNNING])
+    time_error = AsyncMock(return_value=True)
+    async with _running(hass, health, time_error) as entry:
+        assert _raised(hass, entry) == {ISSUE_TIME_SYNC}
+        time_error.return_value = False  # synchronised again
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == set()
+        time_error.configure_mock(**unreadable)
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == set()
+        # A definite "unsynchronised" still raises it again.
+        time_error.configure_mock(side_effect=None, return_value=True)
+        await _tick(hass, freezer)
+        assert _raised(hass, entry) == {ISSUE_TIME_SYNC}
+
+
 async def test_one_missed_sync_round_after_a_recovery_raises_nothing(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:

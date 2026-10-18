@@ -1736,19 +1736,29 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if entries is None:
             return
         active = active_health_conditions(entries)
-        if ISSUE_TIME_SYNC in active and await self._time_sync_recovered(host, token):
-            del active[ISSUE_TIME_SYNC]
+        time_synced: bool | None = None
+        if ISSUE_TIME_SYNC in active:
+            time_synced = await self._time_synced(host, token)
+            if time_synced is None:
+                # Unreadable: keep the last verdict, so one failed read
+                # neither withdraws a raised issue nor re-raises a withdrawn
+                # one (the > 24 h entry stays logged after a recovery).
+                time_synced = self.health.time_synced
+            if time_synced:
+                del active[ISSUE_TIME_SYNC]
         if self._closing:
             return  # unloaded while the read was in flight: it writes nothing
         self.health.entries = entries
         self.health.conditions = frozenset(active)
+        self.health.time_synced = time_synced
         self._apply_health_issues(active)
 
-    async def _time_sync_recovered(self, host: str, token: str) -> bool:
-        """Whether the gateway reports its clock synchronised again.
+    async def _time_synced(self, host: str, token: str) -> bool | None:
+        """Whether the gateway reports its clock synchronised; None if unreadable.
 
-        Only a definite ``false`` counts: an unreadable parameter keeps the
-        issue the log raised.
+        ``time_error`` is a raw JSON boolean: ``false`` is synchronised,
+        ``true`` is not, and anything else (a non-200, a transport failure,
+        another body) says nothing.
         """
         try:
             value = await self._fetch_config_parameter_from_api(
@@ -1756,8 +1766,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             )
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.debug("Could not read the gateway time status: %s", err)
-            return False
-        return value is False
+            return None
+        if isinstance(value, bool):
+            return not value
+        return None
 
     def _apply_health_issues(self, active: Mapping[str, HealthCondition]) -> None:
         """Create the issue of every active condition, delete every other one."""
