@@ -51,6 +51,7 @@ from custom_components.junghome.const import (
     CONF_POLL_INTERVAL,
     DATA_AREA_ASSIGNED,
     DOMAIN,
+    device_config_entry_ids,
     device_slug,
     duplicate_slugs,
     gateway_device_id,
@@ -2009,7 +2010,9 @@ async def test_gateway_device_not_pruned(hass: HomeAssistant, init_integration) 
         coordinator.async_set_updated_data(coordinator.data)
         await hass.async_block_till_done()
     assert dev_reg.async_get(device.id) is not None
-    assert dev_reg.async_get(device.id).config_entries == {init_integration.entry_id}
+    assert device_config_entry_ids(dev_reg.async_get(device.id)) == {
+        init_integration.entry_id
+    }
 
 
 async def test_devices_linked_to_gateway_hub(

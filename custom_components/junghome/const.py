@@ -12,6 +12,7 @@ from .models import Datapoint, Device
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
+    from homeassistant.helpers.device_registry import AnyDeviceEntry
 
 DOMAIN = "junghome"
 
@@ -383,6 +384,20 @@ def gateway_configuration_url(host: object) -> str | None:
     except ValueError:
         return None
     return url if valid else None
+
+
+def device_config_entry_ids(device_entry: "AnyDeviceEntry") -> set[str]:
+    """Return the ids of the config entries ``device_entry`` belongs to.
+
+    HA 2026.9 gave a device a single config entry (``config_entry_id``) and
+    2026.10 deprecated the ``config_entries`` set that older cores, the floor
+    (2025.12.4) included, still need; reading it reports on every access and
+    stops working in 2027.10. Feature-detected, never version-compared.
+    """
+    entry_id: str | None = getattr(device_entry, "config_entry_id", None)
+    if entry_id is not None:
+        return {entry_id}
+    return set(device_entry.config_entries)
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:

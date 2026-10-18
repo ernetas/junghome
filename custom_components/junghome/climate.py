@@ -59,6 +59,14 @@ PARALLEL_UPDATES = 0
 DEFAULT_MIN_TEMP = 5.0
 DEFAULT_MAX_TEMP = 30.0
 
+# HA 2026.11 renamed the climate temperature API to ``native_*``: a class still
+# providing ``temperature_unit``/``target_temperature``/``current_temperature``
+# logs a warning when it is defined, and they stop working in 2027.11. Older
+# cores, the floor (2025.12.4) included, know only the old names. A class that
+# provides the native names is left alone, so define whichever set this core
+# has — feature-detected, never version-compared.
+NATIVE_TEMPERATURE_API = hasattr(ClimateEntity, "native_target_temperature")
+
 # "frost" (frost protection) has no standard HA preset constant; expose it under
 # its gateway name. The others map onto HA's well-known presets.
 PRESET_FROST = "frost"
@@ -143,7 +151,6 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
     # Drives attribute translations (the custom `frost` preset has no HA core
     # string). With _attr_name = None the entity still adopts the device name.
     _attr_translation_key = "thermostat"
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_min_temp = DEFAULT_MIN_TEMP
     _attr_max_temp = DEFAULT_MAX_TEMP
@@ -182,15 +189,31 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         self._preset_mode = self._get_preset_from_datapoint(ctrl_datapoint)
         self._current_temperature = self._get_current_temperature(device)
 
-    @property
-    def target_temperature(self) -> float | None:
-        """Return the target temperature."""
-        return self._target_temperature
+    if NATIVE_TEMPERATURE_API:
+        _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
 
-    @property
-    def current_temperature(self) -> float | None:
-        """Return the current ambient temperature, if the device reports one."""
-        return self._current_temperature
+        @property
+        def native_target_temperature(self) -> float | None:
+            """Return the target temperature."""
+            return self._target_temperature
+
+        @property
+        def native_current_temperature(self) -> float | None:
+            """Return the current ambient temperature, if the device reports one."""
+            return self._current_temperature
+
+    else:
+        _attr_temperature_unit = UnitOfTemperature.CELSIUS
+
+        @property
+        def target_temperature(self) -> float | None:
+            """Return the target temperature."""
+            return self._target_temperature
+
+        @property
+        def current_temperature(self) -> float | None:
+            """Return the current ambient temperature, if the device reports one."""
+            return self._current_temperature
 
     @property
     def preset_mode(self) -> str | None:

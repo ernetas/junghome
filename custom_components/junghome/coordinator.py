@@ -38,6 +38,7 @@ from .const import (
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     WEBSOCKET_OUTAGE_REPAIR_AFTER,
+    device_config_entry_ids,
     device_slug,
     duplicate_slugs,
     gateway_device_id,
@@ -953,7 +954,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if old_device is None:
             return False
         label = str(device.get("label"))
-        if old_device.config_entries - {entry_id}:
+        if device_config_entry_ids(old_device) - {entry_id}:
             # Before Home Assistant 2026.9 identifiers are registry-wide, so
             # another gateway's function with the same label shares this
             # device; its entities and the identifier are that gateway's too.
