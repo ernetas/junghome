@@ -5,19 +5,6 @@
   ],
   "packageRules": [
     {
-      "description": "pytest-homeassistant-custom-component pins homeassistant, pytest and syrupy to exact versions, so bumping any of them on its own is an unresolvable dependency conflict rather than a test failure. Move the whole set in one PR.",
-      "matchManagers": [
-        "pip_requirements"
-      ],
-      "matchPackageNames": [
-        "homeassistant",
-        "pytest",
-        "pytest-homeassistant-custom-component",
-        "syrupy"
-      ],
-      "groupName": "home-assistant test stack"
-    },
-    {
       "description": "Stay on one stable Home Assistant minor line (currently 2026.9): test against what users actually run, never a beta. pytest-homeassistant-custom-component is capped alongside it because it pins homeassistant exactly and starts targeting the next minor's betas before that minor is stable; 0.13.367 is the release pinning 2026.9.4. When a newer 2026.9.x patch ships, raise the phacc cap to the release pinning it. Move both caps to the next line together once its .0 is stable and a phacc pinning it exists.",
       "matchManagers": [
         "pip_requirements"
@@ -35,6 +22,15 @@
         "pytest-homeassistant-custom-component"
       ],
       "allowedVersions": "<0.13.368"
+    },
+    {
+      "description": "Open a single PR for every dependency update (Dependabot version updates are disabled in favour of this). It must stay the last rule so no earlier groupName splits a package out. It also keeps the home-assistant test stack together: pytest-homeassistant-custom-component pins homeassistant, pytest and syrupy exactly, so bumping one alone is an unresolvable conflict.",
+      "matchPackageNames": [
+        "*"
+      ],
+      "groupName": "all dependencies",
+      "groupSlug": "all"
     }
-  ]
+  ],
+  "separateMajorMinor": false
 }
