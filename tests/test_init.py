@@ -5197,6 +5197,50 @@ async def test_device_new_in_a_capability_reload_broadcast_joins_the_reloaded_en
         await hass.async_block_till_done()
 
 
+async def test_a_failed_unload_stops_the_poll_and_discovery(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """After an unload that fails, nothing keeps running on the dead coordinator.
+
+    Home Assistant skips the entry's on-unload callbacks when the unload ends
+    in FAILED_UNLOAD, so the discovery listeners and the REST poll stayed
+    attached; the next list with a new device added an entity to a platform
+    already reset, bound to the stopped coordinator.
+    """
+    entry = init_integration
+    coordinator = entry.runtime_data
+    with patch.object(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id) is False
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.FAILED_UNLOAD
+    assert coordinator._unsub_refresh is None
+    coordinator.data = [
+        *coordinator.data,
+        {
+            "id": "idgarden",
+            "type": "OnOff",
+            "label": "Garden",
+            "datapoints": [
+                {
+                    "id": "idgarden-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "1"}],
+                }
+            ],
+        },
+    ]
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert (
+        er.async_get(hass).async_get_entity_id(Platform.LIGHT, DOMAIN, "garden_001")
+        is None
+    )
+    # FAILED_UNLOAD is final; let the fixture's teardown unload pass.
+    entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
+
+
 async def test_no_platform_discovers_while_the_entry_unloads(
     hass: HomeAssistant, init_integration: MockConfigEntry
 ) -> None:

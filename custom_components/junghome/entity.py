@@ -51,9 +51,14 @@ def entry_unloading(entry: ConfigEntry) -> bool:
     adoption's listener pass would add a new device's entities to the reset
     platform: an orphan bound to the dead coordinator, frozen at its first
     state, while the reloaded entry's own discovery finds the unique_id taken.
-    The reloaded entry discovers everything afresh.
+    The reloaded entry discovers everything afresh. An unload that failed
+    (FAILED_UNLOAD) counts too: Home Assistant then skips the on-unload
+    callbacks, so those listeners are never removed at all.
     """
-    return entry.state is ConfigEntryState.UNLOAD_IN_PROGRESS
+    return entry.state in (
+        ConfigEntryState.UNLOAD_IN_PROGRESS,
+        ConfigEntryState.FAILED_UNLOAD,
+    )
 
 
 def claim_new_entity(known: set[str], unique_id: str) -> bool:

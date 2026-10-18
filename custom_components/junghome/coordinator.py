@@ -2980,6 +2980,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # shutdown reaches here without an unload, so cancel explicitly.
             task.cancel()
         self._node_identity_task = None
+        # The REST poll and the debounced refresh. The entry's on-unload
+        # callbacks do this too, but Home Assistant skips them when the unload
+        # fails (FAILED_UNLOAD), which left the poll running on a stopped
+        # coordinator.
+        await self.async_shutdown()
         if self.websocket is not None and not self.websocket.closed:
             await self.websocket.close()
         self.websocket = None
