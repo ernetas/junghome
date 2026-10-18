@@ -24,6 +24,13 @@
       "allowedVersions": "<0.13.368"
     },
     {
+      "description": "Keep CI on Python 3.14 until Home Assistant supports 3.15: at the hacs.json floor, orjson, Pillow, pydantic-core and fastuuid have no 3.15 wheels and fail to build from source, so the floor job cannot install. Lift once HA (and the floor's pins) ship 3.15 wheels.",
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.15"
+    },
+    {
       "description": "Open a single PR for every dependency update (Dependabot version updates are disabled in favour of this). It must stay the last rule so no earlier groupName splits a package out. It also keeps the home-assistant test stack together: pytest-homeassistant-custom-component pins homeassistant, pytest and syrupy exactly, so bumping one alone is an unresolvable conflict.",
       "matchPackageNames": [
         "*"
