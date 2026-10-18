@@ -788,8 +788,10 @@ events), never grant availability. A flow-side "did the listener reload?"
 check reads `entry.state` BEFORE `async_update_entry` (listeners dispatch
 eagerly — the zeroconf bullet seen from the other side).
 Optimistic entity writes happen only after the awaited command returns,
-and an on/off state is then read back (`JungHomeEntity._bool_after_command`),
-never hard-coded: a push can land between the confirmation and the resume.
+and the value is then read back (`JungHomeEntity._value_after_command`;
+`_bool_after_command` for on/off), never written from the request: a push can
+land between the confirmation and the resume. (A cover's reply carries the
+acknowledged *target*, not the mid-travel position.)
 A value the command implies but the gateway does not echo (a Brightness
 Set's on) goes into `coordinator.data` via `adopt_implied_value`, unless
 `datapoint_push_count` shows the gateway reported that datapoint meanwhile.

@@ -224,27 +224,30 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover fully."""
-        await self.coordinator.set_level(
-            self._level_datapoint_id, _to_device(100, inverted=self._inverted)
-        )
-        self._position = 100
-        self.async_write_ha_state()
+        await self._set_position(100)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover fully."""
-        await self.coordinator.set_level(
-            self._level_datapoint_id, _to_device(0, inverted=self._inverted)
-        )
-        self._position = 0
-        self.async_write_ha_state()
+        await self._set_position(0)
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position."""
-        ha_position = int(kwargs[ATTR_POSITION])
+        await self._set_position(int(kwargs[ATTR_POSITION]))
+
+    async def _set_position(self, ha_position: int) -> None:
         await self.coordinator.set_level(
             self._level_datapoint_id, _to_device(ha_position, inverted=self._inverted)
         )
-        self._position = ha_position
+        # Read back (see `_value_after_command`). The reply to a set carries the
+        # target the device acknowledged, not where it is mid-travel
+        # (`PositionState.fromMeshMessage` reports the target for a response),
+        # so this is the confirmed target — and a push that beat this resume
+        # (a stop, a wall switch) wins over it.
+        self._position = self._value_after_command(
+            self._level_datapoint_id,
+            self._get_position_from_datapoint,
+            fallback=ha_position,
+        )
         self.async_write_ha_state()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
@@ -272,7 +275,10 @@ class JungHomeCover(JungHomeEntity, CoverEntity):
             return
         # Angle is mapped straight through (no inversion) — see module docstring.
         await self.coordinator.set_angle(self._angle_datapoint_id, tilt)
-        self._tilt = tilt
+        # Same read-back as the position (`AngleState` mirrors `PositionState`).
+        self._tilt = self._value_after_command(
+            self._angle_datapoint_id, self._get_tilt_from_datapoint, fallback=tilt
+        )
         self.async_write_ha_state()
 
     @callback
