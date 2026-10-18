@@ -34,7 +34,11 @@ from .models import Datapoint, Device
 # platforms used then, so one entity per startup failed to load (issue #207).
 # Cores older than 2026.8 reject the new key as an unknown kwarg, hence the
 # feature check rather than a version compare; the floor stays 2025.12.4.
-VIA_DEVICE_ID_SUPPORTED = "via_device_id" in DeviceInfo.__optional_keys__
+# ``__annotations__`` rather than ``__optional_keys__``: 2026.11 turns
+# ``DeviceInfo`` from a TypedDict into a dataclass and keeps the TypedDict
+# attribute only in a compatibility layer slated for removal (issue #231).
+# Drop the check once the floor reaches 2026.8.
+VIA_DEVICE_ID_SUPPORTED = "via_device_id" in DeviceInfo.__annotations__
 
 
 def entry_unloading(entry: ConfigEntry) -> bool:
