@@ -99,12 +99,22 @@ def _secrets(entry: JungHomeConfigEntry) -> list[str]:
 # texts, where no key exists to redact by: the myJUNG user name the gateway
 # was registered to (`cloud_connection_service.js:92`, appended to the text
 # unquoted, so everything after it goes) and the name of each API client
-# granted access
-# (`api_access_service.js:82,95`). Device labels (the unreachable/weak-signal
-# lists) stay, as everywhere else in the report.
+# granted access (`api_access_service.js:82,95`). Both are anchored on their
+# own fixed text: the "check your myJUNG Account username/password" hints
+# (`:66`, `:74`) carry no personal data and are what tells those two failures
+# apart, and a client name is any string the api-server accepted, quotes
+# included, so it ends at the fixed tail rather than at its first quote.
+# Device labels (the unreachable/weak-signal lists) stay, as everywhere else in
+# the report.
 _HEALTH_PERSONAL_DATA = (
-    (re.compile(r"(myJUNG Account ).+", re.DOTALL), r"\1**REDACTED**"),
-    (re.compile(r'(with the name ")[^"]*(")'), r"\1**REDACTED**\2"),
+    (
+        re.compile(r"(registered your Gateway to the myJUNG Account ).+", re.DOTALL),
+        r"\1**REDACTED**",
+    ),
+    (
+        re.compile(r'(with the name ").*?(" has been granted access)', re.DOTALL),
+        r"\1**REDACTED**\2",
+    ),
 )
 
 
