@@ -292,6 +292,31 @@ def test_parse_trusts_a_profile_the_range_state_cannot_contradict() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("profile_range", "range_value"),
+    [
+        ({"min": 2000, "max": 6000, "step": 1}, [2700, 6500]),
+        ({"min": 2700, "max": 6500, "step": 1}, [3000, 6000]),
+    ],
+    ids=["constructor-default", "bound-earlier"],
+)
+def test_parse_profile_not_yet_bound_to_the_read_range_is_pending(
+    profile_range: dict[str, int], range_value: list[int]
+) -> None:
+    """A read range the profile does not match yet: the binding is still due.
+
+    A project upload rebuilds every state with its constructor profile but
+    carries the range state's value over (`devices_service.js:247-252`), so
+    until the range state's next read binds it again the profile says
+    2000-6000 K next to the node's real ``[2700, 6500]``. The binding copies
+    the pair verbatim (`ColorTemperatureState.js:190-197`), so any difference
+    means "not bound yet": pending, re-read until they agree.
+    """
+    doc = _ct_light(LIGHT, profile_range, range_value)
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, True)
+
+
 def test_parse_kelvin_range_rejects_bad_payloads() -> None:
     """The range parser only trusts a well-formed, plausible pair of numbers."""
     assert parse_kelvin_range({"min": "2700", "max": 6500.4}) == (2700, 6500)
