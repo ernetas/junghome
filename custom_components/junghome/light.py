@@ -238,24 +238,44 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         """Turn the light on."""
         _LOGGER.debug("Turning on light %s", self._name)
         was_on = self._is_on
-        # Turn on first, then apply brightness/color temperature to avoid
-        # device-side overrides (some devices reset brightness on power-on).
-        await self.coordinator.turn_on_light(self._datapoint["id"])
-        self._is_on = True
+        # Brightness Set (Light Lightness) turns a dimmer on at that level.
+        # Sending switch=1 first restores the device's last level (often full)
+        # before the brightness frame arrives — a visible flash. Sending
+        # switch=1 *after* a brightness set is the path some devices use to
+        # overwrite that level on power-on. So when brightness is requested,
+        # send only brightness (no OnOff); bare on still uses switch so the
+        # device can restore its own level.
         if self._has_brightness and "brightness" in kwargs:
             await self._set_brightness(kwargs["brightness"])
-        elif self._has_brightness and not was_on:
-            # No explicit brightness on a genuine off->on: the device restores
-            # its own level on power-on. Don't guess — showing a kept/stale
-            # value looked like the light jumping to 100%. Clear it and let the
-            # device's own brightness report populate the real current value
-            # (its WS push, or the periodic poll as a fallback).
-            #
-            # Gated on `was_on` because a turn_on against an ALREADY-on dimmer
-            # changes nothing on the device, so no push follows — clearing here
-            # left brightness unknown until the next poll for no reason. The
-            # value being shown is the device's current level; keep it.
-            self._brightness = None
+            # Do not hard-code on: a fresher off push can land after the
+            # brightness confirm and before this coroutine resumes (same race
+            # as the switch path below). Brightness Set turns the dimmer on,
+            # but the switch datapoint is often absent from that reply, so a
+            # still-off reading after an off→on is the lagging pre-command
+            # value — treat that as on. An off that arrives while we were
+            # already on is unambiguous and must win.
+            self._is_on = self._switch_state_after_command(
+                fallback=True, brightness_on_from_off=not was_on
+            )
+        else:
+            await self.coordinator.turn_on_light(self._datapoint["id"])
+            # Re-read after the await (see `_switch_state_after_command`): the
+            # confirmation merge — and any fresher push that beat this resume
+            # — already updated coordinator.data via the listener.
+            self._is_on = self._switch_state_after_command(fallback=True)
+            if self._has_brightness and not was_on:
+                # No explicit brightness on a genuine off->on: the device
+                # restores its own level on power-on. Don't guess — showing a
+                # kept/stale value looked like the light jumping to 100%.
+                # Clear it and let the device's own brightness report populate
+                # the real current value (its WS push, or the periodic poll).
+                #
+                # Gated on `was_on` because a turn_on against an ALREADY-on
+                # dimmer changes nothing on the device, so no push follows —
+                # clearing here left brightness unknown until the next poll
+                # for no reason. The value being shown is the device's
+                # current level; keep it.
+                self._brightness = None
         if self._has_color_temp and "color_temp_kelvin" in kwargs:
             await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
@@ -264,8 +284,41 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         """Turn the light off."""
         _LOGGER.debug("Turning off light %s", self._name)
         await self.coordinator.turn_off_light(self._datapoint["id"])
-        self._is_on = False
+        # Same as turn_on: never overwrite a fresher push that landed between
+        # the confirmation and this resume with a hard-coded off.
+        self._is_on = self._switch_state_after_command(fallback=False)
         self.async_write_ha_state()
+
+    def _switch_state_after_command(
+        self,
+        *,
+        fallback: bool,
+        brightness_on_from_off: bool = False,
+    ) -> bool | None:
+        """Adopt the coordinator's switch value after a command await.
+
+        The confirmation reply (and any later push on the same session) is
+        merged into ``coordinator.data`` and dispatched to listeners
+        *before* the awaiting service coroutine resumes. A hard-coded
+        ``True``/``False`` after the await therefore races those updates and
+        can leave HA showing on while the puck is already off (or the
+        reverse) — including when two overlapping HA commands finish out of
+        mesh order. Re-read; ``fallback`` is only for a missing datapoint.
+
+        ``brightness_on_from_off``: a Brightness Set turns the dimmer on, but
+        its reply is the brightness datapoint — the switch echo often still
+        holds the pre-command off. That lag must not undo the on; a fresher
+        off while the light was already on is still trusted.
+        """
+        datapoint = self._find_datapoint(self._datapoint["id"])
+        if datapoint is None:
+            return fallback
+        state = self._get_state_from_datapoint(datapoint)
+        if state is None:
+            return fallback
+        if brightness_on_from_off and state is False:
+            return True
+        return state
 
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
         """Extract the state of the light from its datapoint.
