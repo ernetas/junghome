@@ -64,15 +64,16 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `repairs.py` — the fix flow for `tls_certificate_changed`.
   - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
-    `scene_unique_id`, `is_presence_quantity`), the option keys and the
-    button gesture constants (`BUTTON_EVENT_TYPES`, `BUTTON_HOLD_THRESHOLD`,
-    `BUTTON_DUPLICATE_WINDOW`, `CONF_SUPPRESS_DUPLICATE_PRESSES`).
+    `scene_unique_id`, `is_presence_quantity`), `entry_unloading`, the
+    option keys and the button gesture constants (`BUTTON_EVENT_TYPES`,
+    `BUTTON_HOLD_THRESHOLD`, `BUTTON_DUPLICATE_WINDOW`,
+    `CONF_SUPPRESS_DUPLICATE_PRESSES`).
   - `light.py`, `switch.py`, `sensor.py`, `binary_sensor.py`, `event.py`,
     `cover.py`, `climate.py`, `scene.py` — platforms; each discovers devices
     added at runtime via a coordinator listener.
   - `entity.py` — `JungHomeEntity`, the shared base of every device-backed
     platform (`device_info`, `available`, datapoint lookups, the
-    foreign-device push skip, `entry_unloading`); scenes don't use it.
+    foreign-device push skip); scenes don't use it.
   - `models.py` — the typed wire models and parsers: `sanitize_devices`
     (both device-list adoption points), `parse_project_export` /
     `NodeIdentity`, `FunctionAnchor`, `parse_devices_verbose` /
@@ -513,9 +514,11 @@ instead of re-deriving:
   *presence*, never on the function-type name. That reload (like the
   id-churn one) starts *inside* an adoption and runs eagerly: every
   `_discover_*` listener returns early while the entry is
-  `UNLOAD_IN_PROGRESS` (`entity.entry_unloading`), and the platforms add
-  without `update_before_add` — either gap put a device new in that list on
-  the dead coordinator (an orphan frozen at its first state).
+  `UNLOAD_IN_PROGRESS` or `FAILED_UNLOAD` (`const.entry_unloading`), and the
+  platforms add without `update_before_add` — either gap put a device new in
+  that list on the dead coordinator (an orphan frozen at its first state).
+  Neither reload is scheduled while one is already unloading the entry (HA
+  never merges reloads).
 - **Push handling must not starve the poll.** The per-datapoint push path
   deliberately avoids `async_set_updated_data` (it re-arms the poll a full
   interval out; a chatty gateway would defer polling forever — the old

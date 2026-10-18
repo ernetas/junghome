@@ -41,6 +41,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 )
 from syrupy.assertion import SnapshotAssertion
 
+from custom_components import junghome
 from custom_components.junghome import (
     STALE_DEVICE_PRUNE_MISSES,
     async_remove_config_entry_device,
@@ -4461,6 +4462,62 @@ async def test_rename_and_capability_change_in_one_adoption_reloads(
                 "supported_features"
             ]
             assert features & CoverEntityFeature.SET_TILT_POSITION
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_id_churn_and_a_confirmed_capability_change_reload_once(
+    hass: HomeAssistant,
+) -> None:
+    """One adoption that warrants two reloads gets one.
+
+    The id-churn reload starts eagerly inside the adoption and puts the entry
+    in UNLOAD_IN_PROGRESS; the capability watcher, dispatched on the same
+    adoption, used to schedule a second one on top (Home Assistant never
+    merges reloads), so the entry went through two full setups back to back.
+    """
+    devices = [*_identified_devices(), _awning()]
+    tilted = copy.deepcopy(devices)
+    awning = next(d for d in tilted if d["id"] == "idawning")
+    awning["type"] = "PositionAndAngle"
+    awning["datapoints"].append(
+        {
+            "id": "idawning-002",
+            "type": "angle",
+            "values": [{"key": "angle", "value": "0"}],
+        }
+    )
+    churned = copy.deepcopy(tilted)
+    orphan = next(d for d in churned if d["id"] == "idorphan")
+    orphan["id"] = "idorphan2"
+    orphan["datapoints"][0]["id"] = "idorphan2-001"
+    entry = _prepared_entry(hass)
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        fetch = AsyncMock(return_value=copy.deepcopy(tilted))
+        stack.enter_context(
+            patch.object(
+                JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch
+            )
+        )
+        await coordinator.async_refresh()  # the capability change: pending
+        await hass.async_block_till_done()
+        assert entry.runtime_data is coordinator
+        fetch.return_value = copy.deepcopy(churned)
+        setup = stack.enter_context(
+            patch(
+                "custom_components.junghome.async_setup_entry",
+                wraps=junghome.async_setup_entry,
+            )
+        )
+        await coordinator.async_refresh()  # confirmed, plus id churn
+        await hass.async_block_till_done()
+        assert setup.await_count == 1
+        assert entry.state is ConfigEntryState.LOADED
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
 

@@ -23,13 +23,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     datapoint_value,
+    entry_unloading,
     gateway_device_id,
     gateway_device_info,
     is_presence_quantity,
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity, entry_unloading
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)

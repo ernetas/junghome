@@ -40,6 +40,7 @@ from .const import (
     WEBSOCKET_OUTAGE_REPAIR_AFTER,
     device_slug,
     duplicate_slugs,
+    entry_unloading,
     gateway_device_id,
     scene_unique_id,
 )
@@ -822,7 +823,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             for slug, dev_id in new_ids.items()
         )
         self._device_ids = new_ids
-        if changed and self.config_entry is not None:
+        if (
+            changed
+            and self.config_entry is not None
+            # A reload already under way (scheduled earlier in this adoption's
+            # unload window) re-resolves every id; Home Assistant never
+            # merges reloads, so another would run a whole extra cycle.
+            and not entry_unloading(self.config_entry)
+        ):
             _LOGGER.warning(
                 "Jung Home gateway device ids changed (device re-provisioned, "
                 "label moved to another element or hardware swapped?); "

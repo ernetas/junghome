@@ -49,9 +49,14 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_INVERTED_COVERS, datapoint_value, stable_unique_id
+from .const import (
+    CONF_INVERTED_COVERS,
+    datapoint_value,
+    entry_unloading,
+    stable_unique_id,
+)
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import JungHomeEntity, claim_new_entity, entry_unloading
+from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)

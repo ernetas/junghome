@@ -27,6 +27,7 @@ from .const import (
     device_slug,
     duplicate_slugs,
     entry_scope,
+    entry_unloading,
     gateway_device_id,
     gateway_device_info,
 )
@@ -40,7 +41,6 @@ from .coordinator import (
     entry_derived_issue_ids,
     function_anchors_store,
 )
-from .entity import entry_unloading
 from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
@@ -318,7 +318,11 @@ def _register_capability_reload(
             else:
                 candidates[slug] = signature  # first sighting; confirm next time
         pending_signatures = candidates
-        if changed:
+        # Not while the entry unloads: the id-churn reload this same adoption
+        # may have started (it runs eagerly up to its first suspension)
+        # rebuilds every entity anyway, and Home Assistant never merges
+        # reloads, so a second one would run a whole extra unload and setup.
+        if changed and not entry_unloading(entry):
             reload_scheduled = True
             _LOGGER.info(
                 "Jung Home: a device's datapoint set changed; reloading the entry "

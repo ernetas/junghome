@@ -22,9 +22,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 # scene_slug/scene_unique_id live in const.py so the coordinator can resolve a
 # recalled scene's entity without importing this platform module.
-from .const import DOMAIN, scene_unique_id
+from .const import DOMAIN, entry_unloading, scene_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
-from .entity import entry_unloading
 
 _LOGGER = logging.getLogger(__name__)
 

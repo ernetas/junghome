@@ -3,6 +3,7 @@
 import ipaddress
 from typing import TYPE_CHECKING
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import slugify
@@ -528,3 +529,24 @@ def stable_unique_id(
     if qualifier:
         parts.append(qualifier)
     return "_".join(parts)
+
+
+def entry_unloading(entry: "ConfigEntry") -> bool:
+    """Whether ``entry`` is being unloaded: discovery adds nothing, no reload is due.
+
+    A reload can start in the middle of a device-list adoption — the id-churn
+    check and the capability watcher schedule one, and it runs eagerly up to
+    its first suspension. By then the platforms are reset, but the discovery
+    listeners are removed only when the unload finishes, so the same
+    adoption's listener pass would add a new device's entities to the reset
+    platform: an orphan bound to the dead coordinator, frozen at its first
+    state, while the reloaded entry's own discovery finds the unique_id taken.
+    The reloaded entry discovers everything afresh, and re-derives what a
+    second reload would have been scheduled for. An unload that failed
+    (FAILED_UNLOAD) counts too: Home Assistant then skips the on-unload
+    callbacks, so those listeners are never removed at all.
+    """
+    return entry.state in (
+        ConfigEntryState.UNLOAD_IN_PROGRESS,
+        ConfigEntryState.FAILED_UNLOAD,
+    )
