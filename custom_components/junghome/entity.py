@@ -184,10 +184,13 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
         rather than a made-up "Unknown Model" pinned as if the gateway had
         said it.
         """
-        info: DeviceInfo = {
-            "identifiers": {(DOMAIN, device_slug(self._device))},
-            "manufacturer": "Jung",
-        }
+        # Constructed, not a dict literal: 2026.11 turns DeviceInfo from a
+        # TypedDict into a dataclass, and the item assignments below work on
+        # both (the dataclass keeps dict-style writes as a compatibility layer).
+        info = DeviceInfo(
+            identifiers={(DOMAIN, device_slug(self._device))},
+            manufacturer="Jung",
+        )
         if label := self._device.get("label"):
             info["name"] = label
         if model := self.coordinator.model_for(self._device):

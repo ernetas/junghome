@@ -41,6 +41,7 @@ from .const import (
     CONF_SUBTYPE,
     DOMAIN,
     EVENT_BUTTON_ACTION,
+    device_config_entry_ids,
     device_slug,
 )
 
@@ -77,7 +78,7 @@ def _gateway_device(hass: HomeAssistant, device_id: str) -> Device | None:
     }
     if not slugs:
         return None
-    for entry_id in device_entry.config_entries:
+    for entry_id in device_config_entry_ids(device_entry):
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
             continue

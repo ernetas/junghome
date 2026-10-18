@@ -15,6 +15,7 @@ from .const import (
     DATA_AREA_ASSIGNED,
     DOMAIN,
     datapoint_suffix,
+    device_config_entry_ids,
     device_slug,
     duplicate_slugs,
     entry_scope,
@@ -414,7 +415,7 @@ def _remove_device(
     A branch 2026.9 cannot reach.
     """
     coordinator.forget_device_unique_ids(device_entry.id)
-    if device_entry.config_entries - {entry_id}:
+    if device_config_entry_ids(device_entry) - {entry_id}:
         dev_reg.async_update_device(device_entry.id, remove_config_entry_id=entry_id)
         return
     dev_reg.async_remove_device(device_entry.id)
