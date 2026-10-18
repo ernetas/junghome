@@ -3,13 +3,22 @@
 import logging
 from collections.abc import Callable
 
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntry,
+    ConfigEntryChange,
+    ConfigEntryState,
+)
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DATA_AREA_ASSIGNED,
@@ -19,6 +28,7 @@ from .const import (
     device_slug,
     duplicate_slugs,
     entry_scope,
+    entry_unloading,
     gateway_device_id,
     gateway_device_info,
 )
@@ -32,10 +42,11 @@ from .coordinator import (
     entry_derived_issue_ids,
     function_anchors_store,
 )
-from .entity import entry_unloading
 from .models import Device
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS: list[Platform] = [
     Platform.LIGHT,
@@ -120,7 +131,11 @@ def _sync_label_collision_issue(
     device gets no entities (`duplicate_slugs`) — invisible in the UI apart
     from a log line, so it is a repair issue too. One issue per entry lists
     every group; it goes away once ``LABEL_COLLISION_CLEAR_ADOPTIONS``
-    adoptions in a row carried no collision.
+    adoptions in a row carried no collision. Home Assistant keeps an issue's
+    dismissal when it is re-created with new placeholders, so once ignored,
+    a group the issue did not list yet is announced by deleting the issue
+    first (a deleted issue loses its dismissal); a group it already listed,
+    or one resolved, leaves the dismissal alone.
 
     Nothing is written while the entry unloads: an adoption landing in that
     window (a poll still in flight while ``stop()`` awaits the WebSocket
@@ -139,6 +154,12 @@ def _sync_label_collision_issue(
         ", ".join(f'"{label}"' for label in sorted(labels))
         for labels in collisions.values()
     )
+    lines = [f"- {group}" for group in groups]
+    existing = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    if existing is not None and existing.dismissed_version is not None:
+        listed = (existing.translation_placeholders or {}).get("labels", "")
+        if not set(lines) <= set(listed.split("\n")):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
     ir.async_create_issue(
         hass,
         DOMAIN,
@@ -148,7 +169,7 @@ def _sync_label_collision_issue(
         translation_key=ISSUE_DUPLICATE_LABELS,
         translation_placeholders={
             "host": str(entry.data.get("host")),
-            "labels": "\n".join(f"- {group}" for group in groups),
+            "labels": "\n".join(lines),
         },
     )
 
@@ -298,7 +319,11 @@ def _register_capability_reload(
             else:
                 candidates[slug] = signature  # first sighting; confirm next time
         pending_signatures = candidates
-        if changed:
+        # Not while the entry unloads: the id-churn reload this same adoption
+        # may have started (it runs eagerly up to its first suspension)
+        # rebuilds every entity anyway, and Home Assistant never merges
+        # reloads, so a second one would run a whole extra unload and setup.
+        if changed and not entry_unloading(entry):
             reload_scheduled = True
             _LOGGER.info(
                 "Jung Home: a device's datapoint set changed; reloading the entry "
@@ -533,6 +558,39 @@ def _make_area_assigner(
             )
 
     return _assign_areas
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Withdraw a disabled entry's kept repair issues, whatever state it was in.
+
+    The health and colliding-label issues outlive a reload or an HA restart
+    (the next setup re-derives them, and the registry keeps the user's
+    "Ignore" only for an issue it still holds). A disabled entry sets up no
+    more, so nothing would re-derive or withdraw them: they go with it. Not in
+    ``async_unload_entry``: Home Assistant calls that only for a loaded entry,
+    and one sitting in setup-retry or setup-error is just marked not loaded.
+    Once it is not loaded, every unload step — ``stop()`` (so a health read
+    still in flight cannot re-raise one, its ``_closing`` guard) and the
+    listener removal — has run.
+    """
+
+    @callback
+    def _withdraw_issues_of_a_disabled_entry(
+        change: ConfigEntryChange, entry: ConfigEntry
+    ) -> None:
+        if (
+            change is ConfigEntryChange.UPDATED
+            and entry.domain == DOMAIN
+            and entry.disabled_by is not None
+            and entry.state is ConfigEntryState.NOT_LOADED
+        ):
+            for issue_id in entry_derived_issue_ids(entry.entry_id):
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+    async_dispatcher_connect(
+        hass, SIGNAL_CONFIG_ENTRY_CHANGED, _withdraw_issues_of_a_disabled_entry
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
@@ -885,16 +943,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     # stop() is idempotent; call it unconditionally so a failed platform unload
     # doesn't leak the WebSocket reconnect loop.
     await entry.runtime_data.stop()
-    # The health and colliding-label issues outlive a reload or an HA restart
-    # (the next setup re-derives them, and the registry keeps the user's
-    # "Ignore" only for an issue it still holds). A disabled entry sets up no
-    # more, so nothing would re-derive or withdraw them: they go with it.
-    # (`disabled_by` is set before HA unloads the entry.) After `stop()`, so a
-    # health read still in flight cannot re-raise one (its `_closing` guard),
-    # and the watcher writes nothing while the entry unloads.
-    if entry.disabled_by is not None:
-        for issue_id in entry_derived_issue_ids(entry.entry_id):
-            ir.async_delete_issue(hass, DOMAIN, issue_id)
+    # A disable withdraws the kept repair issues once the entry is not loaded
+    # (`async_setup`'s listener), loaded before or not.
     return unload_ok
 
 
@@ -904,7 +954,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     ``stop()`` deletes the certificate and push-failure issues on unload, but
     an entry removed while it sits in SETUP_RETRY (a certificate mismatch keeps
     it there) never ran ``stop()``; the health and colliding-label issues
-    outlive every unload short of a disable (``async_unload_entry``).
+    outlive every unload short of a disable (``async_setup``).
     """
     for issue_id in (
         f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",

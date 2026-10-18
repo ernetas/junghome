@@ -16,7 +16,6 @@ differs between platforms).
 from collections.abc import Callable
 from typing import Any, cast
 
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -39,21 +38,6 @@ from .models import Datapoint, Device
 # attribute only in a compatibility layer slated for removal (issue #231).
 # Drop the check once the floor reaches 2026.8.
 VIA_DEVICE_ID_SUPPORTED = "via_device_id" in DeviceInfo.__annotations__
-
-
-def entry_unloading(entry: ConfigEntry) -> bool:
-    """Whether ``entry`` is being unloaded, so discovery must not add anything.
-
-    A reload can start in the middle of a device-list adoption — the id-churn
-    check and the capability watcher schedule one, and it runs eagerly up to
-    its first suspension. By then the platforms are reset, but the discovery
-    listeners are removed only when the unload finishes, so the same
-    adoption's listener pass would add a new device's entities to the reset
-    platform: an orphan bound to the dead coordinator, frozen at its first
-    state, while the reloaded entry's own discovery finds the unique_id taken.
-    The reloaded entry discovers everything afresh.
-    """
-    return entry.state is ConfigEntryState.UNLOAD_IN_PROGRESS
 
 
 def claim_new_entity(known: set[str], unique_id: str) -> bool:

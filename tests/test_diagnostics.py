@@ -21,9 +21,11 @@ from custom_components.junghome.const import (
 )
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.diagnostics import (
+    _health_log,
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
 )
+from custom_components.junghome.health import HealthEntry
 from tests.conftest import _fake_run_websocket, find_device
 
 HOST = "192.168.1.50"
@@ -234,6 +236,53 @@ async def test_entry_diagnostics_carry_the_health_log_without_personal_data(
 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def test_health_log_masks_a_quoted_client_name_and_keeps_the_myjung_hints() -> None:
+    """Personal data is masked whole; the firmware's fixed hints are kept.
+
+    The api-server accepts any string as a client name and the middleware
+    quotes it unescaped (`api_access_service.js:82,95`), so a name holding a
+    double quote must be masked up to the fixed tail, not the first quote.
+    Only the "registered your Gateway" text appends the myJUNG user name
+    (`cloud_connection_service.js:92`); the two "check your ... username" /
+    "... password" hints (`:66`, `:74`) are fixed texts and are the one fact
+    that tells the two registration failures apart.
+    """
+
+    def entry(details: str) -> HealthEntry:
+        return HealthEntry("INFO", "2026-09-26T08:00:00.000Z", "x", details)
+
+    log = _health_log(
+        (
+            entry(
+                'New User or System with the name "Bob\'s "Living Room" Tablet" '
+                "has been granted access to your JUNG HOME Gateway."
+            ),
+            entry(
+                "Please set or check your myJUNG Account username in the JUNG HOME App"
+            ),
+            entry(
+                "Please set or check your myJUNG Account password in the JUNG HOME App"
+            ),
+            entry(
+                "You have registered your Gateway to the myJUNG Account "
+                "jane.doe@example.com"
+            ),
+        ),
+        [],
+    )
+    assert log is not None
+    details = [item["details"] for item in log]
+    assert details == [
+        (
+            'New User or System with the name "**REDACTED**" has been granted '
+            "access to your JUNG HOME Gateway."
+        ),
+        "Please set or check your myJUNG Account username in the JUNG HOME App",
+        "Please set or check your myJUNG Account password in the JUNG HOME App",
+        "You have registered your Gateway to the myJUNG Account **REDACTED**",
+    ]
 
 
 async def test_entry_diagnostics_before_any_health_read(

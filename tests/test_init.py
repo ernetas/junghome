@@ -41,6 +41,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 )
 from syrupy.assertion import SnapshotAssertion
 
+from custom_components import junghome
 from custom_components.junghome import (
     STALE_DEVICE_PRUNE_MISSES,
     async_remove_config_entry_device,
@@ -2389,6 +2390,54 @@ async def test_colliding_labels_raise_a_repair_issue_until_renamed(
         await hass.async_block_till_done()
 
 
+async def test_a_new_collision_un_ignores_the_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """Ignoring the issue silences the groups it listed, not later collisions.
+
+    One issue per entry lists every group, and Home Assistant keeps an
+    issue's dismissal when it is re-created with new placeholders, so a
+    collision that appears after the user ignored the issue was folded into
+    it unseen. A group the ignored issue did not list re-announces it; one
+    that was already listed, or a group resolved, keeps it ignored.
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = _colliding_pairs()
+    lamps_only = copy.deepcopy(devices)
+    lamps_only[2]["label"] = "Hall Lamp"
+    fetch = AsyncMock(return_value=copy.deepcopy(lamps_only))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await _adopt(hass, entry, fetch, lamps_only)
+        assert registry.async_get_issue(DOMAIN, issue_id).dismissed_version
+
+        # A second group appears: the issue is shown again, listing both.
+        await _adopt(hass, entry, fetch, devices)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue.dismissed_version is None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Hall Light", "Hall-Light"\n- "Lamp 1", "lamp_1"'
+        )
+
+        # Ignored again, then one group resolved: it stays ignored.
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await _adopt(hass, entry, fetch, lamps_only)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue.dismissed_version is not None
+        assert issue.translation_placeholders["labels"] == '- "Lamp 1", "lamp_1"'
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_a_partial_poll_keeps_an_ignored_collision_issue(
     hass: HomeAssistant,
 ) -> None:
@@ -2453,6 +2502,57 @@ async def test_an_ignored_collision_issue_survives_a_reload_and_goes_with_a_disa
         assert issue is not None
         assert issue.active
         assert issue.dismissed_version is not None
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "state"),
+    [
+        (aiohttp.ClientError("unreachable"), ConfigEntryState.SETUP_RETRY),
+        (
+            aiohttp.ClientResponseError(
+                request_info=SimpleNamespace(real_url="https://1.2.3.4"),  # type: ignore[arg-type]
+                history=(),
+                status=401,
+            ),
+            ConfigEntryState.SETUP_ERROR,
+        ),
+    ],
+    ids=["setup-retry", "setup-error"],
+)
+async def test_disabling_an_entry_that_failed_setup_withdraws_its_issues(
+    hass: HomeAssistant, failure: Exception, state: ConfigEntryState
+) -> None:
+    """A disable withdraws the kept issues even when the entry is not loaded.
+
+    Home Assistant calls ``async_unload_entry`` only for a loaded entry; one
+    sitting in setup-retry or setup-error after a reload is just marked not
+    loaded, so the health and colliding-label issues its last good run raised
+    stayed active for a disabled entry until Home Assistant restarted.
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    fetch = AsyncMock(side_effect=lambda *_: _colliding_pairs())
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        fetch.side_effect = failure
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is state
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
         await hass.config_entries.async_set_disabled_by(
             entry.entry_id, ConfigEntryDisabler.USER
         )
@@ -3856,6 +3956,37 @@ async def test_a_failed_export_read_keeps_the_anchored_address(
     await hass.async_block_till_done()
 
 
+async def test_a_rename_followed_without_identities_keeps_the_anchored_address(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """A rename followed while the export read fails carries the old anchor over.
+
+    The renamed function's anchor used to be looked up under its *new* label,
+    which has none yet, so it was rebuilt address-less and the old label's
+    anchor dropped — the case ``_anchor_for`` keeps the address for. A later
+    rename combined with re-provisioning then had nothing to pair by.
+    """
+    entry = _prepared_entry(hass)
+    _seed_device(
+        hass, entry, "hall_light", "Hall Light", {"hall_light_001": Platform.LIGHT}
+    )
+    _seed_anchors(
+        hass_storage,
+        entry,
+        {"hall_light": {"id": HALL_LIGHT_ID, "mac": MAC_A, "location": 1}},
+    )
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _setup_with_export(hass, None, devices=relabelled, entry=entry)
+    coordinator = entry.runtime_data
+    assert _device(hass, "Hall Lamp") is not None
+    assert coordinator.function_anchors["hall_lamp"] == FunctionAnchor(
+        HALL_LIGHT_ID, MAC_A, 1
+    )
+    assert "hall_light" not in coordinator.function_anchors
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_rename_is_not_followed_onto_a_taken_unique_id(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -4334,6 +4465,62 @@ async def test_rename_and_capability_change_in_one_adoption_reloads(
                 "supported_features"
             ]
             assert features & CoverEntityFeature.SET_TILT_POSITION
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_id_churn_and_a_confirmed_capability_change_reload_once(
+    hass: HomeAssistant,
+) -> None:
+    """One adoption that warrants two reloads gets one.
+
+    The id-churn reload starts eagerly inside the adoption and puts the entry
+    in UNLOAD_IN_PROGRESS; the capability watcher, dispatched on the same
+    adoption, used to schedule a second one on top (Home Assistant never
+    merges reloads), so the entry went through two full setups back to back.
+    """
+    devices = [*_identified_devices(), _awning()]
+    tilted = copy.deepcopy(devices)
+    awning = next(d for d in tilted if d["id"] == "idawning")
+    awning["type"] = "PositionAndAngle"
+    awning["datapoints"].append(
+        {
+            "id": "idawning-002",
+            "type": "angle",
+            "values": [{"key": "angle", "value": "0"}],
+        }
+    )
+    churned = copy.deepcopy(tilted)
+    orphan = next(d for d in churned if d["id"] == "idorphan")
+    orphan["id"] = "idorphan2"
+    orphan["datapoints"][0]["id"] = "idorphan2-001"
+    entry = _prepared_entry(hass)
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        fetch = AsyncMock(return_value=copy.deepcopy(tilted))
+        stack.enter_context(
+            patch.object(
+                JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch
+            )
+        )
+        await coordinator.async_refresh()  # the capability change: pending
+        await hass.async_block_till_done()
+        assert entry.runtime_data is coordinator
+        fetch.return_value = copy.deepcopy(churned)
+        setup = stack.enter_context(
+            patch(
+                "custom_components.junghome.async_setup_entry",
+                wraps=junghome.async_setup_entry,
+            )
+        )
+        await coordinator.async_refresh()  # confirmed, plus id churn
+        await hass.async_block_till_done()
+        assert setup.await_count == 1
+        assert entry.state is ConfigEntryState.LOADED
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -5068,6 +5255,50 @@ async def test_device_new_in_a_capability_reload_broadcast_joins_the_reloaded_en
         assert _live_light(hass, "light.garden").coordinator is reloaded
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_a_failed_unload_stops_the_poll_and_discovery(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """After an unload that fails, nothing keeps running on the dead coordinator.
+
+    Home Assistant skips the entry's on-unload callbacks when the unload ends
+    in FAILED_UNLOAD, so the discovery listeners and the REST poll stayed
+    attached; the next list with a new device added an entity to a platform
+    already reset, bound to the stopped coordinator.
+    """
+    entry = init_integration
+    coordinator = entry.runtime_data
+    with patch.object(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id) is False
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.FAILED_UNLOAD
+    assert coordinator._unsub_refresh is None
+    coordinator.data = [
+        *coordinator.data,
+        {
+            "id": "idgarden",
+            "type": "OnOff",
+            "label": "Garden",
+            "datapoints": [
+                {
+                    "id": "idgarden-001",
+                    "type": "switch",
+                    "values": [{"key": "switch", "value": "1"}],
+                }
+            ],
+        },
+    ]
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert (
+        er.async_get(hass).async_get_entity_id(Platform.LIGHT, DOMAIN, "garden_001")
+        is None
+    )
+    # FAILED_UNLOAD is final; let the fixture's teardown unload pass.
+    entry._async_set_state(hass, ConfigEntryState.NOT_LOADED, None)
 
 
 async def test_no_platform_discovers_while_the_entry_unloads(

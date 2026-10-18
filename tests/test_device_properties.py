@@ -25,7 +25,9 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import CONF_HOST, CONF_TOKEN
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -290,6 +292,31 @@ def test_parse_trusts_a_profile_the_range_state_cannot_contradict() -> None:
         (2000, 6000),
         False,
     )
+
+
+@pytest.mark.parametrize(
+    ("profile_range", "range_value"),
+    [
+        ({"min": 2000, "max": 6000, "step": 1}, [2700, 6500]),
+        ({"min": 2700, "max": 6500, "step": 1}, [3000, 6000]),
+    ],
+    ids=["constructor-default", "bound-earlier"],
+)
+def test_parse_profile_not_yet_bound_to_the_read_range_is_pending(
+    profile_range: dict[str, int], range_value: list[int]
+) -> None:
+    """A read range the profile does not match yet: the binding is still due.
+
+    A project upload rebuilds every state with its constructor profile but
+    carries the range state's value over (`devices_service.js:247-252`), so
+    until the range state's next read binds it again the profile says
+    2000-6000 K next to the node's real ``[2700, 6500]``. The binding copies
+    the pair verbatim (`ColorTemperatureState.js:190-197`), so any difference
+    means "not bound yet": pending, re-read until they agree.
+    """
+    doc = _ct_light(LIGHT, profile_range, range_value)
+    props = parse_device_properties(doc)
+    assert (props.color_temp_range, props.color_temp_range_pending) == (None, True)
 
 
 def test_parse_kelvin_range_rejects_bad_payloads() -> None:
@@ -1009,6 +1036,41 @@ async def test_device_pages_show_the_node_firmware(hass: HomeAssistant) -> None:
             assert find_device(hass, "boiler").sw_version == "2.1.3 (2840)"
             hub = find_device(hass, gateway_device_id(entry))
             assert hub.sw_version == "2.1.3 (2840)"
+
+
+async def test_a_properties_read_outliving_a_reload_writes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    """A read still in flight when the entry reloads must not touch the registry.
+
+    The periodic refresh runs as a Home Assistant task that the unload does
+    not cancel, so a full verbose read (~190 KB) can return after the reloaded
+    entry's coordinator has written its own values onto the same rows; the
+    dead coordinator's identities and properties are stale by then.
+    """
+    gate = asyncio.Event()
+
+    async def slow_read(*_: object) -> list[dict]:
+        await gate.wait()
+        return [*_node_of_two(), _verbose(SOCKET, revision=(2, 2, 0, 1))]
+
+    async with _running(hass, None) as entry:
+        old = entry.runtime_data
+        with patch.object(old, "_fetch_devices_verbose_from_api", slow_read):
+            # Untracked, so waiting for the reload does not wait for it.
+            refresh = asyncio.get_running_loop().create_task(
+                old._async_refresh_device_properties(dt_util.utcnow())
+            )
+            await asyncio.sleep(0)
+            await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+            assert entry.runtime_data is not old
+            button = find_device(hass, "button_a")
+            dr.async_get(hass).async_update_device(button.id, sw_version="2.2.0.9")
+            gate.set()
+            await refresh
+        assert find_device(hass, "button_a").sw_version == "2.2.0.9"
+        assert old.device_properties == {}
 
 
 async def test_revisions_read_after_the_pages_exist_reach_them(

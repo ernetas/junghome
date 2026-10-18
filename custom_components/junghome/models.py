@@ -767,13 +767,17 @@ def color_temp_range(
     dirty and the boot's first poll pass (`startup.js:165`,
     ``boostPollStates``) reaches it seconds to minutes after a gateway start
     — so until then the profile range is the constructor default, not the
-    node's. The profile is trusted when the range state holds a read
-    ``[min, max]``, when there is no range state (nothing can ever rebind the
-    default, so it is the clamp), or when it already differs from the
-    default (bound earlier; the range state's value is reset to ``NaN`` after
-    failed requests, the binding is not). Otherwise the window is unknown
-    and *pending*: the second element of the result, which makes the
-    periodic properties refresh re-read the device.
+    node's. A project upload resets it the same way: every state is rebuilt
+    with its constructor profile while the range state's value is carried
+    over (`services/devices_service.js:247-252`). The profile is trusted when
+    the range state holds a read ``[min, max]`` the profile matches (the
+    binding copies the pair verbatim), when there is no range state (nothing
+    can ever rebind the default, so it is the clamp), or, with no read pair,
+    when it already differs from the default (bound earlier; the range
+    state's value is reset to ``NaN`` after failed requests, the binding is
+    not). Otherwise the window is unknown and *pending*: the second element
+    of the result, which makes the periodic properties refresh re-read the
+    device.
     """
     color_temperature: dict[str, Any] | None = None
     range_state: dict[str, Any] | None = None
@@ -789,11 +793,13 @@ def color_temp_range(
     if not isinstance(profile, dict):
         return None, False
     window = parse_kelvin_range(profile.get("range"))
-    if (
-        range_state is None
-        or _is_range_value(range_state.get("value"))
-        or window != GATEWAY_DEFAULT_KELVIN_RANGE
-    ):
+    if range_state is None:
+        return window, False
+    value = range_state.get("value")
+    if _is_range_value(value):
+        if parse_kelvin_range(value) == window:
+            return window, False
+    elif window != GATEWAY_DEFAULT_KELVIN_RANGE:
         return window, False
     return None, True
 

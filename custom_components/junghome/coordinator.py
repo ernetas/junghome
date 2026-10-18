@@ -41,6 +41,7 @@ from .const import (
     device_config_entry_ids,
     device_slug,
     duplicate_slugs,
+    entry_unloading,
     gateway_device_id,
     scene_unique_id,
 )
@@ -317,8 +318,9 @@ def entry_derived_issue_ids(entry_id: str) -> list[str]:
     HA restart keeps the issue registry entry, and with it the user's
     "Ignore" (``dismissed_version`` — a deleted issue comes back un-ignored),
     while the next setup re-derives each one from the gateway anyway. They go
-    with the entry instead: ``async_remove_entry``, and an unload that
-    disables it (``async_unload_entry``).
+    with the entry instead: ``async_remove_entry``, and a disable, once the
+    entry is not loaded (``async_setup``'s listener; Home Assistant runs
+    ``async_unload_entry`` only for a loaded entry).
     """
     return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
 
@@ -822,7 +824,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             for slug, dev_id in new_ids.items()
         )
         self._device_ids = new_ids
-        if changed and self.config_entry is not None:
+        if (
+            changed
+            and self.config_entry is not None
+            # A reload already under way (scheduled earlier in this adoption's
+            # unload window) re-resolves every id; Home Assistant never
+            # merges reloads, so another would run a whole extra cycle.
+            and not entry_unloading(self.config_entry)
+        ):
             _LOGGER.warning(
                 "Jung Home gateway device ids changed (device re-provisioned, "
                 "label moved to another element or hardware swapped?); "
@@ -899,9 +908,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.followed_renames = followed
         # Every live function, plus the vanished ones whose device still
         # exists (the pruner's window, or one partial list) so a rename that
-        # lands an adoption later still pairs.
+        # lands an adoption later still pairs. A function renamed in this pass
+        # inherits its old label's anchor: its new label has none yet.
         fresh = {
-            slug: self._anchor_for(device, self.function_anchors.get(slug))
+            slug: self._anchor_for(
+                device, self.function_anchors.get(followed.get(slug, slug))
+            )
             for slug, device in live.items()
         }
         for slug, anchor in self.function_anchors.items():
@@ -1601,7 +1613,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.debug("Could not read the verbose device list: %s", err)
             return
-        if raw is None:
+        if raw is None or self._closing:
+            # A read that outlived ``stop()``: the periodic refresh runs as a
+            # Home Assistant task no unload cancels, and the reloaded entry's
+            # coordinator owns the registry rows by now.
             return
         # The endpoint answered: whatever live function it left out, it will
         # leave out next time too, so the periodic refresh stops asking for
@@ -1663,7 +1678,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 updated[device_id] = fresh
                 changed = True
                 revised |= fresh.software_revision != props.software_revision
-        if changed:
+        if changed and not self._closing:
             self.device_properties = MappingProxyType(updated)
             if revised:  # a socket updated in place: its page shows the new one
                 self._apply_device_info()
@@ -1734,19 +1749,29 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if entries is None:
             return
         active = active_health_conditions(entries)
-        if ISSUE_TIME_SYNC in active and await self._time_sync_recovered(host, token):
-            del active[ISSUE_TIME_SYNC]
+        time_synced: bool | None = None
+        if ISSUE_TIME_SYNC in active:
+            time_synced = await self._time_synced(host, token)
+            if time_synced is None:
+                # Unreadable: keep the last verdict, so one failed read
+                # neither withdraws a raised issue nor re-raises a withdrawn
+                # one (the > 24 h entry stays logged after a recovery).
+                time_synced = self.health.time_synced
+            if time_synced:
+                del active[ISSUE_TIME_SYNC]
         if self._closing:
             return  # unloaded while the read was in flight: it writes nothing
         self.health.entries = entries
         self.health.conditions = frozenset(active)
+        self.health.time_synced = time_synced
         self._apply_health_issues(active)
 
-    async def _time_sync_recovered(self, host: str, token: str) -> bool:
-        """Whether the gateway reports its clock synchronised again.
+    async def _time_synced(self, host: str, token: str) -> bool | None:
+        """Whether the gateway reports its clock synchronised; None if unreadable.
 
-        Only a definite ``false`` counts: an unreadable parameter keeps the
-        issue the log raised.
+        ``time_error`` is a raw JSON boolean: ``false`` is synchronised,
+        ``true`` is not, and anything else (a non-200, a transport failure,
+        another body) says nothing.
         """
         try:
             value = await self._fetch_config_parameter_from_api(
@@ -1754,8 +1779,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             )
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.debug("Could not read the gateway time status: %s", err)
-            return False
-        return value is False
+            return None
+        if isinstance(value, bool):
+            return not value
+        return None
 
     def _apply_health_issues(self, active: Mapping[str, HealthCondition]) -> None:
         """Create the issue of every active condition, delete every other one."""
@@ -2960,6 +2987,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             # shutdown reaches here without an unload, so cancel explicitly.
             task.cancel()
         self._node_identity_task = None
+        # The REST poll and the debounced refresh. The entry's on-unload
+        # callbacks do this too, but Home Assistant skips them when the unload
+        # fails (FAILED_UNLOAD), which left the poll running on a stopped
+        # coordinator.
+        await self.async_shutdown()
         if self.websocket is not None and not self.websocket.closed:
             await self.websocket.close()
         self.websocket = None
