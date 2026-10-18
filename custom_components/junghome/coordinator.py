@@ -898,9 +898,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self.followed_renames = followed
         # Every live function, plus the vanished ones whose device still
         # exists (the pruner's window, or one partial list) so a rename that
-        # lands an adoption later still pairs.
+        # lands an adoption later still pairs. A function renamed in this pass
+        # inherits its old label's anchor: its new label has none yet.
         fresh = {
-            slug: self._anchor_for(device, self.function_anchors.get(slug))
+            slug: self._anchor_for(
+                device, self.function_anchors.get(followed.get(slug, slug))
+            )
             for slug, device in live.items()
         }
         for slug, anchor in self.function_anchors.items():

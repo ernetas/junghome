@@ -3853,6 +3853,37 @@ async def test_a_failed_export_read_keeps_the_anchored_address(
     await hass.async_block_till_done()
 
 
+async def test_a_rename_followed_without_identities_keeps_the_anchored_address(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """A rename followed while the export read fails carries the old anchor over.
+
+    The renamed function's anchor used to be looked up under its *new* label,
+    which has none yet, so it was rebuilt address-less and the old label's
+    anchor dropped — the case ``_anchor_for`` keeps the address for. A later
+    rename combined with re-provisioning then had nothing to pair by.
+    """
+    entry = _prepared_entry(hass)
+    _seed_device(
+        hass, entry, "hall_light", "Hall Light", {"hall_light_001": Platform.LIGHT}
+    )
+    _seed_anchors(
+        hass_storage,
+        entry,
+        {"hall_light": {"id": HALL_LIGHT_ID, "mac": MAC_A, "location": 1}},
+    )
+    relabelled = _relabelled(_identified_devices(), HALL_LIGHT_ID, "Hall Lamp")
+    await _setup_with_export(hass, None, devices=relabelled, entry=entry)
+    coordinator = entry.runtime_data
+    assert _device(hass, "Hall Lamp") is not None
+    assert coordinator.function_anchors["hall_lamp"] == FunctionAnchor(
+        HALL_LIGHT_ID, MAC_A, 1
+    )
+    assert "hall_light" not in coordinator.function_anchors
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_rename_is_not_followed_onto_a_taken_unique_id(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
