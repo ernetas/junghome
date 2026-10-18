@@ -2892,8 +2892,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         entry = self.config_entry
         if entry is None:  # pragma: no cover - an entry coordinator always has one
             return
-        if self._closing:
-            return  # stopped: a reloaded entry's coordinator owns the rows now
         devices = self.data or []
         colliding = duplicate_slugs(devices)
         by_slug = {
