@@ -1,5 +1,6 @@
 """Climate (thermostat) platform tests for Jung Home."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -193,6 +194,118 @@ async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
         )
     assert st.call_args.args[1] == 22.5
     assert sp.call_args.args[1] == "eco"
+
+
+def _reply_then_push(
+    coordinator: JungHomeDataUpdateCoordinator,
+    reply_values: list[dict],
+    push: dict | None = None,
+) -> None:
+    """Make the fake socket confirm each set with ``reply_values``, then push.
+
+    The real reply carries the whole re-read datapoint (setpoint AND preset),
+    not just the key that was written. Both frames land before the awaiting
+    command resumes.
+    """
+
+    def _send(raw: str) -> None:
+        sent = json.loads(raw)
+        data = {**sent["data"], "values": reply_values}
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
+            )
+        )
+        if push is not None:
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "datapoint", "data": push})
+            )
+
+    coordinator.websocket.send_str.side_effect = _send
+
+
+def _setpoint(target: str, preset: str) -> list[dict]:
+    return [
+        {"key": "temperature_ctrl", "value": target},
+        {"key": "temperature_ctrl_preset", "value": preset},
+    ]
+
+
+async def test_climate_shows_what_the_reply_confirmed(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Target and preset come from the confirmed reply, not the request.
+
+    A preset write moves the setpoint to that preset's threshold; the reply
+    (sent once the device answered) carries the new setpoint and the preset
+    derived from it. The requested value used to be written after the await,
+    over what the reply had just merged.
+    """
+    coordinator = init_integration.runtime_data
+    _reply_then_push(coordinator, _setpoint("22.0", ""))
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": "climate.living_room", "temperature": 22.5},
+        blocking=True,
+    )
+    state = hass.states.get("climate.living_room")
+    assert state.attributes["temperature"] == 22.0
+    assert state.attributes["preset_mode"] == "none"
+
+    _reply_then_push(coordinator, _setpoint("17.0", "eco"))
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": "climate.living_room", "preset_mode": "eco"},
+        blocking=True,
+    )
+    state = hass.states.get("climate.living_room")
+    assert state.attributes["temperature"] == 17.0
+    assert state.attributes["preset_mode"] == "eco"
+
+
+async def test_climate_push_after_the_confirmation_wins(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A setpoint push landing before the command resumes is kept."""
+    coordinator = init_integration.runtime_data
+    _reply_then_push(
+        coordinator,
+        _setpoint("22.5", ""),
+        {"id": "idrtr1-001", "values": _setpoint("19.0", "frost")},
+    )
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": "climate.living_room", "temperature": 22.5},
+        blocking=True,
+    )
+    state = hass.states.get("climate.living_room")
+    assert state.attributes["temperature"] == 19.0
+    assert state.attributes["preset_mode"] == "frost"
+
+
+async def test_climate_request_stands_in_for_an_unusable_reply(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """With nothing usable confirmed, the requested target/preset is shown."""
+    coordinator = init_integration.runtime_data
+    _reply_then_push(coordinator, _setpoint("NaN", "NaN"))
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": "climate.living_room", "temperature": 22.5},
+        blocking=True,
+    )
+    assert hass.states.get("climate.living_room").attributes["temperature"] == 22.5
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": "climate.living_room", "preset_mode": "eco"},
+        blocking=True,
+    )
+    assert hass.states.get("climate.living_room").attributes["preset_mode"] == "eco"
 
 
 async def test_climate_hvac_action_from_switch_value(hass: HomeAssistant) -> None:

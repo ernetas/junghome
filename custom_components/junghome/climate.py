@@ -203,7 +203,15 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         if temperature is None:
             return
         await self.coordinator.set_temperature(self._ctrl_datapoint_id, temperature)
-        self._target_temperature = temperature
+        # Read back (see `_value_after_command`): the reply is sent only once
+        # the device answered (`publishStateValue` awaits it), and carries the
+        # setpoint it confirmed. The preset it implies was already refreshed
+        # from the same reply by `_handle_coordinator_update`.
+        self._target_temperature = self._value_after_command(
+            self._ctrl_datapoint_id,
+            self._get_target_from_datapoint,
+            fallback=temperature,
+        )
         self.async_write_ha_state()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -231,7 +239,15 @@ class JungHomeClimate(JungHomeEntity, ClimateEntity):
         await self.coordinator.set_temperature_preset(
             self._ctrl_datapoint_id, device_preset
         )
-        self._preset_mode = preset_mode
+        # Read back, as for the target. A preset write moves the setpoint to
+        # that preset's threshold, and the reply (sent once the device
+        # answered, `publishStateMode`) carries both the new setpoint and the
+        # preset derived from it (`SetPoint.fromMeshMessage`).
+        self._preset_mode = self._value_after_command(
+            self._ctrl_datapoint_id,
+            self._get_preset_from_datapoint,
+            fallback=preset_mode,
+        )
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

@@ -13,6 +13,7 @@ their own ``_handle_coordinator_update`` write logic (which intentionally
 differs between platforms).
 """
 
+from collections.abc import Callable
 from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -237,22 +238,37 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             None,
         )
 
-    def _bool_after_command(
-        self, datapoint_id: str, key: str, *, fallback: bool
-    ) -> bool:
-        """Return a two-state datapoint's value, read back after a command await.
+    def _value_after_command[T](
+        self,
+        datapoint_id: str,
+        parse: Callable[[Datapoint | None], T | None],
+        *,
+        fallback: T,
+    ) -> T:
+        """Return a datapoint's value, read back after a command await.
 
         The confirmation reply, and any push on the same session that landed
         before the awaiting coroutine resumed (another client, a wall switch,
         an overlapping HA command finishing out of mesh order), has already
         been merged into ``coordinator.data`` and dispatched by the time the
-        command method returns. A hard-coded ``True``/``False`` after the
-        await overwrote that fresher value; re-read it instead. ``fallback``
-        (the commanded state) stands in only when the datapoint is gone or
-        holds no usable value (``"NaN"``).
+        command method returns. Writing the requested value after the await
+        overwrote that fresher one; re-read it instead. ``fallback`` (the
+        commanded value) stands in only when the datapoint is gone or ``parse``
+        finds nothing usable in it (``"NaN"``).
         """
-        state = datapoint_bool(self._find_datapoint(datapoint_id), key)
-        return fallback if state is None else state
+        value = parse(self._find_datapoint(datapoint_id))
+        return fallback if value is None else value
+
+    def _bool_after_command(
+        self, datapoint_id: str, key: str, *, fallback: bool
+    ) -> bool:
+        """Return a two-state datapoint's value, read back after a command await.
+
+        See ``_value_after_command``.
+        """
+        return self._value_after_command(
+            datapoint_id, lambda dp: datapoint_bool(dp, key), fallback=fallback
+        )
 
     def _should_refresh(self, datapoint_id: str) -> bool:
         """Whether the attribute backed by ``datapoint_id`` should refresh now.
