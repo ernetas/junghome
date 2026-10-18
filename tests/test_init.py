@@ -2386,6 +2386,54 @@ async def test_colliding_labels_raise_a_repair_issue_until_renamed(
         await hass.async_block_till_done()
 
 
+async def test_a_new_collision_un_ignores_the_collision_issue(
+    hass: HomeAssistant,
+) -> None:
+    """Ignoring the issue silences the groups it listed, not later collisions.
+
+    One issue per entry lists every group, and Home Assistant keeps an
+    issue's dismissal when it is re-created with new placeholders, so a
+    collision that appears after the user ignored the issue was folded into
+    it unseen. A group the ignored issue did not list re-announces it; one
+    that was already listed, or a group resolved, keeps it ignored.
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    devices = _colliding_pairs()
+    lamps_only = copy.deepcopy(devices)
+    lamps_only[2]["label"] = "Hall Lamp"
+    fetch = AsyncMock(return_value=copy.deepcopy(lamps_only))
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await _adopt(hass, entry, fetch, lamps_only)
+        assert registry.async_get_issue(DOMAIN, issue_id).dismissed_version
+
+        # A second group appears: the issue is shown again, listing both.
+        await _adopt(hass, entry, fetch, devices)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue.dismissed_version is None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Hall Light", "Hall-Light"\n- "Lamp 1", "lamp_1"'
+        )
+
+        # Ignored again, then one group resolved: it stays ignored.
+        ir.async_ignore_issue(hass, DOMAIN, issue_id, True)
+        await _adopt(hass, entry, fetch, lamps_only)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+        assert issue.dismissed_version is not None
+        assert issue.translation_placeholders["labels"] == '- "Lamp 1", "lamp_1"'
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_a_partial_poll_keeps_an_ignored_collision_issue(
     hass: HomeAssistant,
 ) -> None:

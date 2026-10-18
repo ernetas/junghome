@@ -119,7 +119,11 @@ def _sync_label_collision_issue(
     device gets no entities (`duplicate_slugs`) — invisible in the UI apart
     from a log line, so it is a repair issue too. One issue per entry lists
     every group; it goes away once ``LABEL_COLLISION_CLEAR_ADOPTIONS``
-    adoptions in a row carried no collision.
+    adoptions in a row carried no collision. Home Assistant keeps an issue's
+    dismissal when it is re-created with new placeholders, so once ignored,
+    a group the issue did not list yet is announced by deleting the issue
+    first (a deleted issue loses its dismissal); a group it already listed,
+    or one resolved, leaves the dismissal alone.
 
     Nothing is written while the entry unloads: an adoption landing in that
     window (a poll still in flight while ``stop()`` awaits the WebSocket
@@ -138,6 +142,12 @@ def _sync_label_collision_issue(
         ", ".join(f'"{label}"' for label in sorted(labels))
         for labels in collisions.values()
     )
+    lines = [f"- {group}" for group in groups]
+    existing = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    if existing is not None and existing.dismissed_version is not None:
+        listed = (existing.translation_placeholders or {}).get("labels", "")
+        if not set(lines) <= set(listed.split("\n")):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
     ir.async_create_issue(
         hass,
         DOMAIN,
@@ -147,7 +157,7 @@ def _sync_label_collision_issue(
         translation_key=ISSUE_DUPLICATE_LABELS,
         translation_placeholders={
             "host": str(entry.data.get("host")),
-            "labels": "\n".join(f"- {group}" for group in groups),
+            "labels": "\n".join(lines),
         },
     )
 
