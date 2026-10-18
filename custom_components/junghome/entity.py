@@ -21,7 +21,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, device_slug, gateway_device_id
+from .const import DOMAIN, datapoint_bool, device_slug, gateway_device_id
 from .coordinator import JungHomeDataUpdateCoordinator
 from .models import Datapoint, Device
 
@@ -236,6 +236,23 @@ class JungHomeEntity(CoordinatorEntity[JungHomeDataUpdateCoordinator]):
             (dp for dp in device.get("datapoints", []) if dp.get("id") == datapoint_id),
             None,
         )
+
+    def _bool_after_command(
+        self, datapoint_id: str, key: str, *, fallback: bool
+    ) -> bool:
+        """Return a two-state datapoint's value, read back after a command await.
+
+        The confirmation reply, and any push on the same session that landed
+        before the awaiting coroutine resumed (another client, a wall switch,
+        an overlapping HA command finishing out of mesh order), has already
+        been merged into ``coordinator.data`` and dispatched by the time the
+        command method returns. A hard-coded ``True``/``False`` after the
+        await overwrote that fresher value; re-read it instead. ``fallback``
+        (the commanded state) stands in only when the datapoint is gone or
+        holds no usable value (``"NaN"``).
+        """
+        state = datapoint_bool(self._find_datapoint(datapoint_id), key)
+        return fallback if state is None else state
 
     def _should_refresh(self, datapoint_id: str) -> bool:
         """Whether the attribute backed by ``datapoint_id`` should refresh now.

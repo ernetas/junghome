@@ -266,8 +266,138 @@ def _sent_types(coordinator: JungHomeDataUpdateCoordinator) -> list[str]:
 
 def _sent_value(coordinator: JungHomeDataUpdateCoordinator, dp_type: str) -> str:
     """Return the value of the last ``dp_type`` set the fake socket was sent."""
-    frame = next(f for f in reversed(_sent_frames(coordinator)) if f["data"].get("type") == dp_type)
+    frame = next(
+        f
+        for f in reversed(_sent_frames(coordinator))
+        if f["data"].get("type") == dp_type
+    )
     return str(frame["data"]["values"][0]["value"])
+
+
+def _stored_switch(coordinator: JungHomeDataUpdateCoordinator) -> str:
+    """Return the switch value the coordinator holds for light.strip."""
+    datapoint = next(
+        dp
+        for device in coordinator.data
+        for dp in device["datapoints"]
+        if dp["id"] == "idcolor1-001"
+    )
+    return str(datapoint["values"][0]["value"])
+
+
+def _reply_then_push(coordinator: JungHomeDataUpdateCoordinator, push: dict) -> None:
+    """Make the fake socket confirm each set, then deliver ``push``.
+
+    Both land before the awaiting command resumes — what a report from a
+    wall rocker or another client looks like when it arrives on the session
+    between the confirmation and the service coroutine's resume.
+    """
+
+    def _send(raw: str) -> None:
+        sent = json.loads(raw)
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {
+                    "type": "datapoint",
+                    "data": sent["data"],
+                    "message_id": sent["message_id"],
+                }
+            )
+        )
+        coordinator._dispatch_text_frame(
+            json.dumps({"type": "datapoint", "data": push})
+        )
+
+    coordinator.websocket.send_str.side_effect = _send
+
+
+async def test_brightness_turn_on_stores_the_implied_switch_on(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A brightness-only turn-on leaves the coordinator holding switch on.
+
+    The brightness reply carries only the brightness datapoint, so the stored
+    switch value stayed at the pre-command "0" while the entity alone was
+    forced on. The next brightness change on the now-on light (or any
+    listener dispatch without a push marker) then re-read that stale off and
+    showed the lit dimmer as off until the next poll.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    assert _stored_switch(coordinator) == "0"
+
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 128},
+        blocking=True,
+    )
+    assert _stored_switch(coordinator) == "1"
+    assert hass.states.get("light.strip").state == "on"
+
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 200},
+        blocking=True,
+    )
+    assert hass.states.get("light.strip").state == "on"
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert hass.states.get("light.strip").state == "on"
+
+
+async def test_switch_report_during_a_brightness_turn_on_wins(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A switch report that lands during a brightness turn-on is trusted.
+
+    Only a switch value the gateway has not reported since the command
+    started is the lagging pre-command one. An off pushed in between (a wall
+    rocker, another client) is newer than the command and must not be turned
+    into an on.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    _reply_then_push(
+        coordinator,
+        {"id": "idcolor1-001", "values": [{"key": "switch", "value": "0"}]},
+    )
+    await hass.services.async_call(
+        "light",
+        "turn_on",
+        {"entity_id": "light.strip", "brightness": 128},
+        blocking=True,
+    )
+    assert _stored_switch(coordinator) == "0"
+    assert hass.states.get("light.strip").state == "off"
+
+
+@pytest.mark.parametrize(
+    ("service", "pushed", "expected"),
+    [("turn_on", "0", "off"), ("turn_off", "1", "on")],
+)
+async def test_switch_report_after_the_confirmation_wins(
+    hass: HomeAssistant,
+    init_integration,
+    service: str,
+    pushed: str,
+    expected: str,
+) -> None:
+    """A switch push that beats the command's resume is not overwritten."""
+    coordinator = init_integration.runtime_data
+    _reply_then_push(
+        coordinator,
+        {"id": "idcolor1-001", "values": [{"key": "switch", "value": pushed}]},
+    )
+    await hass.services.async_call(
+        "light", service, {"entity_id": "light.strip"}, blocking=True
+    )
+    assert hass.states.get("light.strip").state == expected
 
 
 async def test_turn_on_with_brightness_skips_switch(

@@ -245,24 +245,29 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         # overwrite that level on power-on. So when brightness is requested,
         # send only brightness (no OnOff); bare on still uses switch so the
         # device can restore its own level.
+        switch_id = self._datapoint["id"]
         if self._has_brightness and "brightness" in kwargs:
+            switch_pushes = self.coordinator.datapoint_push_count(switch_id)
             await self._set_brightness(kwargs["brightness"])
-            # Do not hard-code on: a fresher off push can land after the
-            # brightness confirm and before this coroutine resumes (same race
-            # as the switch path below). Brightness Set turns the dimmer on,
-            # but the switch datapoint is often absent from that reply, so a
-            # still-off reading after an off→on is the lagging pre-command
-            # value — treat that as on. An off that arrives while we were
-            # already on is unambiguous and must win.
-            self._is_on = self._switch_state_after_command(
-                fallback=True, brightness_on_from_off=not was_on
-            )
+            # A confirmed non-zero Brightness Set turned the dimmer on, but its
+            # reply is the brightness datapoint: the stored switch value is
+            # still the pre-command one unless the gateway reported the switch
+            # since the command started. If it did not, store the on the
+            # command implies, so the next re-read (this one, a brightness
+            # change on the now-on light, a listener dispatch without a push
+            # marker) does not see the stale off. If it did, that report is
+            # newer than the command (a wall rocker, another client) and wins.
+            if self.coordinator.datapoint_push_count(switch_id) == switch_pushes:
+                self.coordinator.adopt_implied_value(
+                    switch_id, {"values": [{"key": "switch", "value": "1"}]}
+                )
+            self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
         else:
-            await self.coordinator.turn_on_light(self._datapoint["id"])
-            # Re-read after the await (see `_switch_state_after_command`): the
+            await self.coordinator.turn_on_light(switch_id)
+            # Re-read after the await (see `_bool_after_command`): the
             # confirmation merge — and any fresher push that beat this resume
             # — already updated coordinator.data via the listener.
-            self._is_on = self._switch_state_after_command(fallback=True)
+            self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
             if self._has_brightness and not was_on:
                 # No explicit brightness on a genuine off->on: the device
                 # restores its own level on power-on. Don't guess — showing a
@@ -286,39 +291,10 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         await self.coordinator.turn_off_light(self._datapoint["id"])
         # Same as turn_on: never overwrite a fresher push that landed between
         # the confirmation and this resume with a hard-coded off.
-        self._is_on = self._switch_state_after_command(fallback=False)
+        self._is_on = self._bool_after_command(
+            self._datapoint["id"], "switch", fallback=False
+        )
         self.async_write_ha_state()
-
-    def _switch_state_after_command(
-        self,
-        *,
-        fallback: bool,
-        brightness_on_from_off: bool = False,
-    ) -> bool | None:
-        """Adopt the coordinator's switch value after a command await.
-
-        The confirmation reply (and any later push on the same session) is
-        merged into ``coordinator.data`` and dispatched to listeners
-        *before* the awaiting service coroutine resumes. A hard-coded
-        ``True``/``False`` after the await therefore races those updates and
-        can leave HA showing on while the puck is already off (or the
-        reverse) — including when two overlapping HA commands finish out of
-        mesh order. Re-read; ``fallback`` is only for a missing datapoint.
-
-        ``brightness_on_from_off``: a Brightness Set turns the dimmer on, but
-        its reply is the brightness datapoint — the switch echo often still
-        holds the pre-command off. That lag must not undo the on; a fresher
-        off while the light was already on is still trusted.
-        """
-        datapoint = self._find_datapoint(self._datapoint["id"])
-        if datapoint is None:
-            return fallback
-        state = self._get_state_from_datapoint(datapoint)
-        if state is None:
-            return fallback
-        if brightness_on_from_off and state is False:
-            return True
-        return state
 
     def _get_state_from_datapoint(self, datapoint: Datapoint) -> bool | None:
         """Extract the state of the light from its datapoint.

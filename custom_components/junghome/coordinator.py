@@ -401,6 +401,12 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # None when the owning device carries no id, which entities treat as
         # "don't skip" (fail open).
         self.pushed_device_id: str | None = None
+        # How many pushes (command replies included) have been merged into each
+        # stored datapoint. An entity snapshots its count before a command
+        # await and compares after it, to tell a value the gateway reported
+        # during the command from the pre-command one still stored — see
+        # ``datapoint_push_count``.
+        self._datapoint_push_counts: dict[str, int] = {}
         # The gateway's own SOFTWARE version, e.g. "2.1.3 (2840)", fetched
         # over REST `GET /version/` (`async_fetch_gateway_version`) at setup
         # and again on each stable WebSocket session — never from the WS
@@ -2693,6 +2699,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             if updated:
                 break
         if updated:
+            self._datapoint_push_counts[datapoint_id] = (
+                self._datapoint_push_counts.get(datapoint_id, 0) + 1
+            )
             # Flag the pushed datapoint (and the device that owns it) for
             # the duration of this dispatch so event entities fire on the
             # push itself and unrelated entities can skip their write. The
@@ -3064,6 +3073,33 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         await self._send_datapoint_command(
             datapoint_id, "switch", [{"key": "switch", "value": "0"}]
         )
+
+    def datapoint_push_count(self, datapoint_id: str) -> int:
+        """Return how many pushes have been merged into ``datapoint_id``.
+
+        Only the difference between two reads means anything: unchanged
+        across a command await, the stored value is the one the datapoint
+        held when the command started, not a report the gateway made since.
+        """
+        return self._datapoint_push_counts.get(datapoint_id, 0)
+
+    def adopt_implied_value(self, datapoint_id: str, data: dict[str, Any]) -> None:
+        """Store a datapoint value that a confirmed command implies.
+
+        For a value the gateway does not echo: a Brightness Set turns a dimmer
+        on, but its reply carries only the brightness datapoint. Merged into
+        the stored datapoint key by key, exactly like a push, and into the
+        overlay of a poll in flight (whose snapshot may predate the command),
+        but without a listener dispatch or a push count: the caller writes
+        its own state, and nothing was pushed.
+        """
+        if self._poll_push_overlay is not None:
+            self._poll_push_overlay.setdefault(datapoint_id, {}).update(data)
+        for device in self.data or []:
+            for datapoint in device.get("datapoints", []):
+                if datapoint.get("id") == datapoint_id:
+                    cast("dict[str, Any]", datapoint).update(data)
+                    return
 
     async def turn_on_light(self, datapoint_id: str) -> None:
         """Turn on the light."""
