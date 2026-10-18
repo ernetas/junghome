@@ -316,8 +316,9 @@ def entry_derived_issue_ids(entry_id: str) -> list[str]:
     HA restart keeps the issue registry entry, and with it the user's
     "Ignore" (``dismissed_version`` — a deleted issue comes back un-ignored),
     while the next setup re-derives each one from the gateway anyway. They go
-    with the entry instead: ``async_remove_entry``, and an unload that
-    disables it (``async_unload_entry``).
+    with the entry instead: ``async_remove_entry``, and a disable, once the
+    entry is not loaded (``async_setup``'s listener; Home Assistant runs
+    ``async_unload_entry`` only for a loaded entry).
     """
     return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
 

@@ -13,8 +13,10 @@ JUNG HOME Gateway over its REST API and WebSocket.
     `LABEL_COLLISION_CLEAR_ADOPTIONS` = 2 collision-free adoptions in a row, a
     partial poll must not flap it; nothing written while the entry unloads),
     manual device delete, repair-issue withdrawal and store deletion on entry
-    removal (the entry-derived issues also on an unload that disables the
-    entry); loads the rename-following store before the first refresh.
+    removal (the entry-derived issues also when the entry is disabled, from
+    any state — `async_setup`'s config-entry-changed listener, since HA runs
+    `async_unload_entry` only for a loaded entry); loads the rename-following
+    store before the first refresh.
   - `coordinator.py` — REST poll (default 60 s, options-configurable) +
     WebSocket push and commands. The WS
     `functions` broadcast (the authoritative device list, sent on connect and
@@ -37,8 +39,7 @@ JUNG HOME Gateway over its REST API and WebSocket.
     HA restart keeps them, so the user's "Ignore" survives (HA restores a
     dismissal only for an issue it still holds; a deleted one comes back
     un-ignored), and the next setup re-derives them. They go on entry removal
-    and on an unload with `entry.disabled_by` set (nothing would re-derive
-    them). The push-failure and certificate issues are still dropped by
+    and when the entry is disabled (nothing would re-derive them). The push-failure and certificate issues are still dropped by
     `stop()`.
   - `health.py` — `GET /healthstatus/` parser and the condition table (which
     firmware messages raise which issue, and what clears them).

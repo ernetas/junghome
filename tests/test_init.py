@@ -2506,6 +2506,57 @@ async def test_an_ignored_collision_issue_survives_a_reload_and_goes_with_a_disa
     assert registry.async_get_issue(DOMAIN, issue_id) is None
 
 
+@pytest.mark.parametrize(
+    ("failure", "state"),
+    [
+        (aiohttp.ClientError("unreachable"), ConfigEntryState.SETUP_RETRY),
+        (
+            aiohttp.ClientResponseError(
+                request_info=SimpleNamespace(real_url="https://1.2.3.4"),  # type: ignore[arg-type]
+                history=(),
+                status=401,
+            ),
+            ConfigEntryState.SETUP_ERROR,
+        ),
+    ],
+    ids=["setup-retry", "setup-error"],
+)
+async def test_disabling_an_entry_that_failed_setup_withdraws_its_issues(
+    hass: HomeAssistant, failure: Exception, state: ConfigEntryState
+) -> None:
+    """A disable withdraws the kept issues even when the entry is not loaded.
+
+    Home Assistant calls ``async_unload_entry`` only for a loaded entry; one
+    sitting in setup-retry or setup-error after a reload is just marked not
+    loaded, so the health and colliding-label issues its last good run raised
+    stayed active for a disabled entry until Home Assistant restarted.
+    """
+    entry = _collision_entry(hass)
+    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    fetch = AsyncMock(side_effect=lambda *_: _colliding_pairs())
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        fetch.side_effect = failure
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is state
+        assert registry.async_get_issue(DOMAIN, issue_id) is not None
+        await hass.config_entries.async_set_disabled_by(
+            entry.entry_id, ConfigEntryDisabler.USER
+        )
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
 async def _unload_during_a_poll(
     hass: HomeAssistant, unload: Callable[[MockConfigEntry], Awaitable[object]]
 ) -> tuple[MockConfigEntry, list[str]]:
