@@ -8,7 +8,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, cast
@@ -163,6 +163,22 @@ _SET_ERROR_DETAIL_PREFIX = "JungFunctionService: Error during publish request: "
 # for the same datapoint (`HttpErrorMessages[409]`, ip_event_handler.js on
 # `mutex.js` MutexID's "replaced by a newer request").
 _SET_SUPERSEDED_DETAIL = "Conflict with newer request"
+
+
+@dataclass(slots=True)
+class _SupersededPool:
+    """The sets one 409 "Conflict with newer request" may have ended.
+
+    ``order`` is our sets outstanding for the datapoint when the frame
+    arrived, in send order; ``remaining`` those of them not yet accounted
+    for — every set the frame did not end gets its own outcome frame.
+    """
+
+    datapoint_id: str
+    order: tuple[str, ...]
+    remaining: set[str]
+
+
 # Repair-issue translation key for that "live push is dead" state.
 ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # Repair-issue translation key for "the gateway presents a certificate other
@@ -473,7 +489,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # awaiting instead of the send being fire-and-forget. Popped by
         # `_send_datapoint_command` whichever way the wait ends (reply or
         # COMMAND_REPLY_TIMEOUT), so this never accumulates stale entries.
-        self._pending_replies: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._pending_replies: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
         # Every set sent on the live session whose outcome frame (reply or
         # `error:`) has not arrived yet, in send order: message_id ->
         # (datapoint id, `time.monotonic()` deadline). Unlike
@@ -485,6 +501,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # the next set or error frame looks (`_expire_outstanding_sets`) — so
         # it holds at most the sets of the last COMMAND_OUTCOME_WINDOW.
         self._outstanding_sets: dict[str, tuple[str, float]] = {}
+        # One entry per 409 `Conflict with newer request` that arrived while
+        # two or more of our sets for its datapoint were outstanding — exactly
+        # one of those sets was the waiting one the frame ended
+        # (`_settle_superseded`).
+        self._superseded_pools: list[_SupersededPool] = []
         self._next_message_id = 0
         # While a REST poll is in flight, every pushed datapoint's merged keys
         # are recorded here (datapoint id -> merged keys) and re-applied over
@@ -2326,6 +2347,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         for its sets can arrive on the next one.
         """
         self._outstanding_sets.clear()
+        self._superseded_pools.clear()
         for future in self._pending_replies.values():
             if not future.done():
                 future.set_exception(
@@ -2335,11 +2357,101 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 )
 
     def _expire_outstanding_sets(self) -> None:
-        """Forget the sets sent more than ``COMMAND_OUTCOME_WINDOW`` ago."""
+        """Forget the sets sent more than ``COMMAND_OUTCOME_WINDOW`` ago.
+
+        An expired set's outcome is unknown — it may have been the one a 409
+        ended — so a pool it was still part of can no longer single anything
+        out by elimination and is dropped, never settled.
+        """
         now = time.monotonic()
-        for message_id, (_, deadline) in list(self._outstanding_sets.items()):
-            if deadline <= now:
-                del self._outstanding_sets[message_id]
+        expired = {
+            message_id
+            for message_id, (_, deadline) in self._outstanding_sets.items()
+            if deadline <= now
+        }
+        if not expired:
+            return
+        for message_id in expired:
+            del self._outstanding_sets[message_id]
+        self._superseded_pools = [
+            pool
+            for pool in self._superseded_pools
+            if pool.remaining.isdisjoint(expired)
+        ]
+
+    def _retire_set(self, message_id: str) -> None:
+        """Forget an outstanding set: its own outcome frame arrived."""
+        if self._outstanding_sets.pop(message_id, None) is None:
+            return
+        for pool in self._superseded_pools:
+            pool.remaining.discard(message_id)
+        self._settle_superseded()
+
+    def _settle_superseded(self) -> None:
+        """End every set a pending 409 is now known to have superseded.
+
+        Each 409 ended exactly one waiting set, a different one each time,
+        and every other set gets its own outcome frame. So a pool down to one
+        set has found it; and when a datapoint's pools between them still
+        owe outcomes to no more sets than there are pools, every one of those
+        sets was superseded (two 409s for A and B, with C confirmed).
+
+        A superseded set ends quietly — its future yields None — when a newer
+        set of ours for the datapoint had been sent by the time of its 409:
+        that one replaced it, carries the user's intent and reports its own
+        outcome. Otherwise something else replaced it — another client's
+        set, or the middleware re-locking to retry an older set of ours
+        (``ip_event_handler.js`` Publish) — it never reached the device, and
+        it fails as a rejection with the gateway's text.
+        """
+        while True:
+            single = next(
+                (p for p in self._superseded_pools if len(p.remaining) == 1), None
+            )
+            if single is not None:
+                (superseded,) = single.remaining
+                self._end_superseded(superseded, single.datapoint_id)
+                continue
+            for datapoint_id in {p.datapoint_id for p in self._superseded_pools}:
+                pools = [
+                    p for p in self._superseded_pools if p.datapoint_id == datapoint_id
+                ]
+                owed = set().union(*(p.remaining for p in pools))
+                if len(owed) <= len(pools):
+                    break
+            else:
+                return
+            for superseded in sorted(owed):
+                self._end_superseded(superseded, datapoint_id)
+            self._superseded_pools = [
+                p for p in self._superseded_pools if p.datapoint_id != datapoint_id
+            ]
+
+    def _end_superseded(self, message_id: str, datapoint_id: str) -> None:
+        """End one superseded set and take it out of its datapoint's pools."""
+        newer_sent = any(
+            message_id in pool.order and pool.order[-1] != message_id
+            for pool in self._superseded_pools
+            if pool.datapoint_id == datapoint_id
+        )
+        # The pool that singled it out has done its job; in the others it is
+        # accounted for.
+        self._superseded_pools = [
+            pool
+            for pool in self._superseded_pools
+            if not (
+                pool.datapoint_id == datapoint_id and pool.remaining == {message_id}
+            )
+        ]
+        for pool in self._superseded_pools:
+            pool.remaining.discard(message_id)
+        self._outstanding_sets.pop(message_id, None)
+        if not newer_sent:
+            self._fail_pending_reply(message_id, _SET_SUPERSEDED_DETAIL)
+            return
+        future = self._pending_replies.get(message_id)
+        if future is not None and not future.done():
+            future.set_result(None)
 
     def _resolve_pending_reply(self, message_id: str, reply_data: Any) -> None:
         """Settle the set ``message_id`` as confirmed: its outcome frame arrived.
@@ -2350,7 +2462,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         resolved — a malformed/duplicate frame must never raise
         ``asyncio.InvalidStateError`` out of the frame handler.
         """
-        self._outstanding_sets.pop(message_id, None)
+        self._retire_set(message_id)
         future = self._pending_replies.get(message_id)
         if future is not None and not future.done():
             future.set_result(reply_data if isinstance(reply_data, dict) else {})
@@ -2365,7 +2477,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ``command_rejected`` error the calling service raises (the caller's
         WARNING keeps it in the log as well).
         """
-        self._outstanding_sets.pop(message_id, None)
+        self._retire_set(message_id)
+        self._fail_pending_reply(message_id, reason)
+
+    def _fail_pending_reply(self, message_id: str, reason: str) -> None:
+        """Fail the command awaiting ``message_id`` with the gateway's reason."""
         future = self._pending_replies.get(message_id)
         if future is not None and not future.done():
             future.set_exception(
@@ -2390,21 +2506,18 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         ambiguous: an unparseable frame, an unknown id or two outstanding sets
         for one datapoint leave every command to its timeout.
 
-        One ambiguous shape is resolved: the publish mutex rejects a queued
-        set when a newer one for the same datapoint arrives (``mutex.js``
-        ``MutexID.lock``, surfaced as 409 "Conflict with newer request"). The
-        lock is gateway-wide but queues at most one request per datapoint, and
-        a newer request rejects exactly that WAITING one — never the set that
-        already holds the lock and is publishing. So with two or more of our
-        sets outstanding for the datapoint, the one replaced is the one we
-        sent just before our newest (``candidates[-2]``; slots are kept in
-        send order): an older one either got the lock or was itself replaced
-        when that one queued. That set ends quietly as a success — the newest
-        carries the user's intent and reports its own outcome — and its slot
-        is retired, since this frame was its outcome. Any older set (the one
-        publishing) stays counted and reports through its own reply. Should a
-        second 409 land after a later set was already sent, the two frames
-        retire the two superseded slots between them, in whichever order.
+        One ambiguous shape is resolved later rather than guessed: the
+        publish mutex rejects a queued set when a newer request for the same
+        datapoint locks (``mutex.js`` ``MutexID.lock``, surfaced as 409
+        "Conflict with newer request"). It rejects whichever set is WAITING,
+        never the one publishing — but the newer request can be our next set,
+        another client's, or the middleware's own retry of an older set of
+        ours, so which of our outstanding sets was waiting is not in the
+        frame. With two or more outstanding, the candidates are recorded as a
+        pool instead: exactly one of them got this frame as its outcome, and
+        every other gets its own reply or error, so the set left over once
+        the others have theirs is the superseded one (``_settle_superseded``).
+        Until then nothing is resolved, retired or pinned on anyone.
         """
         match = _SET_ERROR_RE.fullmatch(text)
         if match is None:
@@ -2422,7 +2535,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 candidates[0], detail or text.removeprefix("error:").strip()
             )
         elif len(candidates) > 1 and detail == _SET_SUPERSEDED_DETAIL:
-            self._resolve_pending_reply(candidates[-2], {})
+            self._superseded_pools.append(
+                _SupersededPool(datapoint_id, tuple(candidates), set(candidates))
+            )
+            self._settle_superseded()
 
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
@@ -3021,8 +3137,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
     async def _send_datapoint_command(
         self, datapoint_id: str, dp_type: str, values: list[dict[str, str]]
-    ) -> None:
+    ) -> bool:
         """Set a datapoint and wait for the gateway to confirm it.
+
+        Returns True when the gateway confirmed the set, False when a newer
+        set of ours for the datapoint superseded it while it waited for the
+        publish lock (``_settle_superseded``): it never reached the device,
+        so nothing it implies may be stored — the newer set reports its own
+        outcome.
 
         Every command method below funnels through here. The frame is tagged
         with a ``message_id``; a successful set is answered with a matching
@@ -3054,7 +3176,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             "data": {"id": datapoint_id, "type": dp_type, "values": values},
             "message_id": message_id,
         }
-        future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
+        future: asyncio.Future[dict[str, Any] | None] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
         self._expire_outstanding_sets()
         if self.websocket is not None and not self.websocket.closed:
@@ -3073,7 +3195,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 raise
             try:
                 async with asyncio.timeout(COMMAND_REPLY_TIMEOUT):
-                    await future
+                    return await future is not None
             except TimeoutError as err:
                 # Named here so it can be paired with the gateway's own
                 # "error: ..." WARNING (logged by the message-frame branch)
@@ -3165,9 +3287,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             datapoint_id, "switch", [{"key": "switch", "value": "0"}]
         )
 
-    async def set_brightness(self, datapoint_id: str, brightness: int) -> None:
-        """Set the brightness of the light."""
-        await self._send_datapoint_command(
+    async def set_brightness(self, datapoint_id: str, brightness: int) -> bool:
+        """Set the brightness of the light; False if a newer set superseded it."""
+        return await self._send_datapoint_command(
             datapoint_id,
             "brightness",
             [{"key": "brightness", "value": str(brightness)}],

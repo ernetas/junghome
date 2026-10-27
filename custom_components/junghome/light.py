@@ -244,7 +244,7 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         switch_id = self._datapoint["id"]
         if self._has_brightness and "brightness" in kwargs:
             switch_pushes = self.coordinator.datapoint_push_count(switch_id)
-            await self._set_brightness(kwargs["brightness"])
+            confirmed = await self._set_brightness(kwargs["brightness"])
             # A confirmed non-zero Brightness Set turned the dimmer on, but its
             # reply is the brightness datapoint: the stored switch value is
             # still the pre-command one unless the gateway reported the switch
@@ -253,7 +253,12 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             # change on the now-on light, a listener dispatch without a push
             # marker) does not see the stale off. If it did, that report is
             # newer than the command (a wall rocker, another client) and wins.
-            if self.coordinator.datapoint_push_count(switch_id) == switch_pushes:
+            # A set a newer one superseded never reached the device, so it
+            # implies nothing (issue #240).
+            if (
+                confirmed
+                and self.coordinator.datapoint_push_count(switch_id) == switch_pushes
+            ):
                 self.coordinator.adopt_implied_value(
                     switch_id, {"values": [{"key": "switch", "value": "1"}]}
                 )
@@ -372,12 +377,12 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         low, high = self._kelvin_range()
         return max(low, min(high, kelvin))
 
-    async def _set_brightness(self, brightness: int) -> None:
-        """Set the brightness of the light."""
+    async def _set_brightness(self, brightness: int) -> bool:
+        """Set the brightness of the light; True if the gateway confirmed it."""
         _LOGGER.debug("Setting brightness for light %s to %s", self._name, brightness)
         if not self._brightness_datapoint_id:
             _LOGGER.warning("No brightness datapoint id for light %s", self._name)
-            return
+            return False
         # Convert Home Assistant 0-255 brightness to device raw scale (0-100 or 0-255)
         ha_brightness = int(brightness)
         raw_value = self._ha_to_raw_brightness(ha_brightness)
@@ -387,7 +392,9 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             raw_value,
             self._name,
         )
-        await self.coordinator.set_brightness(self._brightness_datapoint_id, raw_value)
+        confirmed = await self.coordinator.set_brightness(
+            self._brightness_datapoint_id, raw_value
+        )
         # The awaited reply already merged the gateway's confirmed value into
         # the coordinator (and dispatched it through _handle_coordinator_update),
         # so read that back rather than store the request: the device only has
@@ -402,6 +409,7 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             fallback=ha_brightness,
         )
         self.async_write_ha_state()
+        return confirmed
 
     async def _set_color_temp(self, kelvin: int) -> None:
         """Set the color temperature of the light (Kelvin, device-native)."""
