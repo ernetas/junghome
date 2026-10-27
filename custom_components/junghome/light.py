@@ -259,17 +259,28 @@ class JungHomeLight(JungHomeEntity, LightEntity):
                 )
             self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
         else:
+            brightness_id = self._brightness_datapoint_id
+            brightness_pushes = (
+                self.coordinator.datapoint_push_count(brightness_id)
+                if brightness_id is not None
+                else 0
+            )
             await self.coordinator.turn_on_light(switch_id)
             # Re-read after the await (see `_bool_after_command`): the
             # confirmation merge — and any fresher push that beat this resume
             # — already updated coordinator.data via the listener.
             self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
-            if self._has_brightness and not was_on:
+            if brightness_id is not None and not was_on:
                 # No explicit brightness on a genuine off->on: the device
                 # restores its own level on power-on. Don't guess — showing a
                 # kept/stale value looked like the light jumping to 100%.
                 # Clear it and let the device's own brightness report populate
                 # the real current value (its WS push, or the periodic poll).
+                # That report can beat this resume, though (it lands in the
+                # same read as the confirmation, or ahead of it): when the
+                # gateway reported the brightness since the command started,
+                # it is the restored level — read it back rather than clear
+                # it (0, the off reading, still clears).
                 #
                 # Gated on `was_on` because a turn_on against an ALREADY-on
                 # dimmer changes nothing on the device, so no push follows —
@@ -277,6 +288,16 @@ class JungHomeLight(JungHomeEntity, LightEntity):
                 # for no reason. The value being shown is the device's
                 # current level; keep it.
                 self._brightness = None
+                if (
+                    self.coordinator.datapoint_push_count(brightness_id)
+                    != brightness_pushes
+                ):
+                    self._brightness = (
+                        self._get_brightness_from_datapoint(
+                            self._find_datapoint(brightness_id)
+                        )
+                        or None
+                    )
         if self._has_color_temp and "color_temp_kelvin" in kwargs:
             await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()

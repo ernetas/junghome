@@ -285,6 +285,41 @@ def _stored_switch(coordinator: JungHomeDataUpdateCoordinator) -> str:
     return str(datapoint["values"][0]["value"])
 
 
+@pytest.mark.parametrize(("pushed", "expected"), [("80", 204), ("0", None)])
+async def test_plain_turn_on_keeps_a_brightness_report_that_beat_the_resume(
+    hass: HomeAssistant,
+    init_integration,
+    pushed: str,
+    expected: int | None,
+) -> None:
+    """The restored level reported before the command resumes is kept.
+
+    An off->on clears the brightness pending the device's report, but that
+    report can land before the coroutine resumes — in the same read as the
+    confirmation, or ahead of it when the first OnOff copy was lost. It was
+    applied by the listener and then cleared, leaving the light on with an
+    unknown brightness until the next poll (issue #243). An off reading (0)
+    still clears.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    reply_then_push(
+        coordinator,
+        {
+            "id": "idcolor1-002",
+            "values": [{"key": "brightness", "value": pushed}],
+        },
+    )
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    )
+    state = hass.states.get("light.strip")
+    assert state.state == "on"
+    assert state.attributes.get("brightness") == expected
+
+
 async def test_brightness_turn_on_stores_the_implied_switch_on(
     hass: HomeAssistant, init_integration
 ) -> None:
