@@ -4469,6 +4469,56 @@ async def test_rename_and_capability_change_in_one_adoption_reloads(
         await hass.async_block_till_done()
 
 
+async def test_capability_change_pending_across_a_rename_is_confirmed_on_time(
+    hass: HomeAssistant,
+) -> None:
+    """A change first seen under the old label is confirmed under the new one.
+
+    Slat tilt appears on one adoption, and the next one carries it too but
+    under a label the user just changed in the app. The followed rename moves
+    the pending candidate with the baseline, so that second adoption confirms
+    the change; dropping it made the confirmation start over, one adoption
+    late.
+    """
+    devices = [*_identified_devices(), _awning()]
+    tilted = copy.deepcopy(devices)
+    awning = next(d for d in tilted if d["id"] == "idawning")
+    awning["type"] = "PositionAndAngle"
+    awning["datapoints"].append(
+        {
+            "id": "idawning-002",
+            "type": "angle",
+            "values": [{"key": "angle", "value": "0"}],
+        }
+    )
+    renamed = _relabelled(tilted, "idawning", "Terrace Awning")
+    entry = _prepared_entry(hass)
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        await _poll(hass, coordinator, tilted)
+        assert entry.runtime_data is coordinator, "one sighting is not trusted"
+        with patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=copy.deepcopy(renamed)),
+        ):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            assert entry.runtime_data is not coordinator, "the second one confirms"
+            ent = er.async_get(hass).async_get("cover.patio_awning")
+            assert ent.unique_id == "terrace_awning_001"
+            features = hass.states.get("cover.patio_awning").attributes[
+                "supported_features"
+            ]
+            assert features & CoverEntityFeature.SET_TILT_POSITION
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_id_churn_and_a_confirmed_capability_change_reload_once(
     hass: HomeAssistant,
 ) -> None:

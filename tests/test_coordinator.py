@@ -211,6 +211,25 @@ async def test_implied_value_survives_a_racing_poll_and_counts_no_push(
     unsub()
 
 
+def test_implied_value_never_renames_the_datapoint(hass: HomeAssistant) -> None:
+    """An implied value merges like a push: every key but the ``id``.
+
+    A push's ``id`` names the datapoint it is about and is never merged;
+    the implied-value path was a separate copy of the merge without that
+    filter, so a payload carrying an ``id`` re-keyed the stored datapoint
+    (and the poll overlay entry) under it.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    coordinator._poll_push_overlay = {}
+    on = {"id": "dp-other", "values": [{"key": "switch", "value": "1"}]}
+    coordinator.adopt_implied_value("dp-1", on)
+    datapoint = coordinator.data[0]["datapoints"][0]
+    assert datapoint["id"] == "dp-1"
+    assert datapoint["values"] == on["values"]
+    assert coordinator._poll_push_overlay == {"dp-1": {"values": on["values"]}}
+
+
 def test_datapoint_push_count_counts_each_merged_push(hass: HomeAssistant) -> None:
     """Each push merged into a datapoint moves that datapoint's count only."""
     coordinator = _coordinator(hass)
@@ -1157,6 +1176,27 @@ async def test_late_error_consumes_the_timed_out_set_it_belongs_to(
     with pytest.raises(HomeAssistantError) as exc_info:
         await asyncio.wait_for(task, timeout=1)
     assert exc_info.value.translation_key == "command_rejected"
+
+
+async def test_a_slot_no_frame_matched_expires_on_the_next_send(
+    hass: HomeAssistant,
+) -> None:
+    """The outstanding sets hold only the last COMMAND_OUTCOME_WINDOW's sets.
+
+    A slot whose outcome frame was consumed without matching it (an
+    ambiguous error) used to wait for the next error frame to expire it — on
+    a healthy session, none might ever come. The next send looks too.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    coordinator._outstanding_sets["ha-stale"] = (_DP_B, time.monotonic() - 1)
+    coordinator._outstanding_sets["ha-fresh"] = (_DP_B, time.monotonic() + 60)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    assert list(coordinator._outstanding_sets) == ["ha-fresh", sent_ids[0]]
+    _confirm(coordinator, _DP_A, sent_ids[0])
+    await task
+    assert list(coordinator._outstanding_sets) == ["ha-fresh"]
+    await coordinator.async_shutdown()
 
 
 async def test_outstanding_sets_are_session_scoped(hass: HomeAssistant) -> None:
@@ -2858,3 +2898,16 @@ async def test_a_corrupt_stored_pin_is_treated_as_absent(hass: HomeAssistant) ->
     with patch.object(coordinator, "_async_learn_fingerprint", learn):
         assert await coordinator._async_ssl() is fingerprint_ssl(FAKE_FINGERPRINT)
     learn.assert_awaited_once_with("h")
+
+
+async def test_rest_reads_reach_an_ipv6_gateway(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A poll of an entry stored with a bare IPv6 address goes to ``[addr]``."""
+    coordinator = _coordinator(hass)
+    coordinator.config["host"] = "fe80::1"
+    aioclient_mock.get("https://[fe80::1]/api/junghome/functions", json=[])
+    assert await coordinator._fetch_devices_from_api("fe80::1", "t") == []
+    assert [str(call[1]) for call in aioclient_mock.mock_calls] == [
+        "https://[fe80::1]/api/junghome/functions"
+    ]

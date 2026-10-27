@@ -20,7 +20,7 @@ from custom_components.junghome.light import (
     JungHomeLight,
 )
 from custom_components.junghome.models import DeviceProperties
-from tests.conftest import bare_coordinator
+from tests.conftest import bare_coordinator, reply_then_push
 
 
 def _color_light(
@@ -285,32 +285,6 @@ def _stored_switch(coordinator: JungHomeDataUpdateCoordinator) -> str:
     return str(datapoint["values"][0]["value"])
 
 
-def _reply_then_push(coordinator: JungHomeDataUpdateCoordinator, push: dict) -> None:
-    """Make the fake socket confirm each set, then deliver ``push``.
-
-    Both land before the awaiting command resumes — what a report from a
-    wall rocker or another client looks like when it arrives on the session
-    between the confirmation and the service coroutine's resume.
-    """
-
-    def _send(raw: str) -> None:
-        sent = json.loads(raw)
-        coordinator._dispatch_text_frame(
-            json.dumps(
-                {
-                    "type": "datapoint",
-                    "data": sent["data"],
-                    "message_id": sent["message_id"],
-                }
-            )
-        )
-        coordinator._dispatch_text_frame(
-            json.dumps({"type": "datapoint", "data": push})
-        )
-
-    coordinator.websocket.send_str.side_effect = _send
-
-
 async def test_brightness_turn_on_stores_the_implied_switch_on(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -363,7 +337,7 @@ async def test_switch_report_during_a_brightness_turn_on_wins(
     await hass.services.async_call(
         "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
     )
-    _reply_then_push(
+    reply_then_push(
         coordinator,
         {"id": "idcolor1-001", "values": [{"key": "switch", "value": "0"}]},
     )
@@ -390,7 +364,7 @@ async def test_switch_report_after_the_confirmation_wins(
 ) -> None:
     """A switch push that beats the command's resume is not overwritten."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(
+    reply_then_push(
         coordinator,
         {"id": "idcolor1-001", "values": [{"key": "switch", "value": pushed}]},
     )

@@ -23,7 +23,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     datapoint_value,
-    entry_unloading,
     gateway_device_id,
     gateway_device_info,
     is_presence_quantity,
@@ -56,8 +55,6 @@ async def async_setup_entry(
     @callback
     def _discover_binary_sensors() -> None:
         """Add entities for any presence sensors not yet created (handles late adds)."""
-        if entry_unloading(entry):
-            return
         new_entities: list[JungHomePresence] = []
         for device in coordinator.data or []:
             # Presence/occupancy is reported as a quantity datapoint (with an
@@ -81,8 +78,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_binary_sensors()
-    entry.async_on_unload(coordinator.async_add_listener(_discover_binary_sensors))
+    coordinator.async_add_discovery_listener(_discover_binary_sensors)
 
 
 class JungHomePresence(JungHomeEntity, BinarySensorEntity):

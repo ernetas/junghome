@@ -60,7 +60,6 @@ from .const import (
     DEFAULT_SUPPRESS_DUPLICATE_PRESSES,
     EVENT_BUTTON_ACTION,
     datapoint_bool,
-    entry_unloading,
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
@@ -177,8 +176,6 @@ async def async_setup_entry(
     @callback
     def _discover_events() -> None:
         """Add entities for any events not yet created (handles devices added later)."""
-        if entry_unloading(entry):
-            return
         new_entities = []
         for device in coordinator.data or []:
             if device.get("type") == "RockerSwitch":
@@ -208,8 +205,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_events()
-    entry.async_on_unload(coordinator.async_add_listener(_discover_events))
+    coordinator.async_add_discovery_listener(_discover_events)
 
 
 # ------------------------------------------

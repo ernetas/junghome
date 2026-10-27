@@ -134,6 +134,45 @@ def _auto_reply_to_datapoint_commands(
     return ws
 
 
+def reply_then_push(
+    coordinator: JungHomeDataUpdateCoordinator,
+    push: dict | None = None,
+    *,
+    reply_values: list[dict] | None = None,
+    reply_nan: bool = False,
+) -> None:
+    """Make the fake socket confirm each set, then deliver ``push`` if given.
+
+    The confirmation echoes the request, carries ``reply_values`` instead
+    (the real reply is the whole re-read datapoint — a thermostat's setpoint
+    AND preset — not just the key written), or with ``reply_nan`` reports
+    each key sent as ``"NaN"`` (the gateway gave up reading the node). Both
+    frames land before the awaiting command resumes — what a report from a
+    wall rocker or another client looks like when it arrives on the session
+    between the confirmation and the service coroutine's resume.
+    """
+
+    def _send(raw: str) -> None:
+        sent = json.loads(raw)
+        data = sent["data"]
+        if reply_values is not None:
+            data = {**data, "values": reply_values}
+        elif reply_nan:
+            nan = [{"key": v["key"], "value": "NaN"} for v in data["values"]]
+            data = {**data, "values": nan}
+        coordinator._dispatch_text_frame(
+            json.dumps(
+                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
+            )
+        )
+        if push is not None:
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "datapoint", "data": push})
+            )
+
+    coordinator.websocket.send_str.side_effect = _send
+
+
 async def _fake_run_websocket(self: JungHomeDataUpdateCoordinator) -> None:
     """Stand in for the real WebSocket: present a fake socket, then park."""
     ws = _auto_reply_to_datapoint_commands(self)

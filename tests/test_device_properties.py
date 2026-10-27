@@ -36,6 +36,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.junghome.const import DOMAIN, gateway_device_id
 from custom_components.junghome.coordinator import (
     DEVICE_PROPERTIES_REFRESH_INTERVAL,
+    KELVIN_RANGE_MAX_BACKOFF,
     JungHomeDataUpdateCoordinator,
 )
 from custom_components.junghome.diagnostics import async_get_config_entry_diagnostics
@@ -674,9 +675,10 @@ async def test_a_range_unread_at_setup_is_re_read_until_known(
 
     The setup-time list shows the light's constructor default with an unread
     (``[]``) range state: the window is unknown, the light falls back to
-    2000-6000 K, and every interval re-reads that light alone (next to the
-    energy counter) — a pending answer again, then the bound 2700-6500 K,
-    which reaches the entity; once known it is not re-read.
+    2000-6000 K, and the next interval re-reads that light alone (next to the
+    energy counter) — a pending answer again, so it backs off one interval,
+    then the bound 2700-6500 K, which reaches the entity; once known it is
+    not re-read.
     """
     default = {"min": 2000, "max": 6000, "step": 1}
     unread = _ct_light("idcolor1", default, [])
@@ -710,16 +712,60 @@ async def test_a_range_unread_at_setup_is_re_read_until_known(
             answers["idcolor1"] = _ct_light(
                 "idcolor1", {"min": 2700, "max": 6500, "step": 1}
             )
+            # Backing off: this interval reads only the counter.
             await _tick(hass, freezer)
-            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET]
+            assert asked() == ["idcolor1", SOCKET, SOCKET]
+            await _tick(hass, freezer)
+            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET, SOCKET]
             state = hass.states.get("light.strip")
             assert state.attributes["min_color_temp_kelvin"] == 2700
             assert state.attributes["max_color_temp_kelvin"] == 6500
             assert state.attributes["color_temp_kelvin"] == 2700
             # Known: only the counter is re-read from now on.
             await _tick(hass, freezer)
-            assert asked() == ["idcolor1", "idcolor1", SOCKET, SOCKET, SOCKET]
+            assert asked() == ["idcolor1", "idcolor1", *[SOCKET] * 4]
             assert full.await_count == 0
+        assert coordinator.device_properties["idcolor1"].color_temp_range == (
+            2700,
+            6500,
+        )
+
+
+async def test_a_range_that_stays_pending_is_re_read_with_a_back_off(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A light whose node never answers is not re-read every interval forever.
+
+    The re-reads double their spacing — the next interval, then 2, 4, 8
+    intervals later — up to KELVIN_RANGE_MAX_BACKOFF intervals, and stay
+    there; the energy counter next to it is still read every interval. Once
+    the range is known the back-off is forgotten.
+    """
+    default = {"min": 2000, "max": 6000, "step": 1}
+    unread = _ct_light("idcolor1", default, [])
+    initial = [_verbose(SOCKET), unread, *_everything_but(SOCKET, "idcolor1")]
+    async with _running(hass, initial) as entry:
+        coordinator = entry.runtime_data
+        answers = {"idcolor1": unread, SOCKET: _verbose(SOCKET)}
+        single = AsyncMock(side_effect=lambda _h, _t, device_id: answers[device_id])
+        light_reads: list[int] = []
+        with patch.object(coordinator, "_fetch_device_verbose_from_api", single):
+            for interval in range(1, 40):
+                before = single.await_count
+                await _tick(hass, freezer)
+                asked = [c.args[2] for c in single.await_args_list[before:]]
+                assert SOCKET in asked
+                if "idcolor1" in asked:
+                    light_reads.append(interval)
+            assert light_reads == [1, 3, 7, 15, 27, 39]
+            assert KELVIN_RANGE_MAX_BACKOFF == 12
+            # Known at last: the back-off goes with the pending range.
+            answers["idcolor1"] = _ct_light(
+                "idcolor1", {"min": 2700, "max": 6500, "step": 1}
+            )
+            for _ in range(13):
+                await _tick(hass, freezer)
+            assert coordinator._kelvin_range_backoff == {}
         assert coordinator.device_properties["idcolor1"].color_temp_range == (
             2700,
             6500,

@@ -29,6 +29,7 @@ from .const import (
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     entry_anchor,
+    gateway_url,
     stable_unique_id,
 )
 from .coordinator import (
@@ -97,7 +98,7 @@ async def async_fetch_serial(
     with the certificate repair flow (``repairs.py``).
     """
     session = async_get_clientsession(hass, verify_ssl=False)
-    url = f"https://{host}/api/junghome/config/parameter/system_serial"
+    url = gateway_url(host, "api/junghome/config/parameter/system_serial")
     headers = {"token": token}
     try:
         async with (
@@ -159,12 +160,19 @@ def _normalize_host(host: str) -> str:
 
 
 def _cover_choices(coordinator: JungHomeDataUpdateCoordinator) -> dict[str, str]:
-    """Map cover stable unique_id -> device label for the options selector.
+    """Map cover stable unique_id -> device label for the options selector."""
+    return {uid: label for uid, (label, _) in _covers(coordinator).items()}
+
+
+def _covers(
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> dict[str, tuple[str, str]]:
+    """Map cover stable unique_id -> (device label, gateway function id).
 
     Mirrors cover.py discovery (Position/PositionAndAngle with a level datapoint)
     so the options flow lists exactly the covers the platform creates.
     """
-    choices: dict[str, str] = {}
+    choices: dict[str, tuple[str, str]] = {}
     for device in coordinator.data or []:
         if device.get("type") not in ("Position", "PositionAndAngle"):
             continue
@@ -175,12 +183,40 @@ def _cover_choices(coordinator: JungHomeDataUpdateCoordinator) -> dict[str, str]
         if level_dp is None:
             continue
         uid = stable_unique_id(device, level_dp)
-        choices[uid] = device.get("label") or uid
+        choices[uid] = (device.get("label") or uid, device["id"])
     return choices
 
 
 class JungHomeOptionsFlow(config_entries.OptionsFlow):
     """Options: poll interval, duplicate-press suppression, inverted covers."""
+
+    # The function id behind each cover the form offered (unique_id -> id),
+    # to read the submission against covers renamed while the form was open.
+    _offered_covers: dict[str, str] | None = None
+
+    def _renames_followed(self, selected: list[str]) -> list[str]:
+        """Return the selected covers under their current unique_ids.
+
+        A rename followed while the form is open (``follow_renames``) rewrites
+        the stored flag to the cover's new unique_id, but the form still
+        carries the old one: saving it put back an id no entity has, and the
+        cover lost its inverted flag. The function id does not change on a
+        rename, so each cover the form offered is found again through it.
+        """
+        entry: JungHomeConfigEntry = self.config_entry
+        coordinator = getattr(entry, "runtime_data", None)
+        if coordinator is None or not self._offered_covers:
+            return list(selected)
+        current = {
+            device_id: uid for uid, (_, device_id) in _covers(coordinator).items()
+        }
+        result: list[str] = []
+        for uid in selected:
+            device_id = self._offered_covers.get(uid)
+            renamed = current.get(device_id, uid) if device_id is not None else uid
+            if renamed not in result:
+                result.append(renamed)
+        return result
 
     def _reconciled_cover_flags(self) -> tuple[dict[str, str], list[str]]:
         """Return (selectable covers, currently flagged) reconciled with reality.
@@ -235,7 +271,9 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
                 ),
             }
             if CONF_INVERTED_COVERS in user_input:
-                new_options[CONF_INVERTED_COVERS] = user_input[CONF_INVERTED_COVERS]
+                new_options[CONF_INVERTED_COVERS] = self._renames_followed(
+                    user_input[CONF_INVERTED_COVERS]
+                )
             else:
                 # The covers selector was not part of the form (no covers to
                 # flag — voluptuous fills the default for a shown-but-empty
@@ -249,6 +287,12 @@ class JungHomeOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(data=new_options)
 
         choices, current = self._reconciled_cover_flags()
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        self._offered_covers = (
+            {uid: device_id for uid, (_, device_id) in _covers(coordinator).items()}
+            if coordinator is not None
+            else {}
+        )
         # The interval field is always shown — the covers selector only when
         # there is a cover to flag. (This step used to abort with "no covers",
         # which would now lock cover-less installs out of the poll interval.)
@@ -1132,7 +1176,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
         # cert without building an SSL context on the event loop.
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{host}/api/junghome/version/"
+        url = gateway_url(host, "api/junghome/version/")
         try:
             async with (
                 asyncio.timeout(PROBE_TIMEOUT),
@@ -1167,7 +1211,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
         # cert without building an SSL context on the event loop.
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{self._host}/api/junghome/register"
+        url = gateway_url(str(self._host), "api/junghome/register")
         timeout = aiohttp.ClientTimeout(total=REGISTER_TIMEOUT)
         try:
             # Pinned: the token this returns must come from the certificate
@@ -1207,7 +1251,7 @@ class JungHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
         # cert without building an SSL context on the event loop.
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{self._host}/api/junghome/register/by-password"
+        url = gateway_url(str(self._host), "api/junghome/register/by-password")
         try:
             # Pinned before the password leaves: it is the network key, the
             # one credential above the token itself.

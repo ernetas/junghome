@@ -14,6 +14,7 @@ from custom_components.junghome.const import (
     entry_scope,
     gateway_configuration_url,
     gateway_device_id,
+    gateway_url,
     is_presence_quantity,
     stable_unique_id,
 )
@@ -174,3 +175,22 @@ def test_gateway_configuration_url_is_the_gateway_web_page():
     assert gateway_configuration_url("[fe80::1]") == "https://[fe80::1]/"
     for bad in (None, 5, "", "  ", "@", "h:x"):
         assert gateway_configuration_url(bad) is None, bad
+
+
+def test_gateway_url_brackets_a_bare_ipv6_address():
+    """Every request URL is built like the "Visit" link: IPv6 in brackets.
+
+    The device page's link bracketed a stored IPv6 address while every REST
+    call and the WebSocket upgrade interpolated it raw (``https://fe80::1/``),
+    which is not a URL — an entry stored with an IPv6 address could link to
+    its gateway but never reach it.
+    """
+    assert gateway_url("fe80::1", "api/junghome/functions") == (
+        "https://[fe80::1]/api/junghome/functions"
+    )
+    assert gateway_url("2001:db8::5", "ws", scheme="wss") == "wss://[2001:db8::5]/ws"
+    assert gateway_url("[fe80::1]", "ws", scheme="wss") == "wss://[fe80::1]/ws"
+    assert gateway_url("192.168.1.50", "api/junghome/version/") == (
+        "https://192.168.1.50/api/junghome/version/"
+    )
+    assert gateway_url("gw.local") == "https://gw.local/"

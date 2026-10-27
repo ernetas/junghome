@@ -32,9 +32,11 @@ JUNG HOME Gateway over its REST API and WebSocket.
     function id, node MAC, element location), persisted in the entry's
     `Store` (`function_anchors_store`), pairs a vanished label with a new one
     on the same element and rewrites the registry in place. And the gateway
-    health log (`async_fetch_health_status`, `health`: after the first
-    refresh, then every 15 min, best-effort) → one repair issue per
-    `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
+    health log (`async_fetch_health_status`, `health`: in the background
+    once `start()` runs — off the setup path — then every 15 min,
+    best-effort; conditions come from the whole log, only its newest
+    `HEALTH_LOG_KEPT_ENTRIES` = 200 entries are kept for diagnostics) → one
+    repair issue per `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
     (`entry_derived_issue_ids`) are **not** deleted by `stop()`: a reload or an
     HA restart keeps them, so the user's "Ignore" survives (HA restores a
     dismissal only for an issue it still holds; a deleted one comes back
@@ -64,7 +66,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `repairs.py` — the fix flow for `tls_certificate_changed`.
   - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
-    `scene_unique_id`, `is_presence_quantity`), `entry_unloading`, the
+    `scene_unique_id`, `is_presence_quantity`), `entry_unloading`,
+    `gateway_url` (every request URL — a bare IPv6 host bracketed),
+    `entry_issue_id`, the
     option keys and the button gesture constants (`BUTTON_EVENT_TYPES`,
     `BUTTON_HOLD_THRESHOLD`, `BUTTON_DUPLICATE_WINDOW`,
     `CONF_SUPPRESS_DUPLICATE_PRESSES`).
@@ -268,7 +272,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   reset of the range value does not unbind it); otherwise the range is
   unknown and `color_temp_range_pending`, and the periodic properties
   refresh re-reads that light (`GET /devices/{id}?verbose=true`, next to the
-  energy counters) until it is known. `light.py` looks the range up on every
+  energy counters) until it is known — backing off while it stays pending
+  (the next refresh, then 2, 4, 8 refreshes later, then every
+  `KELVIN_RANGE_MAX_BACKOFF` = 12, hourly: a silent node never binds it). `light.py` looks the range up on every
   state write (`_kelvin_range`, falling back to `DEFAULT_MIN/MAX_KELVIN`
   2000–6000 K when unknown or implausible — outside the spec's 800–20000
   K), so a range learned after the entity exists reaches it on that
@@ -356,8 +362,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   did not list — an omitted function is not re-asked, a missing endpoint or
   failed read is retried each interval), then
   `GET /devices/{id}?verbose=true` (~8 KB) per energy device — and per
-  light whose Kelvin range is still pending, until known — every
-  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
+  light whose Kelvin range is still pending, until known and backed off —
+  every `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
   counter itself moves at most hourly). Drives the `total_energy`
   sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that
   only at registration, so counters registered earlier stay Wh;
@@ -513,8 +519,9 @@ instead of re-deriving:
   tilt-lost-after-update regression). Gate capabilities on datapoint
   *presence*, never on the function-type name. That reload (like the
   id-churn one) starts *inside* an adoption and runs eagerly: every
-  `_discover_*` listener returns early while the entry is
-  `UNLOAD_IN_PROGRESS` or `FAILED_UNLOAD` (`const.entry_unloading`), and the
+  platform's `_discover_*` pass is skipped while the entry is
+  `UNLOAD_IN_PROGRESS` or `FAILED_UNLOAD` (`const.entry_unloading`, applied
+  once in `coordinator.async_add_discovery_listener`), and the
   platforms add without `update_before_add` — either gap put a device new in
   that list on the dead coordinator (an orphan frozen at its first state).
   Neither reload is scheduled while one is already unloading the entry (HA

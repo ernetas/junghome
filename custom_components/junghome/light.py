@@ -9,10 +9,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_bool, datapoint_value, entry_unloading, stable_unique_id
+from .const import datapoint_bool, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
-from .models import Datapoint, Device
+from .models import GATEWAY_DEFAULT_KELVIN_RANGE, Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,17 +31,16 @@ PARALLEL_UPDATES = 0
 # read, a range that is not plausible, or a read taken before the gateway had
 # read the node's range after a boot (still the default profile next to an
 # unread range state — pending, and re-read by the coordinator's periodic
-# properties refresh until known). The range is looked up on every state
-# write, so one learned after the entity exists reaches it on that refresh's
-# listener dispatch. The defaults are the gateway's own
-# starting range — what it clamps to until it has read the node's — and the
-# range of every tunable-white light in the 2026-09-16 probe. (The
+# properties refresh, backing off, until known). The range is looked up on
+# every state write, so one learned after the entity exists reaches it on that
+# refresh's listener dispatch. The defaults are the gateway's own starting
+# range — what it clamps to until it has read the node's — and the range of
+# every tunable-white light in the 2026-09-16 probe. (The
 # `/types/datapoints` catalog advertises 2000-10000; it is a descriptor, not
 # the enforcement.) HA does not validate a requested `color_temp_kelvin`
 # against the entity's range, so writes are clamped here too (`_clamp_kelvin`)
 # — the gateway would clamp them silently and confirm the clamped value.
-DEFAULT_MIN_KELVIN = 2000
-DEFAULT_MAX_KELVIN = 6000
+DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN = GATEWAY_DEFAULT_KELVIN_RANGE
 
 
 async def async_setup_entry(
@@ -56,8 +55,6 @@ async def async_setup_entry(
     @callback
     def _discover_lights() -> None:
         """Add entities for any lights not yet created (handles devices added later)."""
-        if entry_unloading(config_entry):
-            return
         new_entities: list[JungHomeLight] = []
         for device in coordinator.data or []:
             if device.get("type") in ("OnOff", "DimmerLight", "ColorLight"):
@@ -72,8 +69,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_lights()
-    config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))
+    coordinator.async_add_discovery_listener(_discover_lights)
 
 
 class JungHomeLight(JungHomeEntity, LightEntity):
@@ -379,11 +375,10 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         # disagree with the next push/poll. The request stands in only when the
         # datapoint yields nothing usable (0 is "off"/unparseable — see
         # _handle_coordinator_update — not a level the device confirmed).
-        self._brightness = (
-            self._get_brightness_from_datapoint(
-                self._find_datapoint(self._brightness_datapoint_id)
-            )
-            or ha_brightness
+        self._brightness = self._value_after_command(
+            self._brightness_datapoint_id,
+            lambda dp: self._get_brightness_from_datapoint(dp) or None,
+            fallback=ha_brightness,
         )
         self.async_write_ha_state()
 
@@ -404,8 +399,9 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
         # Same as brightness: the confirmed value the reply merged wins over the
         # request; the request stands in only if the datapoint yields nothing.
-        confirmed = self._get_color_temp_from_datapoint(
-            self._find_datapoint(self._color_temp_datapoint_id)
+        self._color_temp = self._value_after_command(
+            self._color_temp_datapoint_id,
+            self._get_color_temp_from_datapoint,
+            fallback=kelvin,
         )
-        self._color_temp = kelvin if confirmed is None else confirmed
         self.async_write_ha_state()

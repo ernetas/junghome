@@ -27,6 +27,7 @@ from .const import (
     device_config_entry_ids,
     device_slug,
     duplicate_slugs,
+    entry_issue_id,
     entry_scope,
     entry_unloading,
     gateway_device_id,
@@ -145,7 +146,7 @@ def _sync_label_collision_issue(
     """
     if entry_unloading(entry):
         return
-    issue_id = f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+    issue_id = entry_issue_id(ISSUE_DUPLICATE_LABELS, entry.entry_id)
     if not collisions:
         if collision_free_adoptions >= LABEL_COLLISION_CLEAR_ADOPTIONS:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
@@ -294,11 +295,13 @@ def _register_capability_reload(
         # A rename followed in this very adoption (``follow_renames`` runs
         # before the listeners) keeps its entities, so it keeps its baseline:
         # seeding the new slug from this list would swallow a capability
-        # change arriving in the same adoption. (A change already pending
-        # under the old slug starts its confirmation over: one adoption late.)
+        # change arriving in the same adoption. A change already pending under
+        # the old slug moves with it, so this adoption still confirms it.
         for new_slug, old_slug in coordinator.followed_renames.items():
             if old_slug in capability_signatures:
                 capability_signatures[new_slug] = capability_signatures.pop(old_slug)
+            if old_slug in pending_signatures:
+                pending_signatures[new_slug] = pending_signatures.pop(old_slug)
         changed = False
         candidates: dict[str, tuple[str | None, frozenset[str]]] = {}
         for device in coordinator.data:
@@ -358,9 +361,9 @@ def _make_stale_device_pruner(
     # dispatch that reaches this listener (per-datapoint pushes, scenes
     # broadcasts, the WS-drop notification) re-presents the SAME list, so
     # counting those as misses shrank the debounce below
-    # STALE_DEVICE_PRUNE_MISSES real polls — e.g. a WS flapping while a device
-    # was transiently absent from one poll burned several "misses" per minute
-    # from reconnect notifications alone.
+    # STALE_DEVICE_PRUNE_MISSES real adoptions — e.g. a WS flapping while a
+    # device was transiently absent from one poll burned several "misses" per
+    # minute from reconnect notifications alone.
     last_generation: int | None = None
 
     @callback
@@ -957,8 +960,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) ->
     outlive every unload short of a disable (``async_setup``).
     """
     for issue_id in (
-        f"{ISSUE_TLS_MISMATCH}_{entry.entry_id}",
-        f"{ISSUE_PUSH_FAILURE}_{entry.entry_id}",
+        entry_issue_id(ISSUE_TLS_MISMATCH, entry.entry_id),
+        entry_issue_id(ISSUE_PUSH_FAILURE, entry.entry_id),
         *entry_derived_issue_ids(entry.entry_id),
     ):
         ir.async_delete_issue(hass, DOMAIN, issue_id)

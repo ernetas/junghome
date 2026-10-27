@@ -358,6 +358,41 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     return info
 
 
+def url_host(host: str) -> str:
+    """Return ``host`` as the host part of a URL: a bare IPv6 address bracketed.
+
+    A hostname, an IPv4 address, or an address already bracketed (or carrying
+    a port) is used as is.
+    """
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return f"[{host}]"
+    except ValueError:
+        pass
+    return host
+
+
+def gateway_url(host: str, path: str = "", scheme: str = "https") -> str:
+    """Return the URL of ``path`` on the gateway at ``host``.
+
+    Every request the integration makes is built here — the REST calls, the
+    WebSocket upgrade, the certificate probe and the device page's "Visit"
+    link — so an entry stored with an IPv6 address reaches the gateway on
+    every path, not only on the one that bracketed it.
+    """
+    return f"{scheme}://{url_host(host)}/{path}"
+
+
+def entry_issue_id(issue: str, entry_id: str) -> str:
+    """Return the id of a config entry's repair issue ``issue``.
+
+    Every issue the integration raises is scoped to one entry (two gateways
+    each hold their own), with the issue key as the prefix — the prefix
+    ``repairs.py`` dispatches its fix flows on.
+    """
+    return f"{issue}_{entry_id}"
+
+
 def gateway_configuration_url(host: object) -> str | None:
     """Return ``https://<host>/``, the gateway's web page, or None.
 
@@ -374,12 +409,7 @@ def gateway_configuration_url(host: object) -> str | None:
     """
     if not isinstance(host, str) or not (host := host.strip()):
         return None
-    try:
-        if ipaddress.ip_address(host).version == 6:
-            host = f"[{host}]"
-    except ValueError:
-        pass  # a hostname, or an address with a port: used as is
-    url = f"https://{host}/"
+    url = gateway_url(host)
     try:
         valid = bool(URL(url).host)
     except ValueError:

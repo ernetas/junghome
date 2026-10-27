@@ -7,7 +7,7 @@ import random
 import re
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from types import MappingProxyType
@@ -41,12 +41,15 @@ from .const import (
     device_config_entry_ids,
     device_slug,
     duplicate_slugs,
+    entry_issue_id,
     entry_unloading,
     gateway_device_id,
+    gateway_url,
     scene_unique_id,
 )
 from .health import (
     HEALTH_CONDITIONS,
+    HEALTH_LOG_KEPT_ENTRIES,
     HEALTH_STATUS_REFRESH_INTERVAL,
     ISSUE_TIME_SYNC,
     TIME_ERROR_PARAMETER,
@@ -108,6 +111,8 @@ STABLE_SESSION_SECONDS = 30
 # issue, and every controllable entity unavailable throughout. A gateway on the
 # LAN either answers quickly or is not answering.
 WS_CONNECT_TIMEOUT = 30
+# The same bound for one REST request.
+REST_TIMEOUT = 30
 # Bound for a single outbound frame. `send_str` awaits the transport drain and
 # has no timeout of its own, so a peer that stops reading can block the calling
 # service call indefinitely. Short, because this is a LAN write of a few bytes.
@@ -199,6 +204,14 @@ NODE_IDENTITY_REFETCH_INTERVAL = 600
 # asked for again — it would be omitted again; only a missing endpoint or a
 # failed read is retried, and that is one small request).
 DEVICE_PROPERTIES_REFRESH_INTERVAL = 300
+# A tunable-white light whose Kelvin range is still pending
+# (`models.color_temp_range`) is re-read with a doubling back-off, counted in
+# properties refreshes: on the next one, then 2, 4 and 8 refreshes later, and
+# from then on every KELVIN_RANGE_MAX_BACKOFF = 12 (an hour). The gateway
+# binds the range within minutes of a boot for a node that answers, so the
+# first re-reads settle it; one that stays silent (unpowered, out of range)
+# never does, and cost a request every 5 minutes for as long as it stayed so.
+KELVIN_RANGE_MAX_BACKOFF = 12
 
 # The entry's persisted device-slug -> element map behind rename following
 # (`JungHomeDataUpdateCoordinator.follow_renames`): one small document per
@@ -322,7 +335,10 @@ def entry_derived_issue_ids(entry_id: str) -> list[str]:
     entry is not loaded (``async_setup``'s listener; Home Assistant runs
     ``async_unload_entry`` only for a loaded entry).
     """
-    return [*health_issue_ids(entry_id), f"{ISSUE_DUPLICATE_LABELS}_{entry_id}"]
+    return [
+        *health_issue_ids(entry_id),
+        entry_issue_id(ISSUE_DUPLICATE_LABELS, entry_id),
+    ]
 
 
 # Registry lookups scoped to one config entry, on every supported core.
@@ -463,7 +479,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # `_pending_replies` it keeps a set that already timed out locally —
         # its late error frame must not be pinned on a newer set for the same
         # datapoint (`_attribute_set_error`). Cleared when the session ends;
-        # bounded by COMMAND_OUTCOME_WINDOW otherwise.
+        # otherwise a slot goes with its outcome frame, and one whose frame
+        # never matched it expires COMMAND_OUTCOME_WINDOW after its send, when
+        # the next set or error frame looks (`_expire_outstanding_sets`) — so
+        # it holds at most the sets of the last COMMAND_OUTCOME_WINDOW.
         self._outstanding_sets: dict[str, tuple[str, float]] = {}
         self._next_message_id = 0
         # While a REST poll is in flight, every pushed datapoint's merged keys
@@ -563,10 +582,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._properties_listed_for: frozenset[str] | None = None
         self._properties_unsub: CALLBACK_TYPE | None = None
         self._properties_refresh_running = False
+        # Lights re-read for a pending Kelvin range: function id ->
+        # (properties refreshes left to skip, current back-off), see
+        # KELVIN_RANGE_MAX_BACKOFF.
+        self._kelvin_range_backoff: dict[str, tuple[int, int]] = {}
         # The gateway's health log (`GET /healthstatus/`, health.py) as last
         # read — diagnostics, and the source of the health repair issues
-        # (`async_fetch_health_status`). Read once after the first refresh,
-        # then every HEALTH_STATUS_REFRESH_INTERVAL (armed by `start`).
+        # (`async_fetch_health_status`). Read once when `start` runs, in the
+        # background, then every HEALTH_STATUS_REFRESH_INTERVAL.
         self.health = HealthState(config_entry.entry_id)
         # Per-platform (entity-domain -> unique_ids) sets shared with each
         # platform's discovery. They are the add-once duplicate guard; the stale
@@ -592,7 +615,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         self._unavailable_logged = False
         # Repair-issue id, scoped to this entry so two gateways each report
         # their own outage instead of overwriting one shared issue.
-        self._push_failure_issue_id = f"{ISSUE_PUSH_FAILURE}_{config_entry.entry_id}"
+        self._push_failure_issue_id = entry_issue_id(
+            ISSUE_PUSH_FAILURE, config_entry.entry_id
+        )
         # TLS certificate pinning (tls.py). Every request and the WebSocket
         # upgrade pass ``ssl=`` from ``_async_ssl``: the fingerprint stored in
         # the entry, or — for an entry created before pinning existed — one
@@ -607,7 +632,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # and whether it is currently raised, so a poll that succeeds again
         # (a transient impostor, or the real gateway back on its address)
         # clears it without touching the registry on every healthy poll.
-        self._tls_issue_id = f"{ISSUE_TLS_MISMATCH}_{config_entry.entry_id}"
+        self._tls_issue_id = entry_issue_id(ISSUE_TLS_MISMATCH, config_entry.entry_id)
         self._tls_mismatch_reported = False
         super().__init__(
             hass,
@@ -786,7 +811,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         snapshot's. Without this, adopting the snapshot briefly reverted a
         value pushed (or confirmed back to a command) during the fetch, until
         the next push or poll set it right again. The key-by-key update
-        mirrors the live merge in ``_handle_websocket_message`` exactly.
+        mirrors the live merge (``_merge_datapoint``) exactly.
         """
         for device in devices:
             for datapoint in device.get("datapoints", []):
@@ -1254,21 +1279,45 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         )
         ir.async_delete_issue(self.hass, DOMAIN, self._tls_issue_id)
 
-    async def _fetch_devices_from_api(self, host: str, token: str) -> list[Device]:
-        """Fetch devices from the Jung Home API."""
-        # Shared HA session; verify_ssl=False tolerates the gateway's self-signed
-        # cert without building an SSL context on the event loop. The pin
-        # (`ssl=`) is what actually authenticates the peer — see tls.py.
+    async def _api_get(
+        self, host: str, path: str, token: str | None, *, strict: bool = False
+    ) -> Any:
+        """GET ``/api/junghome/<path>`` from the gateway; the decoded JSON body.
+
+        Every REST read goes through here: the shared Home Assistant session
+        (``verify_ssl=False`` tolerates the gateway's self-signed certificate
+        without building an SSL context on the event loop), pinned to the
+        entry's certificate (``ssl=`` is what actually authenticates the peer
+        — tls.py) and bounded by ``REST_TIMEOUT``. ``token`` None sends none
+        (``/version/``, the one unauthenticated read).
+
+        ``strict`` raises ``aiohttp.ClientResponseError`` for an error status:
+        the callers that need the status (the poll turns 401/403 into reauth)
+        or treat any error as a failed read. Otherwise any non-200 returns
+        None, which every best-effort caller reads as "nothing to learn". A
+        body that is not JSON raises ``ValueError`` either way. Bodies are
+        never logged here — the project export carries the mesh keys.
+        """
         session = async_get_clientsession(self.hass, verify_ssl=False)
         ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/functions"
-        headers = {"token": f"{token}", "Content-Type": "application/json"}
-
-        async with asyncio.timeout(30):
-            async with session.get(url, headers=headers, ssl=ssl) as response:
+        url = gateway_url(host, f"api/junghome/{path}")
+        headers = {} if token is None else {"token": token}
+        async with (
+            asyncio.timeout(REST_TIMEOUT),
+            session.get(url, headers=headers, ssl=ssl) as response,
+        ):
+            if strict:
                 response.raise_for_status()
-                data = await response.json()
+            elif response.status != 200:
+                _LOGGER.debug(
+                    "Gateway answered GET %s with HTTP %s", path, response.status
+                )
+                return None
+            return await response.json()
 
+    async def _fetch_devices_from_api(self, host: str, token: str) -> list[Device]:
+        """Fetch devices from the Jung Home API."""
+        data = await self._api_get(host, "functions", token, strict=True)
         # The functions endpoint must return a JSON array of device objects; an
         # error/object response would otherwise degrade into a list of dict keys
         # and crash the platforms downstream.
@@ -1295,14 +1344,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         pass at the end of setup place devices straight away, instead of waiting
         for the WebSocket handshake to deliver the groups a moment later.
         """
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/groups"
-        headers = {"token": f"{token}", "Content-Type": "application/json"}
-        async with asyncio.timeout(30):
-            async with session.get(url, headers=headers, ssl=ssl) as response:
-                response.raise_for_status()
-                data = await response.json()
+        data = await self._api_get(host, "groups", token, strict=True)
         if not isinstance(data, list):
             return []
         return [g for g in data if isinstance(g, dict)]
@@ -1321,17 +1363,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         Returns the decoded object, or ``None`` for any transport failure,
         non-200 or non-object body — callers treat that as "unknown".
         """
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"https://{host}/api/junghome/version/"
         try:
-            ssl = await self._async_ssl()
-            async with (
-                asyncio.timeout(30),
-                session.get(url, ssl=ssl) as response,
-            ):
-                if response.status != 200:
-                    return None
-                data = await response.json()
+            data = await self._api_get(host, "version/", None)
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.debug("Could not read the gateway version: %s", err)
             return None
@@ -1386,14 +1419,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
     async def _fetch_scenes_from_api(self, host: str, token: str) -> list[Scene]:
         """Fetch the gateway's scenes from the REST API."""
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/scenes/"
-        headers = {"token": f"{token}", "Content-Type": "application/json"}
-        async with asyncio.timeout(30):
-            async with session.get(url, headers=headers, ssl=ssl) as response:
-                response.raise_for_status()
-                data = await response.json()
+        data = await self._api_get(host, "scenes/", token, strict=True)
         if not isinstance(data, list):
             return []
         return cast("list[Scene]", [s for s in data if isinstance(s, dict)])
@@ -1459,7 +1485,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # before the platforms register anything.
         self.follow_renames(self.data or [])
         await self.async_fetch_device_properties()
-        await self.async_fetch_health_status()
+        # The health log is read once the WebSocket starts (`start`), off the
+        # setup path: nothing a platform registers depends on it, and a
+        # gateway that stalls the read held setup for its whole timeout.
 
     async def _fetch_project_export_from_api(self, host: str, token: str) -> Any:
         """Read the gateway's project export (``GET /project/junghome``).
@@ -1474,21 +1502,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         response) and never stored; the caller parses the handful of identity
         fields out of it and drops it.
         """
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/project/junghome"
-        headers = {"token": f"{token}"}
-        async with (
-            asyncio.timeout(30),
-            session.get(url, headers=headers, ssl=ssl) as response,
-        ):
-            if response.status != 200:
-                _LOGGER.debug(
-                    "Gateway has no project export to read (HTTP %s)",
-                    response.status,
-                )
-                return None
-            return await response.json()
+        return await self._api_get(host, "project/junghome", token)
 
     async def async_fetch_node_identities(self) -> None:
         """Populate ``node_identities`` from the project export, best-effort.
@@ -1557,38 +1571,15 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         (~190 KB on 49 devices), so read sparingly — see
         DEVICE_PROPERTIES_REFRESH_INTERVAL. Labels are in it; never logged.
         """
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/devices/?verbose=true"
-        headers = {"token": f"{token}"}
-        async with (
-            asyncio.timeout(30),
-            session.get(url, headers=headers, ssl=ssl) as response,
-        ):
-            if response.status != 200:
-                _LOGGER.debug(
-                    "Gateway has no verbose device list (HTTP %s)", response.status
-                )
-                return None
-            data = await response.json()
+        data = await self._api_get(host, "devices/?verbose=true", token)
         return data if isinstance(data, list) else None
 
     async def _fetch_device_verbose_from_api(
         self, host: str, token: str, device_id: str
     ) -> dict[str, Any] | None:
         """Read one device's verbose object (``GET /devices/{id}?verbose=true``)."""
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
         safe_id = quote(device_id, safe="")
-        url = f"https://{host}/api/junghome/devices/{safe_id}?verbose=true"
-        headers = {"token": f"{token}"}
-        async with (
-            asyncio.timeout(30),
-            session.get(url, headers=headers, ssl=ssl) as response,
-        ):
-            if response.status != 200:
-                return None
-            data = await response.json()
+        data = await self._api_get(host, f"devices/{safe_id}?verbose=true", token)
         return data if isinstance(data, dict) else None
 
     async def async_fetch_device_properties(self) -> None:
@@ -1635,7 +1626,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
 
         Those are the energy counters, and a tunable-white light's Kelvin
         range while it is still pending (read before the gateway had bound
-        the node's range — `models.color_temp_range`; stops once known). A
+        the node's range — `models.color_temp_range`; backed off while it
+        stays pending, KELVIN_RANGE_MAX_BACKOFF; stops once known). A
         function that appeared since the last full-list answer (added in the
         app), or no answer yet (firmware without the endpoint, a failed read),
         triggers a full-list read instead; otherwise each such device is
@@ -1663,9 +1655,23 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         updated = dict(known)
         changed = revised = False
+        backoff = self._kelvin_range_backoff
+        for device_id in list(backoff):
+            props = known.get(device_id)
+            if props is None or not props.color_temp_range_pending:
+                del backoff[device_id]  # known now, or no longer listed
         for device_id, props in known.items():
-            if not props.has_energy and not props.color_temp_range_pending:
-                continue
+            if not props.has_energy:
+                if not props.color_temp_range_pending:
+                    continue
+                # A light read for its range alone backs off (an energy
+                # device is re-read every interval regardless).
+                skip, step = backoff.get(device_id, (0, 1))
+                if skip:
+                    backoff[device_id] = (skip - 1, step)
+                    continue
+                step = min(2 * step, KELVIN_RANGE_MAX_BACKOFF)
+                backoff[device_id] = (step - 1, step)
             try:
                 document = await self._fetch_device_verbose_from_api(
                     self.config["host"], self.config["token"], device_id
@@ -1691,37 +1697,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         role — health.py); a token it rejects answers 401, which the REST poll
         turns into reauth on its own, so here it is only "not readable".
         """
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
-        url = f"https://{host}/api/junghome/healthstatus/"
-        headers = {"token": f"{token}"}
-        async with (
-            asyncio.timeout(30),
-            session.get(url, headers=headers, ssl=ssl) as response,
-        ):
-            if response.status != 200:
-                _LOGGER.debug(
-                    "Gateway health status not readable (HTTP %s)", response.status
-                )
-                return None
-            return await response.json()
+        return await self._api_get(host, "healthstatus/", token)
 
     async def _fetch_config_parameter_from_api(
         self, host: str, token: str, parameter: str
     ) -> Any:
         """Read one ``GET /config/parameter/{parameter}`` value; None for a non-200."""
-        session = async_get_clientsession(self.hass, verify_ssl=False)
-        ssl = await self._async_ssl()
         safe = quote(parameter, safe="")
-        url = f"https://{host}/api/junghome/config/parameter/{safe}"
-        headers = {"token": f"{token}"}
-        async with (
-            asyncio.timeout(30),
-            session.get(url, headers=headers, ssl=ssl) as response,
-        ):
-            if response.status != 200:
-                return None
-            return await response.json()
+        return await self._api_get(host, f"config/parameter/{safe}", token)
 
     async def async_fetch_health_status(self) -> None:
         """Read the gateway's health log and raise or withdraw its repair issues.
@@ -1761,7 +1744,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 del active[ISSUE_TIME_SYNC]
         if self._closing:
             return  # unloaded while the read was in flight: it writes nothing
-        self.health.entries = entries
+        self.health.entries = entries[:HEALTH_LOG_KEPT_ENTRIES]
+        self.health.total_entries = len(entries)
         self.health.conditions = frozenset(active)
         self.health.time_synced = time_synced
         self._apply_health_issues(active)
@@ -1802,8 +1786,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 translation_placeholders={"host": str(self.config["host"])},
             )
 
-    async def _async_refresh_health_status(self, _now: datetime) -> None:
-        """Periodic health-log re-read; runs are not stacked."""
+    async def _async_refresh_health_status(self, _now: datetime | None = None) -> None:
+        """Read the health log, at setup and periodically; runs are not stacked."""
         if self.health.refresh_running:
             return
         self.health.refresh_running = True
@@ -2110,6 +2094,29 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 return name
         return None
 
+    @callback
+    def async_add_discovery_listener(self, discover: Callable[[], None]) -> None:
+        """Run a platform's discovery now and on every dispatch until unload.
+
+        Discovery is add-only: ``discover`` adds the entities for whatever in
+        the current data has none yet. It is skipped while the entry unloads
+        (``entry_unloading``): a reload started inside a device-list adoption
+        has reset the platforms by the time that adoption's listener pass
+        reaches it, so adding then made an orphan bound to the dead
+        coordinator.
+        """
+        entry = self.config_entry
+        if entry is None:  # pragma: no cover - an entry coordinator always has one
+            return
+
+        @callback
+        def _discover() -> None:
+            if not entry_unloading(entry):
+                discover()
+
+        _discover()
+        entry.async_on_unload(self.async_add_listener(_discover))
+
     def known_unique_ids(self, domain: str) -> set[str]:
         """Return the shared discovery ``known`` set for an entity domain.
 
@@ -2143,14 +2150,14 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         # scene_id comes from untrusted gateway JSON; percent-encode it so a
         # crafted id can't break out of the path segment (e.g. via ?/#//).
         safe_scene_id = quote(str(scene_id), safe="")
-        url = f"https://{self.config['host']}/api/junghome/scenes/{safe_scene_id}"
+        url = gateway_url(self.config["host"], f"api/junghome/scenes/{safe_scene_id}")
         headers = {
             "token": f"{self.config['token']}",
             "Content-Type": "application/json",
         }
         try:
             ssl = await self._async_ssl()
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(REST_TIMEOUT):
                 async with session.post(url, headers=headers, ssl=ssl) as response:
                     response.raise_for_status()
         except aiohttp.ClientResponseError as err:
@@ -2321,27 +2328,38 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     )
                 )
 
-    def _resolve_pending_reply(self, message_id: str, reply_data: Any) -> None:
-        """Resolve the future a command is awaiting, if `message_id` matches one.
+    def _expire_outstanding_sets(self) -> None:
+        """Forget the sets sent more than ``COMMAND_OUTCOME_WINDOW`` ago."""
+        now = time.monotonic()
+        for message_id, (_, deadline) in list(self._outstanding_sets.items()):
+            if deadline <= now:
+                del self._outstanding_sets[message_id]
 
-        A no-op if nothing is pending under this id (already timed out, or an
-        id we never sent) or the future was somehow already resolved — a
-        malformed/duplicate frame must never raise
+    def _resolve_pending_reply(self, message_id: str, reply_data: Any) -> None:
+        """Settle the set ``message_id`` as confirmed: its outcome frame arrived.
+
+        Retires its outstanding slot and resolves the future its command is
+        awaiting. A no-op for the future if nothing is pending under this id
+        (already timed out, or an id we never sent) or it was somehow already
+        resolved — a malformed/duplicate frame must never raise
         ``asyncio.InvalidStateError`` out of the frame handler.
         """
+        self._outstanding_sets.pop(message_id, None)
         future = self._pending_replies.get(message_id)
         if future is not None and not future.done():
             future.set_result(reply_data if isinstance(reply_data, dict) else {})
 
     def _reject_pending_reply(self, message_id: str, reason: str) -> None:
-        """Fail the command awaiting `message_id`: the gateway rejected it.
+        """Settle the set ``message_id`` as rejected by the gateway.
 
-        Same no-op rules as ``_resolve_pending_reply``. ``reason`` is the
-        gateway's own text from the ``error:`` frame; it is the only place the
-        gateway ever says *why*, so it is carried into the
+        Retires its outstanding slot, like ``_resolve_pending_reply``, and
+        fails the command awaiting it, under the same no-op rules. ``reason``
+        is the gateway's own text from the ``error:`` frame; it is the only
+        place the gateway ever says *why*, so it is carried into the
         ``command_rejected`` error the calling service raises (the caller's
         WARNING keeps it in the log as well).
         """
+        self._outstanding_sets.pop(message_id, None)
         future = self._pending_replies.get(message_id)
         if future is not None and not future.done():
             future.set_exception(
@@ -2387,24 +2405,18 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             return
         datapoint_id = match["datapoint_id"]
         detail = match["detail"].removeprefix(_SET_ERROR_DETAIL_PREFIX).strip()
-        now = time.monotonic()
-        for message_id, (_, deadline) in list(self._outstanding_sets.items()):
-            if deadline <= now:
-                del self._outstanding_sets[message_id]
+        self._expire_outstanding_sets()
         candidates = [
             message_id
             for message_id, (dp_id, _) in self._outstanding_sets.items()
             if dp_id == datapoint_id
         ]
         if len(candidates) == 1:
-            del self._outstanding_sets[candidates[0]]
             self._reject_pending_reply(
                 candidates[0], detail or text.removeprefix("error:").strip()
             )
         elif len(candidates) > 1 and detail == _SET_SUPERSEDED_DETAIL:
-            superseded = candidates[-2]
-            del self._outstanding_sets[superseded]
-            self._resolve_pending_reply(superseded, {})
+            self._resolve_pending_reply(candidates[-2], {})
 
     def _dispatch_text_frame(self, raw: str) -> None:
         """Parse one TEXT frame and route it to the right handler.
@@ -2468,7 +2480,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                     # translated message already says) instead of sitting
                     # out COMMAND_REPLY_TIMEOUT.
                     if message_id is not None:
-                        self._outstanding_sets.pop(message_id, None)
                         reason = text.removeprefix("error:").strip() or text
                         self._reject_pending_reply(message_id, reason)
                     else:
@@ -2483,7 +2494,6 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 # to the normal dispatch below, which merges `data.get("data")`
                 # into `self.data` exactly like a push would — the confirmed
                 # value replaces the optimistic one HA already wrote.
-                self._outstanding_sets.pop(message_id, None)
                 self._resolve_pending_reply(message_id, data.get("data"))
             self._handle_websocket_message(data)
         except Exception as e:
@@ -2493,7 +2503,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
     async def _run_websocket(self) -> None:
         """Open one WebSocket session and pump messages until it closes."""
         session = async_get_clientsession(self.hass, verify_ssl=False)
-        url = f"wss://{self.config['host']}/ws"
+        url = gateway_url(self.config["host"], "ws", scheme="wss")
         headers = {"token": f"{self.config['token']}"}
         # Only the handshake is bounded — wrapping the `async with` below would
         # tear down a perfectly healthy session after WS_CONNECT_TIMEOUT. Once
@@ -2694,39 +2704,10 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
                 "Received WebSocket message without datapoint_id: %s", message
             )
             return
-        if self._poll_push_overlay is not None:
-            # A REST poll is in flight; record this push so the poll's
-            # (older) snapshot cannot revert it. Recorded before the match
-            # loop below on purpose: an unmatched push usually belongs to a
-            # device the in-flight poll is about to discover, and its
-            # snapshot values may predate this push just the same.
-            overlay = self._poll_push_overlay.setdefault(datapoint_id, {})
-            for key, value in data.items():
-                if key != "id":
-                    overlay[key] = value
-        updated = False
-        pushed_device_id: str | None = None
-        for device in self.data or []:
-            for datapoint in device.get("datapoints", []):
-                if datapoint.get("id") == datapoint_id:
-                    # Merge the pushed keys into the stored datapoint. The push
-                    # carries arbitrary keys (typically `values`), so mutate via
-                    # a dict view rather than the TypedDict.
-                    dp_dict = cast("dict[str, Any]", datapoint)
-                    for key, value in data.items():
-                        if key != "id":
-                            dp_dict[key] = value
-                    _LOGGER.debug(
-                        "Updated datapoint for device %s: %s",
-                        device.get("id"),
-                        datapoint,
-                    )
-                    pushed_device_id = device.get("id")
-                    updated = True
-                    break
-            if updated:
-                break
-        if updated:
+        device = self._merge_datapoint(datapoint_id, data)
+        if device is not None:
+            pushed_device_id = device.get("id")
+            _LOGGER.debug("Updated datapoint for device %s: %s", pushed_device_id, data)
             self._datapoint_push_counts[datapoint_id] = (
                 self._datapoint_push_counts.get(datapoint_id, 0) + 1
             )
@@ -2947,6 +2928,9 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             self._async_refresh_device_properties,
             timedelta(seconds=DEVICE_PROPERTIES_REFRESH_INTERVAL),
         )
+        self.health.task = entry.async_create_background_task(
+            self.hass, self._async_refresh_health_status(), name="junghome_health"
+        )
         self.health.unsub = async_track_time_interval(
             self.hass,
             self._async_refresh_health_status,
@@ -2982,11 +2966,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if self.health.unsub is not None:
             self.health.unsub()
             self.health.unsub = None
-        if (task := self._node_identity_task) is not None and not task.done():
-            # Entry unload cancels its background tasks itself; a full HA
-            # shutdown reaches here without an unload, so cancel explicitly.
-            task.cancel()
+        for task in (self._node_identity_task, self.health.task):
+            if task is not None and not task.done():
+                # Entry unload cancels its background tasks itself; a full HA
+                # shutdown reaches here without an unload, so cancel explicitly.
+                task.cancel()
         self._node_identity_task = None
+        self.health.task = None
         # The REST poll and the debounced refresh. The entry's on-unload
         # callbacks do this too, but Home Assistant skips them when the unload
         # fails (FAILED_UNLOAD), which left the poll running on a stopped
@@ -3059,6 +3045,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         }
         future: asyncio.Future[dict[str, Any]] = self.hass.loop.create_future()
         self._pending_replies[message_id] = future
+        self._expire_outstanding_sets()
         if self.websocket is not None and not self.websocket.closed:
             # Same test `send_websocket_message` makes, with no await between:
             # without a socket nothing leaves, so no outcome frame will come.
@@ -3116,23 +3103,42 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         """
         return self._datapoint_push_counts.get(datapoint_id, 0)
 
+    def _merge_datapoint(
+        self, datapoint_id: str, data: Mapping[str, Any]
+    ) -> Device | None:
+        """Merge ``data`` into the stored datapoint; return the device holding it.
+
+        The one write path into a stored datapoint: a push and a value a
+        confirmed command implies (``adopt_implied_value``). Key by key —
+        never a replacement, so a partial frame cannot blank sibling keys —
+        and never the ``id``, which names the datapoint rather than its state.
+        Recorded in the overlay of a poll in flight as well (its snapshot may
+        predate the write; ``_apply_push_overlay``), and recorded before the
+        match on purpose: an unmatched push usually belongs to a device the
+        in-flight poll is about to discover, whose snapshot values may predate
+        it just the same. None when no stored datapoint has the id.
+        """
+        fields = {key: value for key, value in data.items() if key != "id"}
+        if self._poll_push_overlay is not None:
+            self._poll_push_overlay.setdefault(datapoint_id, {}).update(fields)
+        for device in self.data or []:
+            for datapoint in device.get("datapoints", []):
+                if datapoint.get("id") == datapoint_id:
+                    # The keys are arbitrary (typically `values`), so mutate
+                    # through a dict view rather than the TypedDict.
+                    cast("dict[str, Any]", datapoint).update(fields)
+                    return device
+        return None
+
     def adopt_implied_value(self, datapoint_id: str, data: dict[str, Any]) -> None:
         """Store a datapoint value that a confirmed command implies.
 
         For a value the gateway does not echo: a Brightness Set turns a dimmer
-        on, but its reply carries only the brightness datapoint. Merged into
-        the stored datapoint key by key, exactly like a push, and into the
-        overlay of a poll in flight (whose snapshot may predate the command),
-        but without a listener dispatch or a push count: the caller writes
-        its own state, and nothing was pushed.
+        on, but its reply carries only the brightness datapoint. Merged like a
+        push (``_merge_datapoint``), but without a listener dispatch or a push
+        count: the caller writes its own state, and nothing was pushed.
         """
-        if self._poll_push_overlay is not None:
-            self._poll_push_overlay.setdefault(datapoint_id, {}).update(data)
-        for device in self.data or []:
-            for datapoint in device.get("datapoints", []):
-                if datapoint.get("id") == datapoint_id:
-                    cast("dict[str, Any]", datapoint).update(data)
-                    return
+        self._merge_datapoint(datapoint_id, data)
 
     async def turn_on_light(self, datapoint_id: str) -> None:
         """Turn on the light."""

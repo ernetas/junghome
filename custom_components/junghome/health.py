@@ -34,6 +34,7 @@ they work (CLAUDE.md, settled decision on reachability).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -41,12 +42,22 @@ from typing import Any
 
 from homeassistant.helpers import issue_registry as ir
 
+from .const import entry_issue_id
+
 # How often, in seconds, the health log is re-read after the setup-time read:
 # four times an hour. The log only matters for conditions that persist (a dead
 # Bluetooth chip, a gateway out of sequence numbers, a day without a time
 # sync, a lost project), none of which a faster poll would surface usefully
 # sooner; it is small (a few dozen entries after a normal boot).
 HEALTH_STATUS_REFRESH_INTERVAL = 900
+
+# How many of the log's newest entries are kept after a read, for diagnostics.
+# The conditions are derived from the whole log first — a dead Bluetooth chip
+# may sit far down it — but nothing prunes the log until the gateway restarts,
+# and a gateway that cannot reach its time server, or runs under sustained
+# CPU load, adds entries around the clock: kept whole, months of them went
+# into every diagnostics download.
+HEALTH_LOG_KEPT_ENTRIES = 200
 
 # The config parameter that says whether the gateway's clock is currently
 # unsynchronised (``GET /config/parameter/time_error`` returns a raw JSON
@@ -168,27 +179,32 @@ class HealthState:
     """The coordinator's view of one gateway's health log."""
 
     entry_id: str
-    # The log as last read, newest first; None until a read has succeeded.
+    # The log as last read, newest first — its HEALTH_LOG_KEPT_ENTRIES newest
+    # entries; None until a read has succeeded.
     entries: tuple[HealthEntry, ...] | None = None
+    # How many entries that read carried in all.
+    total_entries: int = 0
     # The condition keys that read raised as repair issues.
     conditions: frozenset[str] = frozenset()
     # Whether the gateway last reported its clock synchronised (``time_error``
     # false) while the log showed the time-sync condition; None when unknown
     # or the condition is not logged. An unreadable flag falls back to it.
     time_synced: bool | None = None
-    # The periodic re-read's timer, and whether a read is running (reads are
-    # not stacked).
+    # The setup-time read (a background task, off the setup path), the
+    # periodic re-read's timer, and whether a read is running (reads are not
+    # stacked).
+    task: asyncio.Task[None] | None = None
     unsub: Callable[[], None] | None = None
     refresh_running: bool = False
 
     def issue_id(self, key: str) -> str:
         """Return the entry-scoped repair-issue id of a condition."""
-        return f"{key}_{self.entry_id}"
+        return entry_issue_id(key, self.entry_id)
 
 
 def health_issue_ids(entry_id: str) -> list[str]:
     """Every health repair-issue id an entry can hold."""
-    return [f"{condition.key}_{entry_id}" for condition in HEALTH_CONDITIONS]
+    return [entry_issue_id(condition.key, entry_id) for condition in HEALTH_CONDITIONS]
 
 
 def _text(raw: object) -> str:
@@ -239,11 +255,13 @@ def active_health_conditions(
     """
     active: dict[str, HealthCondition] = {}
     for condition in HEALTH_CONDITIONS:
+        cleared_by = {d.rstrip() for d in condition.cleared_by}
+        raised_by = {d.rstrip() for d in condition.raised_by}
         for entry in entries:  # newest first
             description = entry.description.rstrip()
-            if description in {d.rstrip() for d in condition.cleared_by}:
+            if description in cleared_by:
                 break
-            if description in {d.rstrip() for d in condition.raised_by}:
+            if description in raised_by:
                 active[condition.key] = condition
                 break
     return active
