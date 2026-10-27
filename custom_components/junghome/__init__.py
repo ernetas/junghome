@@ -128,9 +128,12 @@ def _sync_label_collision_issue(
 ) -> None:
     """Raise, update or withdraw the entry's colliding-labels repair issue.
 
-    Two labels that slug identically share one device identity and the second
-    device gets no entities (`duplicate_slugs`) — invisible in the UI apart
-    from a log line, so it is a repair issue too. One issue per entry lists
+    Two labels that slug identically (identical, or differing only in case,
+    accents, spaces or punctuation) share one device identity
+    (`duplicate_slugs`): their functions show as one merged device, and an
+    entity of the second whose unique_id the first already holds (same
+    platform, same datapoint suffix) is not created — invisible in the UI
+    apart from a log line, so it is a repair issue too. One issue per entry lists
     every group; it goes away once ``LABEL_COLLISION_CLEAR_ADOPTIONS``
     adoptions in a row carried no collision. Home Assistant keeps an issue's
     dismissal when it is re-created with new placeholders, so once ignored,
@@ -286,7 +289,8 @@ def _register_capability_reload(
                 warned_collisions.add(slug)
                 _LOGGER.warning(
                     "Jung Home: %s devices share the label(s) %s, which resolve to "
-                    "the same identity (%s). Only one of them gets entities. Give "
+                    "the same identity (%s). They share one device, and an "
+                    "entity they would both create exists only once. Give "
                     "them distinct labels in the JUNG HOME app",
                     len(labels),
                     ", ".join(sorted(labels)),
@@ -859,8 +863,9 @@ def _migrate_device_identifiers(
             # HomeAssistantError, which lands in the handler below as `had_error` —
             # leaving the one-shot flag unset, so the migration re-ran and
             # re-logged a full traceback on every single setup, forever. Skip the
-            # loser instead: the same "second device loses" outcome `device_slug`
-            # documents, but reported once and without blocking the migration.
+            # loser instead: the same "second device loses the clash" outcome
+            # `duplicate_slugs` documents, but reported once and without
+            # blocking the migration.
             # (Scoped to this entry: identifiers are unique per entry from HA
             # 2026.9, and the registry-wide lookup is deprecated there.)
             clash = next(

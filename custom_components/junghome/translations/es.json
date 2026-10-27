@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Dispositivos Jung Home con nombres en conflicto",
-      "description": "Algunos dispositivos de la pasarela Jung Home en {host} tienen nombres que Home Assistant no puede distinguir, porque solo se diferencian en mayúsculas, espacios o signos de puntuación:\n\n{labels}\n\nSolo un dispositivo de cada grupo obtiene entidades en Home Assistant. Cambia el nombre de los demás en la aplicación Jung Home. Este problema desaparece por sí solo cuando los nombres sean distintos."
+      "description": "Algunos dispositivos de la pasarela Jung Home en {host} tienen nombres que Home Assistant considera iguales, porque son idénticos o solo se diferencian en mayúsculas, acentos, espacios o signos de puntuación:\n\n{labels}\n\nHome Assistant muestra cada grupo como un único dispositivo. Cuando dos dispositivos de un grupo crearían la misma entidad, solo uno de ellos la obtiene, por lo que faltan algunas entidades. Cambia el nombre de los dispositivos en la aplicación Jung Home para que cada nombre sea distinto. Este problema desaparece por sí solo cuando los nombres sean distintos."
     },
     "gateway_bluetooth_failure": {
       "title": "Fallo de Bluetooth en la pasarela Jung Home",

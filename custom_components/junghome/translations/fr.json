@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Appareils Jung Home aux noms en conflit",
-      "description": "Certains appareils de la passerelle Jung Home à l'adresse {host} portent des noms que Home Assistant ne peut pas distinguer, car ils ne diffèrent que par la casse, les espaces ou la ponctuation :\n\n{labels}\n\nUn seul appareil de chaque groupe obtient des entités dans Home Assistant. Renommez les autres dans l'application Jung Home. Ce problème disparaît de lui-même dès que les noms sont distincts."
+      "description": "Certains appareils de la passerelle Jung Home à l'adresse {host} portent des noms que Home Assistant considère comme identiques, car ils sont identiques ou ne diffèrent que par la casse, les accents, les espaces ou la ponctuation :\n\n{labels}\n\nHome Assistant affiche chaque groupe comme un seul appareil. Lorsque deux appareils d'un groupe créeraient la même entité, un seul d'entre eux l'obtient, si bien que certaines entités manquent. Renommez les appareils dans l'application Jung Home pour que chaque nom soit unique. Ce problème disparaît de lui-même dès que les noms sont distincts."
     },
     "gateway_bluetooth_failure": {
       "title": "Panne Bluetooth de la passerelle Jung Home",

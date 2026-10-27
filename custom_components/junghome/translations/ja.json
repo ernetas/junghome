@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "名前が競合している Jung Home デバイス",
-      "description": "{host} の Jung Home ゲートウェイ上の一部のデバイスは、大文字と小文字、空白、または句読点だけが異なる名前のため、Home Assistant で区別できません:\n\n{labels}\n\n各グループのうち 1 台のデバイスだけが Home Assistant でエンティティを持ちます。Jung Home アプリで残りのデバイスの名前を変更してください。名前が区別できるようになると、この問題は自動的に解消されます。"
+      "description": "{host} の Jung Home ゲートウェイ上の一部のデバイスは、名前が同一であるか、大文字と小文字、アクセント記号、空白、または句読点だけが異なるため、Home Assistant では同じ名前として扱われます:\n\n{labels}\n\nHome Assistant は各グループを 1 台のデバイスとして表示します。グループ内の 2 台のデバイスが同じエンティティを作成する場合は、そのうち 1 台だけがそれを持つため、一部のエンティティが欠けています。すべての名前が区別できるよう、Jung Home アプリでデバイスの名前を変更してください。名前が区別できるようになると、この問題は自動的に解消されます。"
     },
     "gateway_bluetooth_failure": {
       "title": "Jung Home ゲートウェイの Bluetooth 障害",

@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Dispositivi Jung Home con nomi in conflitto",
-      "description": "Alcuni dispositivi del gateway Jung Home su {host} hanno nomi che Home Assistant non riesce a distinguere, perché differiscono solo per maiuscole/minuscole, spazi o punteggiatura:\n\n{labels}\n\nSolo un dispositivo per ogni gruppo ottiene entità in Home Assistant. Rinomina gli altri nell'app Jung Home. Questo problema scompare da solo non appena i nomi sono diversi."
+      "description": "Alcuni dispositivi del gateway Jung Home su {host} hanno nomi che Home Assistant considera uguali, perché sono identici o differiscono solo per maiuscole/minuscole, accenti, spazi o punteggiatura:\n\n{labels}\n\nHome Assistant mostra ogni gruppo come un unico dispositivo. Dove due dispositivi di un gruppo creerebbero la stessa entità, solo uno di essi la ottiene, quindi alcune entità mancano. Rinomina i dispositivi nell'app Jung Home in modo che ogni nome sia univoco. Questo problema scompare da solo non appena i nomi sono diversi."
     },
     "gateway_bluetooth_failure": {
       "title": "Guasto Bluetooth del gateway Jung Home",

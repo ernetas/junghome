@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Ütköző nevű Jung Home eszközök",
-      "description": "A(z) {host} címen lévő Jung Home átjáró egyes eszközeinek olyan neve van, amelyeket a Home Assistant nem tud megkülönböztetni, mert csak kis- és nagybetűkben, szóközökben vagy írásjelekben térnek el:\n\n{labels}\n\nMinden csoportból csak egy eszköz kap entitásokat a Home Assistantban. Nevezd át a többit a Jung Home alkalmazásban. Ez a probléma magától megszűnik, amint a nevek eltérőek lesznek."
+      "description": "A(z) {host} címen lévő Jung Home átjáró egyes eszközeinek olyan neve van, amelyeket a Home Assistant azonosnak tekint, mert megegyeznek, vagy csak kis- és nagybetűkben, ékezetekben, szóközökben vagy írásjelekben térnek el:\n\n{labels}\n\nA Home Assistant minden csoportot egyetlen eszközként jelenít meg. Ahol egy csoport két eszköze ugyanazt az entitást hozná létre, csak az egyikük kapja meg, így egyes entitások hiányoznak. Nevezd át az eszközöket a Jung Home alkalmazásban úgy, hogy minden név egyedi legyen. Ez a probléma magától megszűnik, amint a nevek eltérőek lesznek."
     },
     "gateway_bluetooth_failure": {
       "title": "A Jung Home átjáró Bluetooth-hibája",

@@ -496,8 +496,10 @@ instead of re-deriving:
   anchor — either re-keys the hub device and every scene entity.
 - **Slugs can collide — never key per-device state by slug without guarding.**
   Two labels that slug identically (`"Lamp 1"`/`"Lamp-1"`) share one
-  `device_slug`; identity survives (the second device loses), but a *map keyed
-  by slug* does not — the second overwrites the first each pass and looks like
+  `device_slug`; identity survives (the functions share one registry device,
+  and the second loses every entity whose unique_id the first holds — same
+  platform and datapoint suffix; its others register on that device), but a
+  *map keyed by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
   changes). Guard every such map with `duplicate_slugs()`; its current

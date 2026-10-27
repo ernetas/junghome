@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "이름이 충돌하는 Jung Home 기기",
-      "description": "{host}의 Jung Home 게이트웨이에 있는 일부 기기는 대소문자, 공백 또는 문장 부호만 다른 이름을 가지고 있어 Home Assistant가 구분할 수 없습니다:\n\n{labels}\n\n각 그룹에서 기기 하나만 Home Assistant에서 엔터티를 갖습니다. Jung Home 앱에서 나머지 기기의 이름을 바꾸세요. 이름이 서로 달라지면 이 문제는 자동으로 사라집니다."
+      "description": "{host}의 Jung Home 게이트웨이에 있는 일부 기기는 이름이 같거나 대소문자, 악센트, 공백 또는 문장 부호만 달라서 Home Assistant가 같은 이름으로 취급합니다:\n\n{labels}\n\nHome Assistant는 각 그룹을 하나의 기기로 표시합니다. 그룹의 두 기기가 같은 엔터티를 만들게 되는 경우 그중 하나만 엔터티를 가지므로 일부 엔터티가 없습니다. 모든 이름이 서로 다르도록 Jung Home 앱에서 기기 이름을 바꾸세요. 이름이 서로 달라지면 이 문제는 자동으로 사라집니다."
     },
     "gateway_bluetooth_failure": {
       "title": "Jung Home 게이트웨이 Bluetooth 오류",

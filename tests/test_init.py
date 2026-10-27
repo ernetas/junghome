@@ -2390,6 +2390,62 @@ async def test_colliding_labels_raise_a_repair_issue_until_renamed(
         await hass.async_block_till_done()
 
 
+async def test_colliding_functions_share_one_device_and_lose_only_clashing_entities(
+    hass: HomeAssistant,
+) -> None:
+    """What the colliding-labels issue tells the user, pinned (issue #241).
+
+    Labels collide when they are identical or differ only in case, accents,
+    spaces or punctuation. The colliding functions do not lose all their
+    entities: every entity whose unique_id is free registers, all on the one
+    device the shared slug names, and only an entity that would repeat
+    another's unique_id (same platform, same datapoint suffix) is missing.
+    """
+    assert duplicate_slugs(
+        [{"id": "a", "label": "Küche"}, {"id": "b", "label": "Kuche"}]  # type: ignore[list-item]
+    ) == {"kuche": ["Küche", "Kuche"]}
+    entry = _collision_entry(hass)
+    devices = copy.deepcopy(DEVICES)
+    by_id = {d["id"]: d for d in devices}
+    by_id["idlight1"]["label"] = "Kitchen"  # OnOff: light ..._001
+    by_id["iddim1"]["label"] = "kitchen"  # DimmerLight: light ..._001 again
+    by_id["idrock1"]["label"] = "Kitchen!"  # RockerSwitch: events + LED switch
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=devices),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        issue = ir.async_get(hass).async_get_issue(
+            DOMAIN, f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+        )
+        assert issue is not None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Kitchen", "Kitchen!", "kitchen"'
+        )
+        device = find_device(hass, "kitchen")
+        assert device is not None
+        ent_reg = er.async_get(hass)
+        on_device = sorted(
+            (e.domain, e.unique_id)
+            for e in er.async_entries_for_device(ent_reg, device.id)
+        )
+        assert on_device == [
+            ("event", "kitchen_00c_event"),
+            ("event", "kitchen_00d_event"),
+            ("light", "kitchen_001"),
+            ("switch", "kitchen_00e_switch"),
+        ]
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_a_new_collision_un_ignores_the_collision_issue(
     hass: HomeAssistant,
 ) -> None:

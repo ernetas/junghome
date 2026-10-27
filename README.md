@@ -421,9 +421,11 @@ handshake presents it).
   device is re-provisioned or re-enumerated, and the device list carries no
   hardware identifier — so the device *label* is the identity anchor the
   integration uses (renames are followed, see [How updates
-  work](#how-updates-work)). Devices whose labels are identical — or that slug
-  identically, e.g. `Lamp 1` and `Lamp-1` — map to the same id and only the
-  first one gets entities. Give each device a distinct label in the Jung Home
+  work](#how-updates-work)). Devices whose labels are identical — or differ
+  only in case, accents, spaces or punctuation, e.g. `Lamp 1` and `Lamp-1` —
+  map to the same id: Home Assistant shows them as one device, and an entity
+  they would both create (two lights, say) exists only once. A repair issue
+  lists every such group. Give each device a distinct label in the Jung Home
   app. With more than one gateway, keep labels distinct across gateways too:
   two gateways' devices with the same label collide the same way.
 

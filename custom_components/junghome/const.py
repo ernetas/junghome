@@ -563,8 +563,12 @@ def duplicate_slugs(devices: list[Device]) -> dict[str, list[str]]:
     ``device_slug`` deliberately does not disambiguate two devices whose labels
     slug identically (see its docstring: per-poll disambiguation would make
     unique_ids depend on poll order, and the hardware identity is only known
-    after a successful export read). The second such device simply loses — its
-    entities can't register.
+    after a successful export read). Labels collide when they are identical or
+    differ only in case, accents (``slugify`` transliterates), spaces or
+    punctuation. The colliding functions share one registry device, and the
+    second one loses each clash: an entity whose unique_id (slug + datapoint
+    suffix) the first already holds does not register; the rest do, all on
+    that one device.
 
     That is survivable for identity, but **any caller keeping per-device state
     keyed by slug must skip a colliding slug**, because two devices would

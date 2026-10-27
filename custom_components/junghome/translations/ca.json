@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Dispositius Jung Home amb noms en conflicte",
-      "description": "Alguns dispositius de la passarel·la Jung Home a {host} tenen noms que Home Assistant no pot distingir, perquè només es diferencien en majúscules, espais o puntuació:\n\n{labels}\n\nNomés un dispositiu de cada grup obté entitats a Home Assistant. Canvia el nom dels altres a l'aplicació Jung Home. Aquest problema desapareix automàticament quan els noms siguin diferents."
+      "description": "Alguns dispositius de la passarel·la Jung Home a {host} tenen noms que Home Assistant considera iguals, perquè són idèntics o només es diferencien en majúscules, accents, espais o puntuació:\n\n{labels}\n\nHome Assistant mostra cada grup com un sol dispositiu. Quan dos dispositius d'un grup crearien la mateixa entitat, només un d'ells l'obté, de manera que falten algunes entitats. Canvia el nom dels dispositius a l'aplicació Jung Home perquè cada nom sigui diferent. Aquest problema desapareix automàticament quan els noms siguin diferents."
     },
     "gateway_bluetooth_failure": {
       "title": "Error de Bluetooth a la passarel·la Jung Home",

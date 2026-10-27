@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Jung Home -laitteilla on ristiriitaiset nimet",
-      "description": "Joillakin Jung Home -yhdyskäytävän ({host}) laitteilla on nimet, joita Home Assistant ei pysty erottamaan toisistaan, koska ne eroavat vain kirjainkoon, välilyöntien tai välimerkkien osalta:\n\n{labels}\n\nVain yksi laite kustakin ryhmästä saa entiteetit Home Assistantissa. Nimeä muut uudelleen Jung Home -sovelluksessa. Tämä ongelma poistuu itsestään, kun nimet ovat erilaiset."
+      "description": "Joillakin Jung Home -yhdyskäytävän ({host}) laitteilla on nimet, joita Home Assistant pitää samoina, koska ne ovat identtiset tai eroavat vain kirjainkoon, aksenttien, välilyöntien tai välimerkkien osalta:\n\n{labels}\n\nHome Assistant näyttää kunkin ryhmän yhtenä laitteena. Jos kaksi ryhmän laitetta loisi saman entiteetin, vain toinen niistä saa sen, joten joitakin entiteettejä puuttuu. Nimeä laitteet uudelleen Jung Home -sovelluksessa niin, että jokainen nimi on yksilöllinen. Tämä ongelma poistuu itsestään, kun nimet ovat erilaiset."
     },
     "gateway_bluetooth_failure": {
       "title": "Jung Home -yhdyskäytävän Bluetooth-vika",

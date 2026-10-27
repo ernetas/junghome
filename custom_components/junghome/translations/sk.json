@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Zariadenia Jung Home s kolidujúcimi názvami",
-      "description": "Niektoré zariadenia na bráne Jung Home na adrese {host} majú názvy, ktoré Home Assistant nedokáže rozlíšiť, pretože sa líšia len veľkosťou písmen, medzerami alebo interpunkciou:\n\n{labels}\n\nV Home Assistante dostane entity len jedno zariadenie z každej skupiny. Premenujte ostatné v aplikácii Jung Home. Tento problém zmizne sám, hneď ako budú názvy odlišné."
+      "description": "Niektoré zariadenia na bráne Jung Home na adrese {host} majú názvy, ktoré Home Assistant považuje za rovnaké, pretože sú totožné alebo sa líšia len veľkosťou písmen, diakritikou, medzerami alebo interpunkciou:\n\n{labels}\n\nHome Assistant zobrazuje každú skupinu ako jediné zariadenie. Kde by dve zariadenia zo skupiny vytvorili rovnakú entitu, dostane ju len jedno z nich, takže niektoré entity chýbajú. Premenujte zariadenia v aplikácii Jung Home tak, aby bol každý názov jedinečný. Tento problém zmizne sám, hneď ako budú názvy odlišné."
     },
     "gateway_bluetooth_failure": {
       "title": "Porucha Bluetooth brány Jung Home",

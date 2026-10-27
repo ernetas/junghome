@@ -171,7 +171,8 @@ ISSUE_PUSH_FAILURE = "websocket_push_failure"
 # confirmed the gateway was reset or replaced — never silently.
 ISSUE_TLS_MISMATCH = "tls_certificate_changed"
 # Repair-issue translation key for "two or more gateway labels resolve to the
-# same device slug, so only one of them gets entities" (`duplicate_slugs`).
+# same device slug, so they share one device and lose the entities they would
+# both create" (`duplicate_slugs`).
 # Raised and withdrawn by the capability watcher in __init__.py, which already
 # computes the collisions on every device-list adoption; not fixable here —
 # only a rename in the JUNG HOME app resolves it.

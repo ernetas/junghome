@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Jung Home 设备名称冲突",
-      "description": "位于 {host} 的 Jung Home 网关上的部分设备名称仅在大小写、空格或标点上有所不同，Home Assistant 无法区分它们：\n\n{labels}\n\n每组中只有一个设备会在 Home Assistant 中获得实体。请在 Jung Home 应用中为其余设备重命名。名称不再冲突后，此问题将自动消失。"
+      "description": "位于 {host} 的 Jung Home 网关上的部分设备名称完全相同，或仅在大小写、重音符号、空格或标点上有所不同，Home Assistant 会将它们视为同一名称：\n\n{labels}\n\nHome Assistant 会将每组显示为一个设备。如果同组的两个设备会创建相同的实体，只有其中一个能获得该实体，因此部分实体会缺失。请在 Jung Home 应用中为这些设备重命名，使每个名称都不相同。名称不再冲突后，此问题将自动消失。"
     },
     "gateway_bluetooth_failure": {
       "title": "Jung Home 网关蓝牙故障",

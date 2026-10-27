@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "„Jung Home“ įrenginiai su konfliktuojančiais pavadinimais",
-      "description": "Kai kurių „Jung Home“ sietuvo adresu {host} įrenginių pavadinimų „Home Assistant“ negali atskirti, nes jie skiriasi tik didžiosiomis ir mažosiomis raidėmis, tarpais arba skyrybos ženklais:\n\n{labels}\n\nTik vienas kiekvienos grupės įrenginys gauna objektus „Home Assistant“. Pervadinkite kitus programėlėje „Jung Home“. Ši problema išnyks savaime, kai tik pavadinimai skirsis."
+      "description": "Kai kurių „Jung Home“ sietuvo adresu {host} įrenginių pavadinimus „Home Assistant“ laiko vienodais, nes jie sutampa arba skiriasi tik didžiosiomis ir mažosiomis raidėmis, diakritiniais ženklais, tarpais arba skyrybos ženklais:\n\n{labels}\n\n„Home Assistant“ kiekvieną grupę rodo kaip vieną įrenginį. Kai du grupės įrenginiai sukurtų tą patį objektą, jį gauna tik vienas iš jų, todėl kai kurių objektų trūksta. Pervadinkite įrenginius programėlėje „Jung Home“, kad kiekvienas pavadinimas būtų unikalus. Ši problema išnyks savaime, kai tik pavadinimai skirsis."
     },
     "gateway_bluetooth_failure": {
       "title": "„Jung Home“ sietuvo „Bluetooth“ gedimas",
