@@ -32,9 +32,11 @@ JUNG HOME Gateway over its REST API and WebSocket.
     function id, node MAC, element location), persisted in the entry's
     `Store` (`function_anchors_store`), pairs a vanished label with a new one
     on the same element and rewrites the registry in place. And the gateway
-    health log (`async_fetch_health_status`, `health`: after the first
-    refresh, then every 15 min, best-effort) → one repair issue per
-    `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
+    health log (`async_fetch_health_status`, `health`: in the background
+    once `start()` runs — off the setup path — then every 15 min,
+    best-effort; conditions come from the whole log, only its newest
+    `HEALTH_LOG_KEPT_ENTRIES` = 200 entries are kept for diagnostics) → one
+    repair issue per `health.HEALTH_CONDITIONS` entry. These and the colliding-labels issue
     (`entry_derived_issue_ids`) are **not** deleted by `stop()`: a reload or an
     HA restart keeps them, so the user's "Ignore" survives (HA restores a
     dismissal only for an issue it still holds; a deleted one comes back
@@ -64,7 +66,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   - `repairs.py` — the fix flow for `tls_certificate_changed`.
   - `const.py` — `DOMAIN`, the stable-ID helpers (`device_slug`,
     `datapoint_suffix`, `stable_unique_id`, `duplicate_slugs`,
-    `scene_unique_id`, `is_presence_quantity`), `entry_unloading`, the
+    `scene_unique_id`, `is_presence_quantity`), `entry_unloading`,
+    `gateway_url` (every request URL — a bare IPv6 host bracketed),
+    `entry_issue_id`, the
     option keys and the button gesture constants (`BUTTON_EVENT_TYPES`,
     `BUTTON_HOLD_THRESHOLD`, `BUTTON_DUPLICATE_WINDOW`,
     `CONF_SUPPRESS_DUPLICATE_PRESSES`).
@@ -268,7 +272,9 @@ JUNG HOME Gateway over its REST API and WebSocket.
   reset of the range value does not unbind it); otherwise the range is
   unknown and `color_temp_range_pending`, and the periodic properties
   refresh re-reads that light (`GET /devices/{id}?verbose=true`, next to the
-  energy counters) until it is known. `light.py` looks the range up on every
+  energy counters) until it is known — backing off while it stays pending
+  (the next refresh, then 2, 4, 8 refreshes later, then every
+  `KELVIN_RANGE_MAX_BACKOFF` = 12, hourly: a silent node never binds it). `light.py` looks the range up on every
   state write (`_kelvin_range`, falling back to `DEFAULT_MIN/MAX_KELVIN`
   2000–6000 K when unknown or implausible — outside the spec's 800–20000
   K), so a range learned after the entity exists reaches it on that
@@ -296,8 +302,10 @@ JUNG HOME Gateway over its REST API and WebSocket.
   — `PushButton2gang`, `DimmerAct1gang2input`), else the function type.
   `device_info` reads both at registration; `_apply_device_info` rewrites
   registered rows when the gateway version, the properties or the identities
-  arrive or change later (hub, listed non-colliding slugs only; unknown
-  values never written). The hub's `configuration_url` is
+  arrive or change later (hub, listed non-colliding slugs only, never a
+  row another gateway's entry shares before HA 2026.9 —
+  `const.shared_with_another_entry`, which `link_node_identity`'s writes
+  honour too; unknown values never written). The hub's `configuration_url` is
   `https://<host>/` (`const.gateway_configuration_url`: nginx proxies `/` to
   the api-server's webview landing page; a host change reloads the entry,
   which re-registers it). The state DB's defaults `"0.0.0"`/`"0"` mean "not
@@ -356,8 +364,8 @@ JUNG HOME Gateway over its REST API and WebSocket.
   did not list — an omitted function is not re-asked, a missing endpoint or
   failed read is retried each interval), then
   `GET /devices/{id}?verbose=true` (~8 KB) per energy device — and per
-  light whose Kelvin range is still pending, until known — every
-  `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
+  light whose Kelvin range is still pending, until known and backed off —
+  every `DEVICE_PROPERTIES_REFRESH_INTERVAL` = 300 s (cheap, so it stays; the
   counter itself moves at most hourly). Drives the `total_energy`
   sensor (native Wh, `suggested_unit_of_measurement` kWh — HA stores that
   only at registration, so counters registered earlier stay Wh;
@@ -488,8 +496,10 @@ instead of re-deriving:
   anchor — either re-keys the hub device and every scene entity.
 - **Slugs can collide — never key per-device state by slug without guarding.**
   Two labels that slug identically (`"Lamp 1"`/`"Lamp-1"`) share one
-  `device_slug`; identity survives (the second device loses), but a *map keyed
-  by slug* does not — the second overwrites the first each pass and looks like
+  `device_slug`; identity survives (the functions share one registry device,
+  and the second loses every entity whose unique_id the first holds — same
+  platform and datapoint suffix; its others register on that device), but a
+  *map keyed by slug* does not — the second overwrites the first each pass and looks like
   a changed device. This exact bug produced endless reload loops twice (the
   capability watcher, then `_reload_if_device_ids_changed` on list-order
   changes). Guard every such map with `duplicate_slugs()`; its current
@@ -513,8 +523,9 @@ instead of re-deriving:
   tilt-lost-after-update regression). Gate capabilities on datapoint
   *presence*, never on the function-type name. That reload (like the
   id-churn one) starts *inside* an adoption and runs eagerly: every
-  `_discover_*` listener returns early while the entry is
-  `UNLOAD_IN_PROGRESS` or `FAILED_UNLOAD` (`const.entry_unloading`), and the
+  platform's `_discover_*` pass is skipped while the entry is
+  `UNLOAD_IN_PROGRESS` or `FAILED_UNLOAD` (`const.entry_unloading`, applied
+  once in `coordinator.async_add_discovery_listener`), and the
   platforms add without `update_before_add` — either gap put a device new in
   that list on the dead coordinator (an orphan frozen at its first state).
   Neither reload is scheduled while one is already unloading the entry (HA
@@ -575,13 +586,20 @@ instead of re-deriving:
   6 s, after `COMMAND_REPLY_TIMEOUT` = 5 s) until their outcome frame
   arrives or `COMMAND_OUTCOME_WINDOW` passes, so a late error is never
   pinned on a newer set. Anything ambiguous (two outstanding, unparseable,
-  unknown id) still surfaces as the timeout. The one resolved ambiguity: a
-  409 `Conflict with newer request` (the publish mutex replaced a *waiting*
-  set with a newer one for the same datapoint, `mutex.js:55-60`; the one
-  publishing is never replaced) while two or more of ours are outstanding
-  ends the one sent just before our newest quietly and retires its slot —
-  the user's own later command superseded it; an older, publishing set
-  still reports through its own reply. Never attribute by *timing* ("whichever
+  unknown id) still surfaces as the timeout. A 409 `Conflict with newer
+  request` (the publish mutex replaced a *waiting* set for the same
+  datapoint, `mutex.js:55-60`; the one publishing is never replaced) while
+  two or more of ours are outstanding is resolved by elimination, never by
+  guessing which was waiting (issue #240 — the replacer can be our next set,
+  another client's, or the middleware re-locking to retry an older set of
+  ours): the candidates go into a `_superseded_pools` entry; every set the
+  409 did not end gets its own outcome frame, so the one left over (or, with
+  several 409s, the sets left when there are no more of them than 409s) is
+  the superseded one. It ends quietly — `_send_datapoint_command` returns
+  False, so nothing it implies is stored (the light's implied switch on) —
+  when a newer set of ours was already sent, and as a `command_rejected`
+  otherwise. An expired member drops its pool; until settled, an error for
+  the datapoint stays ambiguous. Never attribute by *timing* ("whichever
   command is in flight") — with concurrent commands from different entities
   that misattributes someone else's failure. The reply (and the error) only
   ever arrives on the session that sent the command (`socket.send`, not a

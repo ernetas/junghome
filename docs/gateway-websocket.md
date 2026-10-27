@@ -543,15 +543,16 @@ after A's confirmation, before C's.
   a command with the gateway's text (`command_rejected`) only when exactly
   one set for that datapoint is outstanding. Two or more is ambiguous and
   falls back to the timeout, with one exception: a 409 `Conflict with newer
-  request` while two or more of ours are outstanding means our set sent
-  just before the newest was the *waiting* one the mutex replaced (the one
-  publishing never is), so that one returns quietly and its slot is
-  retired, the newest reports its own outcome, and an older, publishing set
-  reports through its own reply. (If another client superseded our *newest*
-  set, that one times out and the one before it returns early — its
-  confirmation is still merged when it arrives.) A 409 on our only set for
-  the datapoint — another client overrode it — is a rejection like any
-  other.
+  request` while two or more of ours are outstanding. The mutex replaced
+  whichever of them was *waiting* (the one publishing never is), but the
+  replacer may be our next set, another client's, or the middleware
+  re-locking to retry an older set of ours, so the frame does not say which.
+  The coordinator settles it by elimination: every set it did not end gets
+  its own outcome frame, so the one left over is the superseded one. That
+  one returns quietly, reported as superseded rather than confirmed so
+  nothing it implies is stored, when a newer set of ours was already sent,
+  and as a rejection otherwise. A 409 on our only set for the datapoint
+  (another client overrode it) is a rejection like any other.
 - The coordinator consumes the full-list `scenes` broadcasts to populate the
   scene platform (recall is REST-only; the `scenes-new` / `scenes-deleted` id
   deltas that follow each one are not consumed), and the

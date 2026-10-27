@@ -9,10 +9,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_bool, datapoint_value, entry_unloading, stable_unique_id
+from .const import datapoint_bool, datapoint_value, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
-from .models import Datapoint, Device
+from .models import GATEWAY_DEFAULT_KELVIN_RANGE, Datapoint, Device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,17 +31,16 @@ PARALLEL_UPDATES = 0
 # read, a range that is not plausible, or a read taken before the gateway had
 # read the node's range after a boot (still the default profile next to an
 # unread range state — pending, and re-read by the coordinator's periodic
-# properties refresh until known). The range is looked up on every state
-# write, so one learned after the entity exists reaches it on that refresh's
-# listener dispatch. The defaults are the gateway's own
-# starting range — what it clamps to until it has read the node's — and the
-# range of every tunable-white light in the 2026-09-16 probe. (The
+# properties refresh, backing off, until known). The range is looked up on
+# every state write, so one learned after the entity exists reaches it on that
+# refresh's listener dispatch. The defaults are the gateway's own starting
+# range — what it clamps to until it has read the node's — and the range of
+# every tunable-white light in the 2026-09-16 probe. (The
 # `/types/datapoints` catalog advertises 2000-10000; it is a descriptor, not
 # the enforcement.) HA does not validate a requested `color_temp_kelvin`
 # against the entity's range, so writes are clamped here too (`_clamp_kelvin`)
 # — the gateway would clamp them silently and confirm the clamped value.
-DEFAULT_MIN_KELVIN = 2000
-DEFAULT_MAX_KELVIN = 6000
+DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN = GATEWAY_DEFAULT_KELVIN_RANGE
 
 
 async def async_setup_entry(
@@ -56,8 +55,6 @@ async def async_setup_entry(
     @callback
     def _discover_lights() -> None:
         """Add entities for any lights not yet created (handles devices added later)."""
-        if entry_unloading(config_entry):
-            return
         new_entities: list[JungHomeLight] = []
         for device in coordinator.data or []:
             if device.get("type") in ("OnOff", "DimmerLight", "ColorLight"):
@@ -72,8 +69,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_lights()
-    config_entry.async_on_unload(coordinator.async_add_listener(_discover_lights))
+    coordinator.async_add_discovery_listener(_discover_lights)
 
 
 class JungHomeLight(JungHomeEntity, LightEntity):
@@ -248,7 +244,7 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         switch_id = self._datapoint["id"]
         if self._has_brightness and "brightness" in kwargs:
             switch_pushes = self.coordinator.datapoint_push_count(switch_id)
-            await self._set_brightness(kwargs["brightness"])
+            confirmed = await self._set_brightness(kwargs["brightness"])
             # A confirmed non-zero Brightness Set turned the dimmer on, but its
             # reply is the brightness datapoint: the stored switch value is
             # still the pre-command one unless the gateway reported the switch
@@ -257,23 +253,39 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             # change on the now-on light, a listener dispatch without a push
             # marker) does not see the stale off. If it did, that report is
             # newer than the command (a wall rocker, another client) and wins.
-            if self.coordinator.datapoint_push_count(switch_id) == switch_pushes:
+            # A set a newer one superseded never reached the device, so it
+            # implies nothing (issue #240).
+            if (
+                confirmed
+                and self.coordinator.datapoint_push_count(switch_id) == switch_pushes
+            ):
                 self.coordinator.adopt_implied_value(
                     switch_id, {"values": [{"key": "switch", "value": "1"}]}
                 )
             self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
         else:
+            brightness_id = self._brightness_datapoint_id
+            brightness_pushes = (
+                self.coordinator.datapoint_push_count(brightness_id)
+                if brightness_id is not None
+                else 0
+            )
             await self.coordinator.turn_on_light(switch_id)
             # Re-read after the await (see `_bool_after_command`): the
             # confirmation merge — and any fresher push that beat this resume
             # — already updated coordinator.data via the listener.
             self._is_on = self._bool_after_command(switch_id, "switch", fallback=True)
-            if self._has_brightness and not was_on:
+            if brightness_id is not None and not was_on:
                 # No explicit brightness on a genuine off->on: the device
                 # restores its own level on power-on. Don't guess — showing a
                 # kept/stale value looked like the light jumping to 100%.
                 # Clear it and let the device's own brightness report populate
                 # the real current value (its WS push, or the periodic poll).
+                # That report can beat this resume, though (it lands in the
+                # same read as the confirmation, or ahead of it): when the
+                # gateway reported the brightness since the command started,
+                # it is the restored level — read it back rather than clear
+                # it (0, the off reading, still clears).
                 #
                 # Gated on `was_on` because a turn_on against an ALREADY-on
                 # dimmer changes nothing on the device, so no push follows —
@@ -281,6 +293,16 @@ class JungHomeLight(JungHomeEntity, LightEntity):
                 # for no reason. The value being shown is the device's
                 # current level; keep it.
                 self._brightness = None
+                if (
+                    self.coordinator.datapoint_push_count(brightness_id)
+                    != brightness_pushes
+                ):
+                    self._brightness = (
+                        self._get_brightness_from_datapoint(
+                            self._find_datapoint(brightness_id)
+                        )
+                        or None
+                    )
         if self._has_color_temp and "color_temp_kelvin" in kwargs:
             await self._set_color_temp(kwargs["color_temp_kelvin"])
         self.async_write_ha_state()
@@ -355,12 +377,12 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         low, high = self._kelvin_range()
         return max(low, min(high, kelvin))
 
-    async def _set_brightness(self, brightness: int) -> None:
-        """Set the brightness of the light."""
+    async def _set_brightness(self, brightness: int) -> bool:
+        """Set the brightness of the light; True if the gateway confirmed it."""
         _LOGGER.debug("Setting brightness for light %s to %s", self._name, brightness)
         if not self._brightness_datapoint_id:
             _LOGGER.warning("No brightness datapoint id for light %s", self._name)
-            return
+            return False
         # Convert Home Assistant 0-255 brightness to device raw scale (0-100 or 0-255)
         ha_brightness = int(brightness)
         raw_value = self._ha_to_raw_brightness(ha_brightness)
@@ -370,7 +392,9 @@ class JungHomeLight(JungHomeEntity, LightEntity):
             raw_value,
             self._name,
         )
-        await self.coordinator.set_brightness(self._brightness_datapoint_id, raw_value)
+        confirmed = await self.coordinator.set_brightness(
+            self._brightness_datapoint_id, raw_value
+        )
         # The awaited reply already merged the gateway's confirmed value into
         # the coordinator (and dispatched it through _handle_coordinator_update),
         # so read that back rather than store the request: the device only has
@@ -379,13 +403,13 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         # disagree with the next push/poll. The request stands in only when the
         # datapoint yields nothing usable (0 is "off"/unparseable — see
         # _handle_coordinator_update — not a level the device confirmed).
-        self._brightness = (
-            self._get_brightness_from_datapoint(
-                self._find_datapoint(self._brightness_datapoint_id)
-            )
-            or ha_brightness
+        self._brightness = self._value_after_command(
+            self._brightness_datapoint_id,
+            lambda dp: self._get_brightness_from_datapoint(dp) or None,
+            fallback=ha_brightness,
         )
         self.async_write_ha_state()
+        return confirmed
 
     async def _set_color_temp(self, kelvin: int) -> None:
         """Set the color temperature of the light (Kelvin, device-native)."""
@@ -404,8 +428,9 @@ class JungHomeLight(JungHomeEntity, LightEntity):
         await self.coordinator.set_color_temp(self._color_temp_datapoint_id, kelvin)
         # Same as brightness: the confirmed value the reply merged wins over the
         # request; the request stands in only if the datapoint yields nothing.
-        confirmed = self._get_color_temp_from_datapoint(
-            self._find_datapoint(self._color_temp_datapoint_id)
+        self._color_temp = self._value_after_command(
+            self._color_temp_datapoint_id,
+            self._get_color_temp_from_datapoint,
+            fallback=kelvin,
         )
-        self._color_temp = kelvin if confirmed is None else confirmed
         self.async_write_ha_state()

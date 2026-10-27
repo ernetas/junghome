@@ -6,6 +6,7 @@ append-only list since the middleware started, newest first, of
 descriptions below are the firmware's own strings.
 """
 
+import asyncio
 import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,8 +27,10 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.junghome.const import DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
+from custom_components.junghome.diagnostics import async_get_config_entry_diagnostics
 from custom_components.junghome.health import (
     HEALTH_CONDITIONS,
+    HEALTH_LOG_KEPT_ENTRIES,
     HEALTH_STATUS_REFRESH_INTERVAL,
     ISSUE_BLUETOOTH_FAILURE,
     ISSUE_OUT_OF_SEQUENCE_NUMBERS,
@@ -490,11 +493,11 @@ async def test_periodic_reads_do_not_stack(hass: HomeAssistant) -> None:
     coordinator = bare_coordinator(hass)
     coordinator.health.refresh_running = True
     with patch.object(coordinator, "async_fetch_health_status", AsyncMock()) as fetch:
-        await coordinator._async_refresh_health_status(None)  # type: ignore[arg-type]
+        await coordinator._async_refresh_health_status()
     fetch.assert_not_awaited()
     coordinator.health.refresh_running = False
     with patch.object(coordinator, "async_fetch_health_status", AsyncMock()) as fetch:
-        await coordinator._async_refresh_health_status(None)  # type: ignore[arg-type]
+        await coordinator._async_refresh_health_status()
     fetch.assert_awaited_once()
     assert not coordinator.health.refresh_running
 
@@ -520,3 +523,50 @@ async def test_rest_reads(hass: HomeAssistant, aioclient_mock) -> None:
         await coordinator._fetch_config_parameter_from_api("h", "t", "time_error")
         is None
     )
+
+
+async def test_only_the_newest_entries_are_kept_but_all_are_read(
+    hass: HomeAssistant,
+) -> None:
+    """A long log keeps HEALTH_LOG_KEPT_ENTRIES; its conditions use all of it.
+
+    Nothing prunes the log until the gateway restarts, and a gateway without
+    internet logs a failed time sync every round: kept whole, every one of
+    them went into each diagnostics download. A condition logged further
+    down than the kept window is still raised.
+    """
+    noise = [TIME_ERROR] * (HEALTH_LOG_KEPT_ENTRIES + 50)
+    health = AsyncMock(return_value=[*noise, BT_CHIP, UP_AND_RUNNING])
+    async with _running(hass, health) as entry:
+        coordinator = entry.runtime_data
+        assert ISSUE_BLUETOOTH_FAILURE in _raised(hass, entry)
+        assert coordinator.health.entries is not None
+        assert len(coordinator.health.entries) == HEALTH_LOG_KEPT_ENTRIES
+        assert coordinator.health.total_entries == HEALTH_LOG_KEPT_ENTRIES + 52
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+        assert len(diag["health_status"]) == HEALTH_LOG_KEPT_ENTRIES
+        assert diag["health_status_entries"] == HEALTH_LOG_KEPT_ENTRIES + 52
+
+
+async def test_setup_does_not_wait_for_the_health_read(hass: HomeAssistant) -> None:
+    """A gateway that stalls the health read no longer holds setup.
+
+    The read runs in the background once the coordinator starts; the stalled
+    one is cancelled with the entry, and nothing is raised from it.
+    """
+    stalled = asyncio.Event()
+
+    async def _stall(host: str, token: str) -> None:
+        stalled.set()
+        await asyncio.Event().wait()
+
+    async with _running(hass, AsyncMock(side_effect=_stall)) as entry:
+        assert entry.state is ConfigEntryState.LOADED
+        assert stalled.is_set()
+        task = entry.runtime_data.health.task
+        assert task is not None
+        assert not task.done()
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert task.cancelled()
+        assert _raised(hass, entry) == set()

@@ -1,6 +1,5 @@
 """Cover (position / tilt) platform tests for Jung Home."""
 
-import json
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
@@ -17,7 +16,12 @@ from syrupy.assertion import SnapshotAssertion
 from custom_components.junghome.const import CONF_INVERTED_COVERS, DOMAIN
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
 from custom_components.junghome.cover import JungHomeCover
-from tests.conftest import DEVICES, _fake_run_websocket, bare_coordinator
+from tests.conftest import (
+    DEVICES,
+    _fake_run_websocket,
+    bare_coordinator,
+    reply_then_push,
+)
 
 
 def _cover(
@@ -348,35 +352,6 @@ async def test_cover_set_position_shows_the_confirmed_target(
     assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 25
 
 
-def _reply_then_push(
-    coordinator: JungHomeDataUpdateCoordinator,
-    reply_values: list[dict] | None,
-    push: dict | None = None,
-) -> None:
-    """Make the fake socket confirm each set with ``reply_values``, then push.
-
-    ``reply_values`` None echoes the request. Both frames land before the
-    awaiting command resumes.
-    """
-
-    def _send(raw: str) -> None:
-        sent = json.loads(raw)
-        data = sent["data"]
-        if reply_values is not None:
-            data = {**data, "values": reply_values}
-        coordinator._dispatch_text_frame(
-            json.dumps(
-                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
-            )
-        )
-        if push is not None:
-            coordinator._dispatch_text_frame(
-                json.dumps({"type": "datapoint", "data": push})
-            )
-
-    coordinator.websocket.send_str.side_effect = _send
-
-
 async def test_cover_shows_the_level_the_reply_confirmed(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -386,7 +361,7 @@ async def test_cover_shows_the_level_the_reply_confirmed(
     confirmed value the reply had just merged.
     """
     coordinator = init_integration.runtime_data
-    _reply_then_push(coordinator, [{"key": "level", "value": "80"}])
+    reply_then_push(coordinator, reply_values=[{"key": "level", "value": "80"}])
     await hass.services.async_call(
         "cover",
         "set_cover_position",
@@ -401,9 +376,8 @@ async def test_cover_push_after_the_confirmation_wins(
 ) -> None:
     """A level/angle push landing before the command resumes is kept."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(
+    reply_then_push(
         coordinator,
-        None,
         {"id": "idblind1-001", "values": [{"key": "level", "value": "50"}]},
     )
     await hass.services.async_call(
@@ -411,9 +385,8 @@ async def test_cover_push_after_the_confirmation_wins(
     )
     assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 50
 
-    _reply_then_push(
+    reply_then_push(
         coordinator,
-        None,
         {"id": "idblind1-002", "values": [{"key": "angle", "value": "10"}]},
     )
     await hass.services.async_call(
@@ -431,13 +404,13 @@ async def test_cover_request_stands_in_for_an_unusable_reply(
 ) -> None:
     """With "NaN" confirmed, the requested position and tilt are shown."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(coordinator, [{"key": "level", "value": "NaN"}])
+    reply_then_push(coordinator, reply_nan=True)
     await hass.services.async_call(
         "cover", "open_cover", {"entity_id": "cover.bedroom_blind"}, blocking=True
     )
     assert hass.states.get("cover.bedroom_blind").attributes["current_position"] == 100
 
-    _reply_then_push(coordinator, [{"key": "angle", "value": "NaN"}])
+    reply_then_push(coordinator, reply_nan=True)
     await hass.services.async_call(
         "cover",
         "set_cover_tilt_position",

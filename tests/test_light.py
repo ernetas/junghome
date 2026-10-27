@@ -1,5 +1,6 @@
 """Light / dimmer / color-light platform tests for Jung Home."""
 
+import asyncio
 import json
 from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
@@ -20,7 +21,7 @@ from custom_components.junghome.light import (
     JungHomeLight,
 )
 from custom_components.junghome.models import DeviceProperties
-from tests.conftest import bare_coordinator
+from tests.conftest import bare_coordinator, reply_then_push
 
 
 def _color_light(
@@ -285,30 +286,39 @@ def _stored_switch(coordinator: JungHomeDataUpdateCoordinator) -> str:
     return str(datapoint["values"][0]["value"])
 
 
-def _reply_then_push(coordinator: JungHomeDataUpdateCoordinator, push: dict) -> None:
-    """Make the fake socket confirm each set, then deliver ``push``.
+@pytest.mark.parametrize(("pushed", "expected"), [("80", 204), ("0", None)])
+async def test_plain_turn_on_keeps_a_brightness_report_that_beat_the_resume(
+    hass: HomeAssistant,
+    init_integration,
+    pushed: str,
+    expected: int | None,
+) -> None:
+    """The restored level reported before the command resumes is kept.
 
-    Both land before the awaiting command resumes — what a report from a
-    wall rocker or another client looks like when it arrives on the session
-    between the confirmation and the service coroutine's resume.
+    An off->on clears the brightness pending the device's report, but that
+    report can land before the coroutine resumes — in the same read as the
+    confirmation, or ahead of it when the first OnOff copy was lost. It was
+    applied by the listener and then cleared, leaving the light on with an
+    unknown brightness until the next poll (issue #243). An off reading (0)
+    still clears.
     """
-
-    def _send(raw: str) -> None:
-        sent = json.loads(raw)
-        coordinator._dispatch_text_frame(
-            json.dumps(
-                {
-                    "type": "datapoint",
-                    "data": sent["data"],
-                    "message_id": sent["message_id"],
-                }
-            )
-        )
-        coordinator._dispatch_text_frame(
-            json.dumps({"type": "datapoint", "data": push})
-        )
-
-    coordinator.websocket.send_str.side_effect = _send
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    reply_then_push(
+        coordinator,
+        {
+            "id": "idcolor1-002",
+            "values": [{"key": "brightness", "value": pushed}],
+        },
+    )
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.strip"}, blocking=True
+    )
+    state = hass.states.get("light.strip")
+    assert state.state == "on"
+    assert state.attributes.get("brightness") == expected
 
 
 async def test_brightness_turn_on_stores_the_implied_switch_on(
@@ -349,6 +359,80 @@ async def test_brightness_turn_on_stores_the_implied_switch_on(
     assert hass.states.get("light.strip").state == "on"
 
 
+async def test_a_superseded_brightness_turn_on_implies_no_switch_on(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """A brightness set a newer one superseded never reached the device.
+
+    It returns normally (the newer set carries the intent), but nothing it
+    would have implied may be stored: storing the implied switch on marked
+    an off dimmer on until the next poll when the newer set then failed
+    (issue #240).
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    with patch.object(coordinator, "set_brightness", AsyncMock(return_value=False)):
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.strip", "brightness": 128},
+            blocking=True,
+        )
+    assert _stored_switch(coordinator) == "0"
+    assert hass.states.get("light.strip").state == "off"
+
+
+async def test_brightness_burst_on_an_unreachable_dimmer_stays_off(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Three brightness turn-ons, A publishing, B superseded by C, A and C fail.
+
+    The issue's scenario end to end: the 409 cannot say it was B's, and the
+    failures of A and C name only the datapoint, so B is never singled out —
+    every call fails on its timeout and the light stays off, where B used to
+    succeed and leave the dimmer shown on until the next poll.
+    """
+    coordinator = init_integration.runtime_data
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
+    )
+    coordinator.websocket.send_str.reset_mock(side_effect=True)  # nothing confirms
+    error = (
+        "error: could not set datapoint (idcolor1-002) value, "
+        "JungFunctionService: Error during publish request: "
+    )
+
+    async def _turn_on(brightness: int) -> None:
+        await hass.services.async_call(
+            "light",
+            "turn_on",
+            {"entity_id": "light.strip", "brightness": brightness},
+            blocking=True,
+        )
+
+    with patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.05):
+        calls = [asyncio.ensure_future(_turn_on(b)) for b in (50, 100, 150)]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert coordinator.websocket.send_str.await_count == 3
+        for detail in (
+            "Conflict with newer request",
+            "Command with id '1f' timed out!",
+            "Command with id '20' timed out!",
+        ):
+            coordinator._dispatch_text_frame(
+                json.dumps({"type": "message", "data": error + detail})
+            )
+        results = await asyncio.gather(*calls, return_exceptions=True)
+    assert [getattr(r, "translation_key", r) for r in results] == [
+        "command_timeout"
+    ] * 3
+    assert _stored_switch(coordinator) == "0"
+    assert hass.states.get("light.strip").state == "off"
+
+
 async def test_switch_report_during_a_brightness_turn_on_wins(
     hass: HomeAssistant, init_integration
 ) -> None:
@@ -363,7 +447,7 @@ async def test_switch_report_during_a_brightness_turn_on_wins(
     await hass.services.async_call(
         "light", "turn_off", {"entity_id": "light.strip"}, blocking=True
     )
-    _reply_then_push(
+    reply_then_push(
         coordinator,
         {"id": "idcolor1-001", "values": [{"key": "switch", "value": "0"}]},
     )
@@ -390,7 +474,7 @@ async def test_switch_report_after_the_confirmation_wins(
 ) -> None:
     """A switch push that beats the command's resume is not overwritten."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(
+    reply_then_push(
         coordinator,
         {"id": "idcolor1-001", "values": [{"key": "switch", "value": pushed}]},
     )

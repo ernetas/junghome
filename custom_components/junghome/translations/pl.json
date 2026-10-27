@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Urządzenia Jung Home o kolidujących nazwach",
-      "description": "Niektóre urządzenia na bramce Jung Home pod adresem {host} mają nazwy, których Home Assistant nie potrafi rozróżnić, ponieważ różnią się tylko wielkością liter, spacjami lub interpunkcją:\n\n{labels}\n\nTylko jedno urządzenie z każdej grupy otrzymuje encje w Home Assistant. Zmień nazwy pozostałych w aplikacji Jung Home. Ten problem zniknie sam, gdy nazwy będą różne."
+      "description": "Niektóre urządzenia na bramce Jung Home pod adresem {host} mają nazwy, które Home Assistant uznaje za takie same, ponieważ są identyczne lub różnią się tylko wielkością liter, znakami diakrytycznymi, spacjami lub interpunkcją:\n\n{labels}\n\nHome Assistant pokazuje każdą grupę jako jedno urządzenie. Gdy dwa urządzenia z grupy utworzyłyby tę samą encję, otrzymuje ją tylko jedno z nich, więc brakuje niektórych encji. Zmień nazwy urządzeń w aplikacji Jung Home tak, aby każda nazwa była unikalna. Ten problem zniknie sam, gdy nazwy będą różne."
     },
     "gateway_bluetooth_failure": {
       "title": "Awaria Bluetooth bramki Jung Home",

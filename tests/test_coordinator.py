@@ -211,6 +211,25 @@ async def test_implied_value_survives_a_racing_poll_and_counts_no_push(
     unsub()
 
 
+def test_implied_value_never_renames_the_datapoint(hass: HomeAssistant) -> None:
+    """An implied value merges like a push: every key but the ``id``.
+
+    A push's ``id`` names the datapoint it is about and is never merged;
+    the implied-value path was a separate copy of the merge without that
+    filter, so a payload carrying an ``id`` re-keyed the stored datapoint
+    (and the poll overlay entry) under it.
+    """
+    coordinator = _coordinator(hass)
+    coordinator.data = [_switch_device("0")]
+    coordinator._poll_push_overlay = {}
+    on = {"id": "dp-other", "values": [{"key": "switch", "value": "1"}]}
+    coordinator.adopt_implied_value("dp-1", on)
+    datapoint = coordinator.data[0]["datapoints"][0]
+    assert datapoint["id"] == "dp-1"
+    assert datapoint["values"] == on["values"]
+    assert coordinator._poll_push_overlay == {"dp-1": {"values": on["values"]}}
+
+
 def test_datapoint_push_count_counts_each_merged_push(hass: HomeAssistant) -> None:
     """Each push merged into a datapoint moves that datapoint's count only."""
     coordinator = _coordinator(hass)
@@ -919,25 +938,27 @@ async def test_superseded_set_ends_quietly_when_a_newer_one_is_in_flight(
 
     The publish mutex rejects a queued set when a newer one for the same
     state arrives (mutex.js MutexID.lock -> ip_event_handler.js 409 ->
-    "Conflict with newer request"). The user's own later command superseded
-    it, so the older command returns normally and the newer one still waits
-    for — and gets — its own confirmation.
+    "Conflict with newer request"). The frame does not say which of our two
+    sets it ended; once the newer one has its own confirmation, the older
+    is the one left, and since our newer set replaced it, it returns
+    normally — reporting False, "superseded", not a confirmation.
     """
     coordinator, sent_ids = _two_switch_coordinator(hass)
-    older = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
-    newer = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    older = asyncio.ensure_future(coordinator.set_brightness(_DP_A, 10))
+    newer = asyncio.ensure_future(coordinator.set_brightness(_DP_A, 20))
     await asyncio.sleep(0)
 
     coordinator._dispatch_text_frame(
         json.dumps(_set_error(_DP_A, "Conflict with newer request"))
     )
-    await asyncio.wait_for(older, timeout=1)  # no exception
-    assert not newer.done()
-
+    await asyncio.sleep(0)
+    assert not older.done(), "not known yet which set the frame ended"
     _confirm(coordinator, _DP_A, sent_ids[1])
-    await newer
+    assert await asyncio.wait_for(newer, timeout=1) is True
+    assert await asyncio.wait_for(older, timeout=1) is False
     assert coordinator._pending_replies == {}
     assert coordinator._outstanding_sets == {}
+    assert coordinator._superseded_pools == []
     await coordinator.async_shutdown()
 
 
@@ -966,17 +987,16 @@ async def test_superseded_set_without_a_newer_one_of_ours_is_rejected(
 async def test_superseded_set_is_the_waiting_one_not_the_publishing_one(
     hass: HomeAssistant,
 ) -> None:
-    """Three sets on one datapoint: the 409 is about the middle one.
+    """Three sets on one datapoint: the 409 is found to be the middle one's.
 
     mutex.js ``MutexID.lock`` queues at most one request per datapoint and a
     newer one rejects that WAITING request — never the one already holding
-    the lock. With A publishing, B waiting and C arriving, B gets the 409 at
-    once while A's reply comes later (it waits for the mesh). So B ends
-    quietly, A still reports through its own reply, and once A's and C's
-    replies are in no slot is left — a stale one blocked attribution of the
-    next genuine rejection on that datapoint for COMMAND_OUTCOME_WINDOW
-    (retiring the oldest slot did exactly that; the gateway log shows the
-    shape: three patches of one datapoint in a second, one 409).
+    the lock. With A publishing, B waiting and C arriving, B gets the 409
+    while A's reply comes later. A's and C's own replies single B out, which
+    ends quietly; no slot is left behind — a stale one blocked attribution
+    of the next genuine rejection on that datapoint for COMMAND_OUTCOME_WINDOW
+    (the gateway log shows the shape: three patches of one datapoint in a
+    second, one 409).
     """
     coordinator, sent_ids = _two_switch_coordinator(hass)
     a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
@@ -987,14 +1007,11 @@ async def test_superseded_set_is_the_waiting_one_not_the_publishing_one(
     coordinator._dispatch_text_frame(
         json.dumps(_set_error(_DP_A, "Conflict with newer request"))
     )
-    await asyncio.wait_for(b, timeout=1)  # superseded: no exception
-    assert not a.done()
-    assert not c.done()
-    assert list(coordinator._outstanding_sets) == [sent_ids[0], sent_ids[2]]
-
     _confirm(coordinator, _DP_A, sent_ids[0])  # A's own reply, after the 409
+    await asyncio.wait_for(a, timeout=1)
+    assert not b.done()
     _confirm(coordinator, _DP_A, sent_ids[2])
-    await asyncio.gather(a, c)
+    await asyncio.wait_for(asyncio.gather(b, c), timeout=1)  # B: no exception
     assert coordinator._outstanding_sets == {}
 
     # Attribution is clean again: the next rejection fails its set at once.
@@ -1007,15 +1024,15 @@ async def test_superseded_set_is_the_waiting_one_not_the_publishing_one(
     await coordinator.async_shutdown()
 
 
-async def test_two_409s_landing_late_retire_both_superseded_sets(
+async def test_two_409s_landing_late_end_both_superseded_sets(
     hass: HomeAssistant,
 ) -> None:
-    """Both frames arrive after our newest set went out: still no stale slot.
+    """Two 409s, three sets: once C has its reply, A and B are both ended.
 
     A waits (the gateway-wide lock is busy elsewhere), B replaces A, C
-    replaces B. If both 409s land only after C was sent, the first retires B
-    (then just before our newest) and the second A — the right two slots
-    between them, both sets ending quietly, C left to its own reply.
+    replaces B, and both frames land after C was sent. Neither A nor B will
+    ever get another frame, and two 409s account for exactly those two — so
+    both end quietly (C, sent after them, carries the intent).
     """
     coordinator, sent_ids = _two_switch_coordinator(hass)
     a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
@@ -1027,13 +1044,125 @@ async def test_two_409s_landing_late_retire_both_superseded_sets(
         coordinator._dispatch_text_frame(
             json.dumps(_set_error(_DP_A, "Conflict with newer request"))
         )
-    await asyncio.wait_for(asyncio.gather(a, b), timeout=1)
-    assert list(coordinator._outstanding_sets) == [sent_ids[2]]
-    assert not c.done()
+    await asyncio.sleep(0)
+    assert not a.done()
+    assert not b.done()
     _confirm(coordinator, _DP_A, sent_ids[2])
-    await c
+    await asyncio.wait_for(asyncio.gather(a, b, c), timeout=1)
     assert coordinator._outstanding_sets == {}
+    assert coordinator._superseded_pools == []
     await coordinator.async_shutdown()
+
+
+async def test_our_newest_set_superseded_by_another_writer_is_rejected(
+    hass: HomeAssistant,
+) -> None:
+    """Not every 409 is ours: our newest set can be the one replaced (#240).
+
+    A is publishing against a slow node and B waits; the middleware's own
+    retry of A (or another client's set) re-locks the datapoint and the
+    gateway ends B with a 409. The old guess ended A as a silent success,
+    kept B counted and later pinned A's failure on B. Now nothing is decided
+    on the 409 itself; A's own reply singles B out, and as nothing of ours
+    was sent after B, it never reached the device: a rejection.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    await asyncio.sleep(0)
+    assert not a.done()
+    assert not b.done()
+    _confirm(coordinator, _DP_A, sent_ids[0])
+    await asyncio.wait_for(a, timeout=1)
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await asyncio.wait_for(b, timeout=1)
+    assert exc_info.value.translation_key == "command_rejected"
+    assert exc_info.value.translation_placeholders == {
+        "error": "Conflict with newer request"
+    }
+    assert coordinator._outstanding_sets == {}
+    assert coordinator._superseded_pools == []
+    await coordinator.async_shutdown()
+
+
+async def test_a_failure_after_an_unresolved_409_is_pinned_on_no_one(
+    hass: HomeAssistant,
+) -> None:
+    """While a 409 is unresolved, a failure for its datapoint stays ambiguous.
+
+    Same shape, but A then fails on the api-server's 6 s bound. The frame is
+    A's outcome (B's was the 409), but nothing in it says so: the old code
+    had already retired A and failed B with A's text. Both now end by their
+    own timeout, and nothing is resolved as a success.
+    """
+    coordinator, _ = _two_switch_coordinator(hass)
+    with patch("custom_components.junghome.coordinator.COMMAND_REPLY_TIMEOUT", 0.05):
+        a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+        b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+        await asyncio.sleep(0)
+        coordinator._dispatch_text_frame(
+            json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+        )
+        coordinator._dispatch_text_frame(
+            json.dumps(_set_error(_DP_A, "Command with id '1f' timed out!"))
+        )
+        results = await asyncio.gather(a, b, return_exceptions=True)
+    assert [getattr(r, "translation_key", r) for r in results] == [
+        "command_timeout",
+        "command_timeout",
+    ]
+    await coordinator.async_shutdown()
+
+
+async def test_an_expired_set_drops_the_409_it_could_have_been(
+    hass: HomeAssistant,
+) -> None:
+    """An expired slot's outcome is unknown: its pool is dropped, not settled.
+
+    Settling by elimination needs every other set's own outcome; once a
+    member has expired, the set left over need not be the superseded one.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    a = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    b = asyncio.ensure_future(coordinator.turn_off_switch(_DP_A))
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    assert len(coordinator._superseded_pools) == 1
+    coordinator._outstanding_sets[sent_ids[0]] = (_DP_A, time.monotonic() - 1)
+    coordinator._expire_outstanding_sets()
+    assert coordinator._superseded_pools == []
+    assert list(coordinator._outstanding_sets) == [sent_ids[1]]
+    assert not b.done()
+    _confirm(coordinator, _DP_A, sent_ids[1])
+    await asyncio.wait_for(b, timeout=1)
+    a.cancel()
+    await coordinator.async_shutdown()
+
+
+async def test_a_session_end_forgets_unresolved_409s(hass: HomeAssistant) -> None:
+    """No outcome for a dead session's sets can arrive on the next one."""
+    coordinator, _ = _two_switch_coordinator(hass)
+    tasks = [
+        asyncio.ensure_future(coordinator.turn_on_switch(_DP_A)),
+        asyncio.ensure_future(coordinator.turn_off_switch(_DP_A)),
+    ]
+    await asyncio.sleep(0)
+    coordinator._dispatch_text_frame(
+        json.dumps(_set_error(_DP_A, "Conflict with newer request"))
+    )
+    coordinator._fail_pending_replies()
+    assert coordinator._superseded_pools == []
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert [getattr(r, "translation_key", r) for r in results] == [
+        "cannot_send",
+        "cannot_send",
+    ]
 
 
 async def test_correlated_error_retires_its_set_for_attribution(
@@ -1157,6 +1286,27 @@ async def test_late_error_consumes_the_timed_out_set_it_belongs_to(
     with pytest.raises(HomeAssistantError) as exc_info:
         await asyncio.wait_for(task, timeout=1)
     assert exc_info.value.translation_key == "command_rejected"
+
+
+async def test_a_slot_no_frame_matched_expires_on_the_next_send(
+    hass: HomeAssistant,
+) -> None:
+    """The outstanding sets hold only the last COMMAND_OUTCOME_WINDOW's sets.
+
+    A slot whose outcome frame was consumed without matching it (an
+    ambiguous error) used to wait for the next error frame to expire it — on
+    a healthy session, none might ever come. The next send looks too.
+    """
+    coordinator, sent_ids = _two_switch_coordinator(hass)
+    coordinator._outstanding_sets["ha-stale"] = (_DP_B, time.monotonic() - 1)
+    coordinator._outstanding_sets["ha-fresh"] = (_DP_B, time.monotonic() + 60)
+    task = asyncio.ensure_future(coordinator.turn_on_switch(_DP_A))
+    await asyncio.sleep(0)
+    assert list(coordinator._outstanding_sets) == ["ha-fresh", sent_ids[0]]
+    _confirm(coordinator, _DP_A, sent_ids[0])
+    await task
+    assert list(coordinator._outstanding_sets) == ["ha-fresh"]
+    await coordinator.async_shutdown()
 
 
 async def test_outstanding_sets_are_session_scoped(hass: HomeAssistant) -> None:
@@ -2858,3 +3008,16 @@ async def test_a_corrupt_stored_pin_is_treated_as_absent(hass: HomeAssistant) ->
     with patch.object(coordinator, "_async_learn_fingerprint", learn):
         assert await coordinator._async_ssl() is fingerprint_ssl(FAKE_FINGERPRINT)
     learn.assert_awaited_once_with("h")
+
+
+async def test_rest_reads_reach_an_ipv6_gateway(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    """A poll of an entry stored with a bare IPv6 address goes to ``[addr]``."""
+    coordinator = _coordinator(hass)
+    coordinator.config["host"] = "fe80::1"
+    aioclient_mock.get("https://[fe80::1]/api/junghome/functions", json=[])
+    assert await coordinator._fetch_devices_from_api("fe80::1", "t") == []
+    assert [str(call[1]) for call in aioclient_mock.mock_calls] == [
+        "https://[fe80::1]/api/junghome/functions"
+    ]

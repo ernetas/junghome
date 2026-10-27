@@ -251,7 +251,10 @@ async def async_get_config_entry_diagnostics(
         # that are raised as repair issues. The log also carries what is
         # deliberately not an issue, e.g. the middleware's unreachable-device
         # list (push buttons read unreachable while working).
+        # Only the newest entries are kept (`HEALTH_LOG_KEPT_ENTRIES`); the
+        # count says how long the log really was.
         "health_status": _health_log(coordinator.health.entries, secrets),
+        "health_status_entries": coordinator.health.total_entries,
         "health_conditions": sorted(coordinator.health.conditions),
         # The most recent raw WebSocket frames (live pushes), so the real wire
         # format can be matched against our parsing...

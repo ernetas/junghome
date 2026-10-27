@@ -1,6 +1,5 @@
 """Climate (thermostat) platform tests for Jung Home."""
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,7 +15,7 @@ from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.climate import JungHomeClimate
 from custom_components.junghome.coordinator import JungHomeDataUpdateCoordinator
-from tests.conftest import bare_coordinator
+from tests.conftest import bare_coordinator, reply_then_push
 
 
 def _climate(
@@ -196,34 +195,6 @@ async def test_climate_commands(hass: HomeAssistant, init_integration) -> None:
     assert sp.call_args.args[1] == "eco"
 
 
-def _reply_then_push(
-    coordinator: JungHomeDataUpdateCoordinator,
-    reply_values: list[dict],
-    push: dict | None = None,
-) -> None:
-    """Make the fake socket confirm each set with ``reply_values``, then push.
-
-    The real reply carries the whole re-read datapoint (setpoint AND preset),
-    not just the key that was written. Both frames land before the awaiting
-    command resumes.
-    """
-
-    def _send(raw: str) -> None:
-        sent = json.loads(raw)
-        data = {**sent["data"], "values": reply_values}
-        coordinator._dispatch_text_frame(
-            json.dumps(
-                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
-            )
-        )
-        if push is not None:
-            coordinator._dispatch_text_frame(
-                json.dumps({"type": "datapoint", "data": push})
-            )
-
-    coordinator.websocket.send_str.side_effect = _send
-
-
 def _setpoint(target: str, preset: str) -> list[dict]:
     return [
         {"key": "temperature_ctrl", "value": target},
@@ -242,7 +213,7 @@ async def test_climate_shows_what_the_reply_confirmed(
     over what the reply had just merged.
     """
     coordinator = init_integration.runtime_data
-    _reply_then_push(coordinator, _setpoint("22.0", ""))
+    reply_then_push(coordinator, reply_values=_setpoint("22.0", ""))
     await hass.services.async_call(
         "climate",
         "set_temperature",
@@ -253,7 +224,7 @@ async def test_climate_shows_what_the_reply_confirmed(
     assert state.attributes["temperature"] == 22.0
     assert state.attributes["preset_mode"] == "none"
 
-    _reply_then_push(coordinator, _setpoint("17.0", "eco"))
+    reply_then_push(coordinator, reply_values=_setpoint("17.0", "eco"))
     await hass.services.async_call(
         "climate",
         "set_preset_mode",
@@ -270,10 +241,10 @@ async def test_climate_push_after_the_confirmation_wins(
 ) -> None:
     """A setpoint push landing before the command resumes is kept."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(
+    reply_then_push(
         coordinator,
-        _setpoint("22.5", ""),
         {"id": "idrtr1-001", "values": _setpoint("19.0", "frost")},
+        reply_values=_setpoint("22.5", ""),
     )
     await hass.services.async_call(
         "climate",
@@ -291,7 +262,7 @@ async def test_climate_request_stands_in_for_an_unusable_reply(
 ) -> None:
     """With nothing usable confirmed, the requested target/preset is shown."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(coordinator, _setpoint("NaN", "NaN"))
+    reply_then_push(coordinator, reply_values=_setpoint("NaN", "NaN"))
     await hass.services.async_call(
         "climate",
         "set_temperature",

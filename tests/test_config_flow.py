@@ -1213,6 +1213,60 @@ async def test_options_flow_keeps_live_flagged_cover_selected(
     assert entry.options[CONF_INVERTED_COVERS] == ["patio_awning_001"]
 
 
+async def test_options_flow_keeps_the_flag_of_a_cover_renamed_while_open(
+    hass: HomeAssistant,
+) -> None:
+    """A rename followed while the form is open does not lose the cover's flag.
+
+    The follow rewrites the stored flag to the new unique_id; the form still
+    carries the old one, and saving it unchanged used to put that back — an
+    id no entity has, so the awning read inverted again.
+    """
+
+    def awning(label: str) -> dict:
+        return {
+            "id": "idblind9",
+            "type": "Position",
+            "label": label,
+            "datapoints": [
+                {
+                    "id": "idblind9-001",
+                    "type": "level",
+                    "values": [{"key": "level", "value": "0"}],
+                }
+            ],
+        }
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="gw",
+        data={CONF_HOST: "gw", CONF_TOKEN: "t"},
+        options={CONF_INVERTED_COVERS: ["patio_awning_001"]},
+    )
+    entry.add_to_hass(hass)
+    _, ws = _no_network()
+    fetch = AsyncMock(return_value=[awning("Patio Awning")])
+    with (
+        patch.object(JungHomeDataUpdateCoordinator, "_fetch_devices_from_api", fetch),
+        ws,
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == FlowResultType.FORM
+        # Renamed in the app while the form is open: the rename is followed.
+        fetch.return_value = [awning("Terrace Awning")]
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert entry.options[CONF_INVERTED_COVERS] == ["terrace_awning_001"]
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {}
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+    assert entry.options[CONF_INVERTED_COVERS] == ["terrace_awning_001"]
+
+
 async def test_options_flow_drops_orphaned_flagged_cover(hass: HomeAssistant) -> None:
     """A flag whose cover was removed/relabelled (no entity left) is dropped.
 

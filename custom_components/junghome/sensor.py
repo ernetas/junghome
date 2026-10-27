@@ -27,7 +27,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     datapoint_value,
     device_slug,
-    entry_unloading,
     is_presence_quantity,
     stable_unique_id,
 )
@@ -79,7 +78,108 @@ class JungHomeQuantityDescription(SensorEntityDescription):
 # accepts a bare "c" for the ambient reading, so it is accepted here too —
 # "lux"/"lx") one description covers both; where the *scale* differs (W/kW,
 # Wh/kWh) each scale is its own description under the same translation key.
-#
+# The classes, unit and precision of each quantity are its base below; a
+# description names one gateway label on that base.
+_WATT = JungHomeQuantityDescription(
+    key="power",
+    gateway_units=frozenset({"w"}),
+    device_class=SensorDeviceClass.POWER,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfPower.WATT,
+    suggested_display_precision=1,
+)
+_KILOWATT = JungHomeQuantityDescription(
+    key="power_kw",
+    gateway_units=frozenset({"kw"}),
+    device_class=SensorDeviceClass.POWER,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfPower.KILO_WATT,
+    suggested_display_precision=3,
+)
+_KILOWATT_HOUR = JungHomeQuantityDescription(
+    key="energy",
+    gateway_units=frozenset({"kwh"}),
+    device_class=SensorDeviceClass.ENERGY,
+    state_class=_TOTAL,
+    native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+    suggested_display_precision=2,
+)
+_WATT_HOUR = JungHomeQuantityDescription(
+    key="energy_wh",
+    gateway_units=frozenset({"wh"}),
+    device_class=SensorDeviceClass.ENERGY,
+    state_class=_TOTAL,
+    native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+    suggested_display_precision=0,
+)
+_AMPERE = JungHomeQuantityDescription(
+    key="current",
+    gateway_units=frozenset({"a"}),
+    device_class=SensorDeviceClass.CURRENT,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+    suggested_display_precision=2,
+    entity_registry_enabled_default=False,
+)
+_VOLT = JungHomeQuantityDescription(
+    key="voltage",
+    gateway_units=frozenset({"v"}),
+    device_class=SensorDeviceClass.VOLTAGE,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    suggested_display_precision=0,
+    entity_registry_enabled_default=False,
+)
+_HERTZ = JungHomeQuantityDescription(
+    key="frequency",
+    gateway_units=frozenset({"hz"}),
+    device_class=SensorDeviceClass.FREQUENCY,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfFrequency.HERTZ,
+    suggested_display_precision=2,
+    entity_registry_enabled_default=False,
+)
+_CELSIUS = JungHomeQuantityDescription(
+    key="temperature",
+    gateway_units=frozenset({"°c", "c"}),
+    device_class=SensorDeviceClass.TEMPERATURE,
+    state_class=_MEAS,
+    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+    suggested_display_precision=1,
+)
+_LUX = JungHomeQuantityDescription(
+    key="illuminance",
+    gateway_units=frozenset({"lux", "lx"}),
+    device_class=SensorDeviceClass.ILLUMINANCE,
+    state_class=_MEAS,
+    native_unit_of_measurement=LIGHT_LUX,
+    suggested_display_precision=0,
+)
+_HUMIDITY = JungHomeQuantityDescription(
+    key="humidity",
+    gateway_units=frozenset({"%"}),
+    device_class=SensorDeviceClass.HUMIDITY,
+    state_class=_MEAS,
+    native_unit_of_measurement=PERCENTAGE,
+    suggested_display_precision=0,
+)
+
+
+def _labelled(
+    base: JungHomeQuantityDescription,
+    key: str,
+    gateway_label: str,
+    translation_key: str | None = None,
+) -> JungHomeQuantityDescription:
+    """Return ``base`` for one gateway label, named by its translation key."""
+    return replace(
+        base,
+        key=key,
+        translation_key=translation_key or key,
+        gateway_label=gateway_label,
+    )
+
+
 # The first block is the firmware's whole quantity vocabulary (v2.1.3 build
 # 2840; v2.0.0 builds the label the same way from the same table): the
 # `category: "sensor"` states in `models/device_sensor_states/*State.js`, each
@@ -94,187 +194,28 @@ class JungHomeQuantityDescription(SensorEntityDescription):
 # in "lux" (a user's diagnostics). One description per label, so two readings
 # of one device never share a translated name.
 QUANTITY_DESCRIPTIONS: tuple[JungHomeQuantityDescription, ...] = (
-    JungHomeQuantityDescription(
-        key="input_power",
-        translation_key="input_power",
-        gateway_label="present device input power",
-        gateway_units=frozenset({"w"}),
-        device_class=SensorDeviceClass.POWER,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfPower.WATT,
-        suggested_display_precision=1,
-    ),
-    JungHomeQuantityDescription(
-        key="load_power",
-        translation_key="load_power",
-        gateway_label="active power loadside",
-        gateway_units=frozenset({"w"}),
-        device_class=SensorDeviceClass.POWER,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfPower.WATT,
-        suggested_display_precision=1,
-    ),
-    JungHomeQuantityDescription(
-        key="output_current",
-        translation_key="output_current",
-        gateway_label="present output current",
-        gateway_units=frozenset({"a"}),
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        suggested_display_precision=2,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="input_current",
-        translation_key="input_current",
-        gateway_label="present input current",
-        gateway_units=frozenset({"a"}),
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        suggested_display_precision=2,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="output_voltage",
-        translation_key="output_voltage",
-        gateway_label="present output voltage",
-        gateway_units=frozenset({"v"}),
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        suggested_display_precision=0,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="ambient_temperature",
-        translation_key="ambient_temperature",
-        gateway_label="present ambient temperature",
-        gateway_units=frozenset({"°c", "c"}),
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        suggested_display_precision=1,
-    ),
-    JungHomeQuantityDescription(
-        key="present_illuminance",
-        translation_key="present_illuminance",
-        gateway_label="present illuminance",
-        gateway_units=frozenset({"lux", "lx"}),
-        device_class=SensorDeviceClass.ILLUMINANCE,
-        state_class=_MEAS,
-        native_unit_of_measurement=LIGHT_LUX,
-        suggested_display_precision=0,
-    ),
+    _labelled(_WATT, "input_power", "present device input power"),
+    _labelled(_WATT, "load_power", "active power loadside"),
+    _labelled(_AMPERE, "output_current", "present output current"),
+    _labelled(_AMPERE, "input_current", "present input current"),
+    _labelled(_VOLT, "output_voltage", "present output voltage"),
+    _labelled(_CELSIUS, "ambient_temperature", "present ambient temperature"),
+    _labelled(_LUX, "present_illuminance", "present illuminance"),
     # Generic labels. No known firmware emits any of them (none is a name in
     # the SIG table); they stay so an entity that ever matched one keeps its
     # translated name, and they are the unit-only base an unknown label on
     # these units falls back to (energy, frequency and humidity have no
     # firmware sensor state at all).
-    JungHomeQuantityDescription(
-        key="power",
-        translation_key="power",
-        gateway_label="power",
-        gateway_units=frozenset({"w"}),
-        device_class=SensorDeviceClass.POWER,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfPower.WATT,
-        suggested_display_precision=1,
-    ),
-    JungHomeQuantityDescription(
-        key="power_kw",
-        translation_key="power",
-        gateway_label="power",
-        gateway_units=frozenset({"kw"}),
-        device_class=SensorDeviceClass.POWER,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfPower.KILO_WATT,
-        suggested_display_precision=3,
-    ),
-    JungHomeQuantityDescription(
-        key="energy",
-        translation_key="energy",
-        gateway_label="energy",
-        gateway_units=frozenset({"kwh"}),
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=_TOTAL,
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        suggested_display_precision=2,
-    ),
-    JungHomeQuantityDescription(
-        key="energy_wh",
-        translation_key="energy",
-        gateway_label="energy",
-        gateway_units=frozenset({"wh"}),
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=_TOTAL,
-        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
-        suggested_display_precision=0,
-    ),
-    JungHomeQuantityDescription(
-        key="voltage",
-        translation_key="voltage",
-        gateway_label="voltage",
-        gateway_units=frozenset({"v"}),
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        suggested_display_precision=0,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="current",
-        translation_key="current",
-        gateway_label="current",
-        gateway_units=frozenset({"a"}),
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        suggested_display_precision=2,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="frequency",
-        translation_key="frequency",
-        gateway_label="frequency",
-        gateway_units=frozenset({"hz"}),
-        device_class=SensorDeviceClass.FREQUENCY,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        suggested_display_precision=2,
-        entity_registry_enabled_default=False,
-    ),
-    JungHomeQuantityDescription(
-        key="temperature",
-        translation_key="temperature",
-        gateway_label="temperature",
-        gateway_units=frozenset({"°c", "c"}),
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=_MEAS,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        suggested_display_precision=1,
-    ),
-    JungHomeQuantityDescription(
-        key="illuminance",
-        translation_key="illuminance",
-        gateway_label="illuminance",
-        gateway_units=frozenset({"lux", "lx"}),
-        device_class=SensorDeviceClass.ILLUMINANCE,
-        state_class=_MEAS,
-        native_unit_of_measurement=LIGHT_LUX,
-        suggested_display_precision=0,
-    ),
-    JungHomeQuantityDescription(
-        key="humidity",
-        translation_key="humidity",
-        gateway_label="humidity",
-        gateway_units=frozenset({"%"}),
-        device_class=SensorDeviceClass.HUMIDITY,
-        state_class=_MEAS,
-        native_unit_of_measurement=PERCENTAGE,
-        suggested_display_precision=0,
-    ),
+    _labelled(_WATT, "power", "power"),
+    _labelled(_KILOWATT, "power_kw", "power", "power"),
+    _labelled(_KILOWATT_HOUR, "energy", "energy"),
+    _labelled(_WATT_HOUR, "energy_wh", "energy", "energy"),
+    _labelled(_VOLT, "voltage", "voltage"),
+    _labelled(_AMPERE, "current", "current"),
+    _labelled(_HERTZ, "frequency", "frequency"),
+    _labelled(_CELSIUS, "temperature", "temperature"),
+    _labelled(_LUX, "illuminance", "illuminance"),
+    _labelled(_HUMIDITY, "humidity", "humidity"),
     # "%" is ambiguous (humidity, power factor, ...): unless the label says
     # humidity, keep the unit but assert no device class rather than risk
     # mislabelling.
@@ -330,8 +271,6 @@ async def async_setup_entry(
     @callback
     def _discover_sensors() -> None:
         """Add entities for any sensors not yet created (handles devices added later)."""
-        if entry_unloading(entry):
-            return
         new_entities: list[SensorEntity] = []
         for device in coordinator.data or []:
             # A metering socket's cumulative energy counter is a device
@@ -386,8 +325,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_sensors()
-    entry.async_on_unload(coordinator.async_add_listener(_discover_sensors))
+    coordinator.async_add_discovery_listener(_discover_sensors)
 
 
 class JungHomeQuantity(JungHomeEntity, SensorEntity):

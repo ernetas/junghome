@@ -52,7 +52,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     CONF_INVERTED_COVERS,
     datapoint_value,
-    entry_unloading,
     stable_unique_id,
 )
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
@@ -119,8 +118,6 @@ async def async_setup_entry(
     @callback
     def _discover_covers() -> None:
         """Add entities for any covers not yet created (handles devices added later)."""
-        if entry_unloading(entry):
-            return
         # Covers the user has flagged as inverted (e.g. awnings); their position
         # maps through unchanged instead of being inverted. Read per pass, not
         # once at setup: a followed rename re-points the option WITHOUT a
@@ -152,8 +149,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_covers()
-    entry.async_on_unload(coordinator.async_add_listener(_discover_covers))
+    coordinator.async_add_discovery_listener(_discover_covers)
 
 
 class JungHomeCover(JungHomeEntity, CoverEntity):

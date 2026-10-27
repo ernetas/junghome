@@ -15,7 +15,7 @@ from pytest_homeassistant_custom_component.common import (
 from syrupy.assertion import SnapshotAssertion
 
 from custom_components.junghome.switch import JungHomeSocket, JungHomeSwitch
-from tests.conftest import bare_coordinator
+from tests.conftest import bare_coordinator, reply_then_push
 
 
 async def test_switch_and_socket_commands(
@@ -503,33 +503,6 @@ async def test_nan_status_led_reads_unknown_not_off(
     assert hass.states.get("switch.button_a_status_led").state == "unknown"
 
 
-def _reply_then_push(coordinator, push: dict | None) -> None:
-    """Make the fake socket confirm each set, then deliver ``push`` if given.
-
-    Both land before the awaiting command resumes. With ``push`` None the
-    confirmation itself carries ``"NaN"`` (the gateway gave up reading the
-    node), which leaves nothing usable to read back.
-    """
-
-    def _send(raw: str) -> None:
-        sent = json.loads(raw)
-        data = sent["data"]
-        if push is None:
-            key = data["values"][0]["key"]
-            data = {**data, "values": [{"key": key, "value": "NaN"}]}
-        coordinator._dispatch_text_frame(
-            json.dumps(
-                {"type": "datapoint", "data": data, "message_id": sent["message_id"]}
-            )
-        )
-        if push is not None:
-            coordinator._dispatch_text_frame(
-                json.dumps({"type": "datapoint", "data": push})
-            )
-
-    coordinator.websocket.send_str.side_effect = _send
-
-
 @pytest.mark.parametrize(
     "target",
     [
@@ -555,7 +528,7 @@ async def test_report_after_the_confirmation_wins(
     entity_id, dp_id, key = target
     service, pushed, expected = case
     coordinator = init_integration.runtime_data
-    _reply_then_push(
+    reply_then_push(
         coordinator, {"id": dp_id, "values": [{"key": key, "value": pushed}]}
     )
     await hass.services.async_call(
@@ -577,7 +550,7 @@ async def test_commanded_state_stands_in_for_an_unusable_read_back(
 ) -> None:
     """With nothing usable to read back, the confirmed command's state shows."""
     coordinator = init_integration.runtime_data
-    _reply_then_push(coordinator, None)
+    reply_then_push(coordinator, reply_nan=True)
     await hass.services.async_call(
         "switch", service, {"entity_id": entity_id}, blocking=True
     )

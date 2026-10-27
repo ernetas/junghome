@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import datapoint_bool, entry_unloading, stable_unique_id
+from .const import datapoint_bool, stable_unique_id
 from .coordinator import JungHomeConfigEntry, JungHomeDataUpdateCoordinator
 from .entity import JungHomeEntity, claim_new_entity
 from .models import Datapoint, Device
@@ -31,8 +31,6 @@ async def async_setup_entry(
     @callback
     def _discover_switches() -> None:
         """Add entities for any switches not yet created (handles devices added later)."""
-        if entry_unloading(entry):
-            return
         new_entities: list[JungHomeSocket | JungHomeSwitch] = []
         for device in coordinator.data or []:
             if device.get("type") == "Socket":
@@ -54,8 +52,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _discover_switches()
-    entry.async_on_unload(coordinator.async_add_listener(_discover_switches))
+    coordinator.async_add_discovery_listener(_discover_switches)
 
 
 class JungHomeSocket(JungHomeEntity, SwitchEntity):

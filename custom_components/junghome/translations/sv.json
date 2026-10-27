@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Jung Home-enheter med namn i konflikt",
-      "description": "Vissa enheter på Jung Home-gatewayen på {host} har namn som Home Assistant inte kan skilja åt, eftersom de bara skiljer sig i versaler/gemener, mellanslag eller skiljetecken:\n\n{labels}\n\nEndast en enhet i varje grupp får entiteter i Home Assistant. Byt namn på de andra i Jung Home-appen. Det här problemet försvinner av sig självt när namnen är olika."
+      "description": "Vissa enheter på Jung Home-gatewayen på {host} har namn som Home Assistant betraktar som samma, eftersom de är identiska eller bara skiljer sig i versaler/gemener, accenter, mellanslag eller skiljetecken:\n\n{labels}\n\nHome Assistant visar varje grupp som en enda enhet. Där två enheter i en grupp skulle skapa samma entitet får bara en av dem den, så vissa entiteter saknas. Byt namn på enheterna i Jung Home-appen så att varje namn är unikt. Det här problemet försvinner av sig självt när namnen är olika."
     },
     "gateway_bluetooth_failure": {
       "title": "Bluetooth-fel på Jung Home-gatewayen",

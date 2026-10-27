@@ -2390,6 +2390,62 @@ async def test_colliding_labels_raise_a_repair_issue_until_renamed(
         await hass.async_block_till_done()
 
 
+async def test_colliding_functions_share_one_device_and_lose_only_clashing_entities(
+    hass: HomeAssistant,
+) -> None:
+    """What the colliding-labels issue tells the user, pinned (issue #241).
+
+    Labels collide when they are identical or differ only in case, accents,
+    spaces or punctuation. The colliding functions do not lose all their
+    entities: every entity whose unique_id is free registers, all on the one
+    device the shared slug names, and only an entity that would repeat
+    another's unique_id (same platform, same datapoint suffix) is missing.
+    """
+    assert duplicate_slugs(
+        [{"id": "a", "label": "Küche"}, {"id": "b", "label": "Kuche"}]  # type: ignore[list-item]
+    ) == {"kuche": ["Küche", "Kuche"]}
+    entry = _collision_entry(hass)
+    devices = copy.deepcopy(DEVICES)
+    by_id = {d["id"]: d for d in devices}
+    by_id["idlight1"]["label"] = "Kitchen"  # OnOff: light ..._001
+    by_id["iddim1"]["label"] = "kitchen"  # DimmerLight: light ..._001 again
+    by_id["idrock1"]["label"] = "Kitchen!"  # RockerSwitch: events + LED switch
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=devices),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        issue = ir.async_get(hass).async_get_issue(
+            DOMAIN, f"{ISSUE_DUPLICATE_LABELS}_{entry.entry_id}"
+        )
+        assert issue is not None
+        assert issue.translation_placeholders["labels"] == (
+            '- "Kitchen", "Kitchen!", "kitchen"'
+        )
+        device = find_device(hass, "kitchen")
+        assert device is not None
+        ent_reg = er.async_get(hass)
+        on_device = sorted(
+            (e.domain, e.unique_id)
+            for e in er.async_entries_for_device(ent_reg, device.id)
+        )
+        assert on_device == [
+            ("event", "kitchen_00c_event"),
+            ("event", "kitchen_00d_event"),
+            ("light", "kitchen_001"),
+            ("switch", "kitchen_00e_switch"),
+        ]
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_a_new_collision_un_ignores_the_collision_issue(
     hass: HomeAssistant,
 ) -> None:
@@ -4469,6 +4525,56 @@ async def test_rename_and_capability_change_in_one_adoption_reloads(
         await hass.async_block_till_done()
 
 
+async def test_capability_change_pending_across_a_rename_is_confirmed_on_time(
+    hass: HomeAssistant,
+) -> None:
+    """A change first seen under the old label is confirmed under the new one.
+
+    Slat tilt appears on one adoption, and the next one carries it too but
+    under a label the user just changed in the app. The followed rename moves
+    the pending candidate with the baseline, so that second adoption confirms
+    the change; dropping it made the confirmation start over, one adoption
+    late.
+    """
+    devices = [*_identified_devices(), _awning()]
+    tilted = copy.deepcopy(devices)
+    awning = next(d for d in tilted if d["id"] == "idawning")
+    awning["type"] = "PositionAndAngle"
+    awning["datapoints"].append(
+        {
+            "id": "idawning-002",
+            "type": "angle",
+            "values": [{"key": "angle", "value": "0"}],
+        }
+    )
+    renamed = _relabelled(tilted, "idawning", "Terrace Awning")
+    entry = _prepared_entry(hass)
+    with contextlib.ExitStack() as stack:
+        for stub in _gateway_stubs(devices, _project_export()):
+            stack.enter_context(stub)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        await _poll(hass, coordinator, tilted)
+        assert entry.runtime_data is coordinator, "one sighting is not trusted"
+        with patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=copy.deepcopy(renamed)),
+        ):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            assert entry.runtime_data is not coordinator, "the second one confirms"
+            ent = er.async_get(hass).async_get("cover.patio_awning")
+            assert ent.unique_id == "terrace_awning_001"
+            features = hass.states.get("cover.patio_awning").attributes[
+                "supported_features"
+            ]
+            assert features & CoverEntityFeature.SET_TILT_POSITION
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
 async def test_id_churn_and_a_confirmed_capability_change_reload_once(
     hass: HomeAssistant,
 ) -> None:
@@ -4600,6 +4706,47 @@ async def _two_gateways_sharing_hall_light(
         other.entry_id,
     }
     return entry, other
+
+
+@registry_wide_identifiers
+async def test_device_info_is_not_written_onto_a_device_another_gateway_shares(
+    hass: HomeAssistant,
+) -> None:
+    """Neither gateway rewrites the device page of a device both of them hold.
+
+    Each gateway's version, properties and identity reads used to stamp its
+    own model, firmware and Bluetooth address onto the one shared "Hall
+    Light", last writer wins — even onto a device whose only entity is the
+    other gateway's (issue #242). The gateway's own devices still follow.
+    """
+    entry, other = await _two_gateways_sharing_hall_light(hass)
+    dev_reg = dr.async_get(hass)
+    shared = _device(hass, "Hall Light")
+    shared = dev_reg.async_update_device(
+        shared.id,
+        model="Theirs",
+        sw_version="0.0.1",
+        serial_number="theirs",
+        new_connections=set(),
+    )
+    assert shared is not None
+    for loaded in (entry, other):
+        coordinator = loaded.runtime_data
+        coordinator.gateway_version = "9.9.9 (1)"
+        coordinator._apply_device_info()
+        coordinator.apply_node_identities()
+    after = dev_reg.async_get(shared.id)
+    assert (after.model, after.sw_version, after.serial_number) == (
+        "Theirs",
+        "0.0.1",
+        "theirs",
+    )
+    assert after.connections == set()
+    # Not shared: the button is this gateway's alone and follows as before.
+    assert _device(hass, "Hall Button").sw_version == "9.9.9 (1)"
+    for loaded in (entry, other):
+        await hass.config_entries.async_unload(loaded.entry_id)
+    await hass.async_block_till_done()
 
 
 @registry_wide_identifiers

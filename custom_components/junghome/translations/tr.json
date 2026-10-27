@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Adları çakışan Jung Home cihazları",
-      "description": "{host} adresindeki Jung Home ağ geçidindeki bazı cihazların adları yalnızca büyük/küçük harf, boşluk veya noktalama işaretleriyle farklılaştığı için Home Assistant bunları birbirinden ayıramıyor:\n\n{labels}\n\nHer gruptan yalnızca bir cihaz Home Assistant'ta varlık alır. Diğerlerini Jung Home uygulamasında yeniden adlandırın. Adlar farklı hale geldiğinde bu sorun kendiliğinden kaybolur."
+      "description": "{host} adresindeki Jung Home ağ geçidindeki bazı cihazların adları aynı olduğu ya da yalnızca büyük/küçük harf, aksan işaretleri, boşluk veya noktalama işaretleriyle farklılaştığı için Home Assistant bunları aynı ad olarak görüyor:\n\n{labels}\n\nHome Assistant her grubu tek bir cihaz olarak gösterir. Bir gruptaki iki cihaz aynı varlığı oluşturacaksa bunu yalnızca biri alır, bu nedenle bazı varlıklar eksiktir. Her ad benzersiz olacak şekilde cihazları Jung Home uygulamasında yeniden adlandırın. Adlar farklı hale geldiğinde bu sorun kendiliğinden kaybolur."
     },
     "gateway_bluetooth_failure": {
       "title": "Jung Home ağ geçidinde Bluetooth arızası",

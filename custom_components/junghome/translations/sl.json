@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Naprave Jung Home s spornimi imeni",
-      "description": "Nekatere naprave na prehodu Jung Home na naslovu {host} imajo imena, ki jih Home Assistant ne more razlikovati, ker se razlikujejo le po velikih in malih črkah, presledkih ali ločilih:\n\n{labels}\n\nV Home Assistantu dobi entitete le ena naprava iz vsake skupine. Preimenujte ostale v aplikaciji Jung Home. Ta težava bo izginila sama, ko bodo imena različna."
+      "description": "Nekatere naprave na prehodu Jung Home na naslovu {host} imajo imena, ki jih Home Assistant obravnava kot enaka, ker so enaka ali se razlikujejo le po velikih in malih črkah, naglasih, presledkih ali ločilih:\n\n{labels}\n\nHome Assistant prikaže vsako skupino kot eno samo napravo. Kjer bi dve napravi iz skupine ustvarili isto entiteto, jo dobi le ena od njiju, zato nekatere entitete manjkajo. Preimenujte naprave v aplikaciji Jung Home tako, da bo vsako ime edinstveno. Ta težava bo izginila sama, ko bodo imena različna."
     },
     "gateway_bluetooth_failure": {
       "title": "Okvara Bluetootha na prehodu Jung Home",

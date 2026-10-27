@@ -247,7 +247,7 @@
     },
     "duplicate_device_labels": {
       "title": "Jung Home-apparaten met conflicterende namen",
-      "description": "Sommige apparaten op de Jung Home-gateway op {host} hebben namen die Home Assistant niet uit elkaar kan houden, omdat ze alleen verschillen in hoofdletters, spaties of leestekens:\n\n{labels}\n\nAlleen één apparaat van elke groep krijgt entiteiten in Home Assistant. Geef de andere een nieuwe naam in de Jung Home-app. Dit probleem verdwijnt vanzelf zodra de namen verschillend zijn."
+      "description": "Sommige apparaten op de Jung Home-gateway op {host} hebben namen die Home Assistant als gelijk beschouwt, omdat ze identiek zijn of alleen verschillen in hoofdletters, accenten, spaties of leestekens:\n\n{labels}\n\nHome Assistant toont elke groep als één apparaat. Waar twee apparaten van een groep dezelfde entiteit zouden aanmaken, krijgt slechts één van hen die, zodat sommige entiteiten ontbreken. Geef de apparaten in de Jung Home-app een nieuwe naam, zodat elke naam uniek is. Dit probleem verdwijnt vanzelf zodra de namen verschillend zijn."
     },
     "gateway_bluetooth_failure": {
       "title": "Bluetooth-storing op de Jung Home-gateway",

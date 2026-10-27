@@ -37,6 +37,8 @@ from functools import lru_cache
 
 import aiohttp
 
+from .const import gateway_url
+
 # Length of a SHA-256 hex digest, the only form ``CONF_TLS_FINGERPRINT`` holds.
 FINGERPRINT_HEX_LENGTH = 64
 
@@ -112,7 +114,7 @@ async def async_learn_fingerprint(session: aiohttp.ClientSession, host: str) -> 
     ignores ``ssl=``), it is reported as a connection error too, so a caller
     never proceeds without a real fingerprint.
     """
-    url = f"https://{host}/api/junghome/version/"
+    url = gateway_url(host, "api/junghome/version/")
     try:
         async with (
             asyncio.timeout(LEARN_TIMEOUT),

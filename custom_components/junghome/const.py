@@ -358,6 +358,41 @@ def gateway_device_info(entry: "ConfigEntry", sw_version: str | None) -> DeviceI
     return info
 
 
+def url_host(host: str) -> str:
+    """Return ``host`` as the host part of a URL: a bare IPv6 address bracketed.
+
+    A hostname, an IPv4 address, or an address already bracketed (or carrying
+    a port) is used as is.
+    """
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return f"[{host}]"
+    except ValueError:
+        pass
+    return host
+
+
+def gateway_url(host: str, path: str = "", scheme: str = "https") -> str:
+    """Return the URL of ``path`` on the gateway at ``host``.
+
+    Every request the integration makes is built here — the REST calls, the
+    WebSocket upgrade, the certificate probe and the device page's "Visit"
+    link — so an entry stored with an IPv6 address reaches the gateway on
+    every path, not only on the one that bracketed it.
+    """
+    return f"{scheme}://{url_host(host)}/{path}"
+
+
+def entry_issue_id(issue: str, entry_id: str) -> str:
+    """Return the id of a config entry's repair issue ``issue``.
+
+    Every issue the integration raises is scoped to one entry (two gateways
+    each hold their own), with the issue key as the prefix — the prefix
+    ``repairs.py`` dispatches its fix flows on.
+    """
+    return f"{issue}_{entry_id}"
+
+
 def gateway_configuration_url(host: object) -> str | None:
     """Return ``https://<host>/``, the gateway's web page, or None.
 
@@ -374,12 +409,7 @@ def gateway_configuration_url(host: object) -> str | None:
     """
     if not isinstance(host, str) or not (host := host.strip()):
         return None
-    try:
-        if ipaddress.ip_address(host).version == 6:
-            host = f"[{host}]"
-    except ValueError:
-        pass  # a hostname, or an address with a port: used as is
-    url = f"https://{host}/"
+    url = gateway_url(host)
     try:
         valid = bool(URL(url).host)
     except ValueError:
@@ -399,6 +429,19 @@ def device_config_entry_ids(device_entry: "AnyDeviceEntry") -> set[str]:
     if entry_id is not None:
         return {entry_id}
     return set(device_entry.config_entries)
+
+
+def shared_with_another_entry(device_entry: "AnyDeviceEntry", entry_id: str) -> bool:
+    """Whether a config entry other than ``entry_id`` also holds ``device_entry``.
+
+    Only possible before HA 2026.9, where device identifiers are unique
+    registry-wide: two gateways that each have a function of the same label
+    (the documented "labels must be distinct across gateways" limitation)
+    register ONE device. Its entities, identifier and device-page values
+    belong to both gateways, so neither may remove, re-key or rewrite it on
+    its own.
+    """
+    return bool(device_config_entry_ids(device_entry) - {entry_id})
 
 
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
@@ -520,8 +563,12 @@ def duplicate_slugs(devices: list[Device]) -> dict[str, list[str]]:
     ``device_slug`` deliberately does not disambiguate two devices whose labels
     slug identically (see its docstring: per-poll disambiguation would make
     unique_ids depend on poll order, and the hardware identity is only known
-    after a successful export read). The second such device simply loses — its
-    entities can't register.
+    after a successful export read). Labels collide when they are identical or
+    differ only in case, accents (``slugify`` transliterates), spaces or
+    punctuation. The colliding functions share one registry device, and the
+    second one loses each clash: an entity whose unique_id (slug + datapoint
+    suffix) the first already holds does not register; the rest do, all on
+    that one device.
 
     That is survivable for identity, but **any caller keeping per-device state
     keyed by slug must skip a colliding slug**, because two devices would

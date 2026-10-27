@@ -42,7 +42,9 @@ endpoint or a failed read is retried every interval, one small request), then
 `GET /devices/{device_id}?verbose=true` — the same object for one device,
 ~8 KB — every five minutes for each device that has an energy counter (the
 counter itself only moves when the gateway re-reads it, about hourly, so the
-sensor steps once an hour; the cheap re-read just keeps the lag short). That
+sensor steps once an hour; the cheap re-read just keeps the lag short), and
+with a doubling back-off (up to hourly) for a light whose Kelvin range the
+gateway has not bound yet. That
 feeds the `total_energy` sensor (Wh, `total_increasing`) and exempts buttons
 whose `software_revision` is known to predate 2.2.0 from duplicate-press
 suppression. Caveats: the endpoint is declared subject to change (the sensor
@@ -135,7 +137,8 @@ The messages the current build can emit (`middleware/dist`):
 | DEBUG | `Update History`, `Ethernet Speed Configuration: …`, `high cpu load`, `SN error read from flash`, `IV Update …`, `project upload failed`, `Provisioning of Gateway failed` | `startup.js`, `cpu_load_service.js`, `ncp_service.js`, `ip_event_handler.js` | diagnostics |
 
 The integration polls it (`coordinator.async_fetch_health_status`, `health.py`)
-once after the first refresh and every 15 minutes, best-effort (any non-200 —
+once in the background when setup has finished and every 15 minutes, best-effort
+(it keeps only the newest 200 entries for diagnostics; any non-200 —
 401 included — or transport error changes nothing), and raises one repair
 issue per condition: Bluetooth failure (the first two rows), out of sequence
 numbers, time sync (withdrawn as soon as `GET /config/parameter/time_error`
