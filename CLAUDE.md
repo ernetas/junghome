@@ -302,8 +302,10 @@ JUNG HOME Gateway over its REST API and WebSocket.
   — `PushButton2gang`, `DimmerAct1gang2input`), else the function type.
   `device_info` reads both at registration; `_apply_device_info` rewrites
   registered rows when the gateway version, the properties or the identities
-  arrive or change later (hub, listed non-colliding slugs only; unknown
-  values never written). The hub's `configuration_url` is
+  arrive or change later (hub, listed non-colliding slugs only, never a
+  row another gateway's entry shares before HA 2026.9 —
+  `const.shared_with_another_entry`, which `link_node_identity`'s writes
+  honour too; unknown values never written). The hub's `configuration_url` is
   `https://<host>/` (`const.gateway_configuration_url`: nginx proxies `/` to
   the api-server's webview landing page; a host change reloads the entry,
   which re-registers it). The state DB's defaults `"0.0.0"`/`"0"` mean "not

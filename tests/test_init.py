@@ -4653,6 +4653,47 @@ async def _two_gateways_sharing_hall_light(
 
 
 @registry_wide_identifiers
+async def test_device_info_is_not_written_onto_a_device_another_gateway_shares(
+    hass: HomeAssistant,
+) -> None:
+    """Neither gateway rewrites the device page of a device both of them hold.
+
+    Each gateway's version, properties and identity reads used to stamp its
+    own model, firmware and Bluetooth address onto the one shared "Hall
+    Light", last writer wins — even onto a device whose only entity is the
+    other gateway's (issue #242). The gateway's own devices still follow.
+    """
+    entry, other = await _two_gateways_sharing_hall_light(hass)
+    dev_reg = dr.async_get(hass)
+    shared = _device(hass, "Hall Light")
+    shared = dev_reg.async_update_device(
+        shared.id,
+        model="Theirs",
+        sw_version="0.0.1",
+        serial_number="theirs",
+        new_connections=set(),
+    )
+    assert shared is not None
+    for loaded in (entry, other):
+        coordinator = loaded.runtime_data
+        coordinator.gateway_version = "9.9.9 (1)"
+        coordinator._apply_device_info()
+        coordinator.apply_node_identities()
+    after = dev_reg.async_get(shared.id)
+    assert (after.model, after.sw_version, after.serial_number) == (
+        "Theirs",
+        "0.0.1",
+        "theirs",
+    )
+    assert after.connections == set()
+    # Not shared: the button is this gateway's alone and follows as before.
+    assert _device(hass, "Hall Button").sw_version == "9.9.9 (1)"
+    for loaded in (entry, other):
+        await hass.config_entries.async_unload(loaded.entry_id)
+    await hass.async_block_till_done()
+
+
+@registry_wide_identifiers
 async def test_pruning_a_device_another_gateway_shares_only_detaches_it(
     hass: HomeAssistant,
 ) -> None:

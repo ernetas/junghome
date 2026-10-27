@@ -38,7 +38,6 @@ from .const import (
     MAX_POLL_INTERVAL_SECONDS,
     MIN_POLL_INTERVAL_SECONDS,
     WEBSOCKET_OUTAGE_REPAIR_AFTER,
-    device_config_entry_ids,
     device_slug,
     duplicate_slugs,
     entry_issue_id,
@@ -46,6 +45,7 @@ from .const import (
     gateway_device_id,
     gateway_url,
     scene_unique_id,
+    shared_with_another_entry,
 )
 from .health import (
     HEALTH_CONDITIONS,
@@ -991,7 +991,7 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         if old_device is None:
             return False
         label = str(device.get("label"))
-        if device_config_entry_ids(old_device) - {entry_id}:
+        if shared_with_another_entry(old_device, entry_id):
             # Before Home Assistant 2026.9 identifiers are registry-wide, so
             # another gateway's function with the same label shares this
             # device; its entities and the identifier are that gateway's too.
@@ -2022,8 +2022,13 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         (the Bluetooth-direct sibling) blocks the link with a collision the
         per-entry lookup cannot see; the write is let raise and the address
         left to its holder. The serial number is written either way.
+
+        Nothing is written onto a device another gateway's entry shares
+        (before HA 2026.9 — ``shared_with_another_entry``): the address is
+        this gateway's node, the device the other gateway's function too, and
+        the two entries took turns stamping their own node's address on it.
         """
-        if identity.mac is None:
+        if identity.mac is None or shared_with_another_entry(device_entry, entry_id):
             return
         if device_entry.serial_number != identity.mac:
             registry.async_update_device(device_entry.id, serial_number=identity.mac)
@@ -2868,8 +2873,11 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
         device list does not carry (a device on its way to the pruner) is left
         alone, and so are colliding slugs (``duplicate_slugs``): two functions
         behind one registry device would take turns writing their values.
-        Unknown values are never written — ``None`` would blank what an
-        earlier run stored.
+        So is a device another gateway's entry shares (before HA 2026.9 —
+        ``shared_with_another_entry``): each gateway's reads overwrote the
+        other's model and firmware, last writer wins, even onto a device whose
+        only entity was the other gateway's. Unknown values are never written
+        — ``None`` would blank what an earlier run stored.
         """
         entry = self.config_entry
         if entry is None:  # pragma: no cover - an entry coordinator always has one
@@ -2891,6 +2899,8 @@ class JungHomeDataUpdateCoordinator(DataUpdateCoordinator[list[Device]]):
             model: str | None = None
             if hub_id in slugs:
                 sw_version = self.gateway_version
+            elif shared_with_another_entry(device_entry, entry.entry_id):
+                continue
             elif (
                 device := next((by_slug[s] for s in slugs if s in by_slug), None)
             ) is not None:

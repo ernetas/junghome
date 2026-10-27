@@ -431,6 +431,19 @@ def device_config_entry_ids(device_entry: "AnyDeviceEntry") -> set[str]:
     return set(device_entry.config_entries)
 
 
+def shared_with_another_entry(device_entry: "AnyDeviceEntry", entry_id: str) -> bool:
+    """Whether a config entry other than ``entry_id`` also holds ``device_entry``.
+
+    Only possible before HA 2026.9, where device identifiers are unique
+    registry-wide: two gateways that each have a function of the same label
+    (the documented "labels must be distinct across gateways" limitation)
+    register ONE device. Its entities, identifier and device-page values
+    belong to both gateways, so neither may remove, re-key or rewrite it on
+    its own.
+    """
+    return bool(device_config_entry_ids(device_entry) - {entry_id})
+
+
 def datapoint_value(datapoint: Datapoint | None, key: str) -> str | None:
     """Return the value for ``key`` in a datapoint's ``values``, or ``None``.
 
