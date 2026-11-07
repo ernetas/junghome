@@ -1,6 +1,7 @@
 """The Jung Home integration."""
 
 import logging
+import re
 from collections.abc import Callable
 
 from homeassistant.config_entries import (
@@ -644,6 +645,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
             hass.config_entries.async_update_entry(
                 entry, data={**entry.data, "stable_ids_migrated": True}
             )
+    if entry.data.get("stable_ids_migrated"):
+        _remove_legacy_entities(hass, entry)
 
     # One-time re-keying of scene entities onto per-gateway unique_ids. Separate
     # flag from the stable-id migration above, which existing installs have
@@ -783,6 +786,38 @@ def _migrate_to_stable_ids(
         _LOGGER.exception("Jung Home: failed to migrate registry to stable ids")
         return False
     return not had_error
+
+
+# A unique_id from before the stable-id migration: the gateway's volatile device
+# id and datapoint id (``"id"`` + 15 hex digits each, see "Stable identity"),
+# then the old trailing part (``""``, ``"_switch"``, ``"_<label>"``).
+_LEGACY_UNIQUE_ID = re.compile(r"id[0-9a-f]{15}_id[0-9a-f]{15}(?:_|$)")
+
+
+def _remove_legacy_entities(hass: HomeAssistant, entry: JungHomeConfigEntry) -> int:
+    """Remove the entities the stable-id migration could not re-key; return how many.
+
+    The migration re-keys an old id-based entity only while its datapoint is
+    still in the device list. One whose datapoint was already gone (a device
+    re-provisioned, or a datapoint the firmware dropped, before the migration
+    ran) keeps its old unique_id for good: no platform provides it again, so it
+    sits in the registry as "no longer provided", ``unavailable`` forever — a
+    live install carried 15 of them (sockets' sensors from before the firmware
+    labels, some named "NaN"). Only called once the migration is done: from
+    then on nothing can claim such an id.
+    """
+    ent_reg = er.async_get(hass)
+    removed = 0
+    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if _LEGACY_UNIQUE_ID.match(entity.unique_id):
+            ent_reg.async_remove(entity.entity_id)
+            removed += 1
+    if removed:
+        _LOGGER.info(
+            "Jung Home: removed %s entities left behind by the stable-id migration",
+            removed,
+        )
+    return removed
 
 
 def _migrate_scene_unique_ids(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:

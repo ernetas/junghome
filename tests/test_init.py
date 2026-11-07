@@ -1238,6 +1238,73 @@ async def test_migration_removes_colliding_stable_id(hass: HomeAssistant) -> Non
     await hass.async_block_till_done()
 
 
+async def test_legacy_entities_removed_once_migrated(hass: HomeAssistant) -> None:
+    """An old id-based entity the migration could not re-key is removed.
+
+    Its datapoint was gone before the migration ran, so it kept the volatile-id
+    unique_id and stayed "no longer provided" forever. Other entities stay.
+    """
+    ent_reg = er.async_get(hass)
+    orphan = "idc6b25d26c0617c2_idc02ddd0c03d91e3_nan"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
+    )
+    entry.add_to_hass(hass)
+    ent_reg.async_get_or_create(Platform.SENSOR, DOMAIN, orphan, config_entry=entry)
+    ent_reg.async_get_or_create(
+        Platform.LIGHT,
+        DOMAIN,
+        "id103231114779eac_idf82d8e7ce4f5214",
+        config_entry=entry,
+    )
+    # A slug-keyed id that merely starts with "id" is not legacy.
+    ent_reg.async_get_or_create(
+        Platform.LIGHT, DOMAIN, "idle_lamp_001", config_entry=entry
+    )
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=DEVICES),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, orphan) is None
+    assert (
+        ent_reg.async_get_entity_id(
+            Platform.LIGHT, DOMAIN, "id103231114779eac_idf82d8e7ce4f5214"
+        )
+        is None
+    )
+    assert (
+        ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "idle_lamp_001") is not None
+    )
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_legacy_entities_kept_until_migrated(hass: HomeAssistant) -> None:
+    """Before the migration has finished, an old id-based entity is left to it."""
+    ent_reg = er.async_get(hass)
+    orphan = "idc6b25d26c0617c2_idc02ddd0c03d91e3_nan"
+
+    def prepare(entry: MockConfigEntry) -> None:
+        ent_reg.async_get_or_create(Platform.SENSOR, DOMAIN, orphan, config_entry=entry)
+
+    with patch("custom_components.junghome._migrate_to_stable_ids", return_value=False):
+        entry = await _setup_with_registry(hass, prepare)
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, orphan) is not None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_migration_per_item_error_leaves_flag_unset(
     hass: HomeAssistant,
 ) -> None:
