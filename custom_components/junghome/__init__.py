@@ -645,8 +645,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: JungHomeConfigEntry) -> 
             hass.config_entries.async_update_entry(
                 entry, data={**entry.data, "stable_ids_migrated": True}
             )
-    if entry.data.get("stable_ids_migrated"):
-        _remove_legacy_entities(hass, entry)
+    if entry.data.get("stable_ids_migrated") and not entry.data.get(
+        "legacy_entities_removed"
+    ):
+        _remove_legacy_entities(hass, entry, coordinator)
 
     # One-time re-keying of scene entities onto per-gateway unique_ids. Separate
     # flag from the stable-id migration above, which existing installs have
@@ -789,35 +791,105 @@ def _migrate_to_stable_ids(
 
 
 # A unique_id from before the stable-id migration: the gateway's volatile device
-# id and datapoint id (``"id"`` + 15 hex digits each, see "Stable identity"),
-# then the old trailing part (``""``, ``"_switch"``, ``"_<label>"``).
-_LEGACY_UNIQUE_ID = re.compile(r"id[0-9a-f]{15}_id[0-9a-f]{15}(?:_|$)")
+# id, then its datapoint id (``"id"`` + 15 hex digits each, see "Stable
+# identity"; current firmware appends ``-<suffix>`` to the datapoint id, early
+# firmware did not — a live install's leftovers are all dash-less), then the old
+# trailing part (``""``, ``"_switch"``, ``"_<label>"``). Group 2 is the
+# datapoint id.
+_LEGACY_UNIQUE_ID = re.compile(
+    r"(id[0-9a-f]{15})_(id[0-9a-f]{15}(?:-[0-9a-f]+)?)(?:_|$)"
+)
 
 
-def _remove_legacy_entities(hass: HomeAssistant, entry: JungHomeConfigEntry) -> int:
-    """Remove the entities the stable-id migration could not re-key; return how many.
+def _legacy_entities(
+    hass: HomeAssistant, entry: JungHomeConfigEntry, current_datapoints: set[str]
+) -> tuple[dict[str, er.RegistryEntry], bool]:
+    """Return this entry's legacy-id entities whose datapoint is gone.
+
+    Also whether any legacy-id entity's datapoint IS in the device list: that
+    one is live (or re-keyable), never an orphan. A device with no usable label
+    keys on its volatile id (``device_slug``), and on dash-less firmware
+    ``datapoint_suffix`` is the whole datapoint id, so its *current* unique_id
+    has the legacy shape too.
+    """
+    orphans: dict[str, er.RegistryEntry] = {}
+    any_live = False
+    ent_reg = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        match = _LEGACY_UNIQUE_ID.match(entity.unique_id)
+        if not match:
+            continue
+        if match.group(2) in current_datapoints:
+            any_live = True
+        else:
+            orphans[entity.unique_id] = entity
+    return orphans, any_live
+
+
+def _remove_legacy_entities(
+    hass: HomeAssistant,
+    entry: JungHomeConfigEntry,
+    coordinator: JungHomeDataUpdateCoordinator,
+) -> None:
+    """Remove the entities the stable-id migration could not re-key.
 
     The migration re-keys an old id-based entity only while its datapoint is
     still in the device list. One whose datapoint was already gone (a device
     re-provisioned, or a datapoint the firmware dropped, before the migration
     ran) keeps its old unique_id for good: no platform provides it again, so it
     sits in the registry as "no longer provided", ``unavailable`` forever — a
-    live install carried 15 of them (sockets' sensors from before the firmware
-    labels, some named "NaN"). Only called once the migration is done: from
-    then on nothing can claim such an id.
+    live install carried 15 of them (a socket's sensors from before the
+    firmware labels, six named "NaN", and two lights).
+
+    Destructive, so guarded three ways:
+
+    * only an entity whose datapoint id is absent from the device list is a
+      candidate — a label-less device on dash-less firmware still holds a
+      legacy-shaped unique_id while live;
+    * absence must hold on two setups: the first records the candidates in
+      ``entry.data``, a later one removes those still absent. The gateway
+      sometimes returns a partial list right after a reload (see
+      ``STALE_DEVICE_PRUNE_MISSES``), and the migration that just finished may
+      have skipped a device only because that list was short;
+    * a legacy entity whose datapoint is back gets the migration re-run first,
+      so it is re-keyed rather than left behind as a duplicate.
+
+    One-shot: ``legacy_entities_removed`` stops the registry scan for good.
     """
+    current_datapoints = {
+        dp_id
+        for device in coordinator.data or []
+        for dp in device.get("datapoints", [])
+        if (dp_id := dp.get("id"))
+    }
+    if not current_datapoints:
+        return  # an empty/failed list proves nothing; decide on a later setup
+    orphans, any_live = _legacy_entities(hass, entry, current_datapoints)
+    if any_live:
+        _migrate_to_stable_ids(hass, entry, coordinator)
+        orphans, _ = _legacy_entities(hass, entry, current_datapoints)
+
+    data = dict(entry.data)
+    if "legacy_entity_candidates" not in data and orphans:
+        data["legacy_entity_candidates"] = sorted(orphans)
+        hass.config_entries.async_update_entry(entry, data=data)
+        return
+
     ent_reg = er.async_get(hass)
-    removed = 0
-    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if _LEGACY_UNIQUE_ID.match(entity.unique_id):
-            ent_reg.async_remove(entity.entity_id)
-            removed += 1
+    confirmed = set(data.pop("legacy_entity_candidates", [])) & orphans.keys()
+    removed = sorted(orphans[uid].entity_id for uid in confirmed)
+    for entity_id in removed:
+        ent_reg.async_remove(entity_id)
     if removed:
-        _LOGGER.info(
-            "Jung Home: removed %s entities left behind by the stable-id migration",
-            removed,
+        _LOGGER.warning(
+            "Jung Home: removed %s entities the stable-id migration could not "
+            "re-key (their datapoints are gone from the gateway): %s. "
+            "Automations or dashboards that used them need updating",
+            len(removed),
+            ", ".join(removed),
         )
-    return removed
+    data["legacy_entities_removed"] = True
+    hass.config_entries.async_update_entry(entry, data=data)
 
 
 def _migrate_scene_unique_ids(hass: HomeAssistant, entry: JungHomeConfigEntry) -> bool:
