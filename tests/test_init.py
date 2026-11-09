@@ -56,6 +56,7 @@ from custom_components.junghome.const import (
     device_slug,
     duplicate_slugs,
     gateway_device_id,
+    stable_unique_id,
 )
 from custom_components.junghome.coordinator import (
     ISSUE_DUPLICATE_LABELS,
@@ -1234,6 +1235,229 @@ async def test_migration_removes_colliding_stable_id(hass: HomeAssistant) -> Non
         ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "hall_light_001")
         is not None
     )
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+# Leftovers in both shapes the pre-migration code wrote, `{device id}_{datapoint
+# id}{trailing}`: a dash-less datapoint id (early firmware — every leftover on
+# the live install that motivated the cleanup) and a dashed one (current
+# firmware, `id…-001`). Their datapoints are in no device list.
+_LEGACY_DASHLESS = "idc6b25d26c0617c2_idc02ddd0c03d91e3_nan"
+_LEGACY_DASHED = "id0a1b2c3d4e5f607_id0a1b2c3d4e5f607-010_present_power"
+_LEGACY_LIGHT = "id103231114779eac_idf82d8e7ce4f5214"
+
+
+def _listed(device_id: str) -> dict:
+    return next(d for d in DEVICES if d["id"] == device_id)
+
+
+def _migrated_entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok", "stable_ids_migrated": True},
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def _set_up_with(
+    hass: HomeAssistant, entry: MockConfigEntry, devices: list[dict]
+) -> None:
+    """Set the entry up (again) on `devices`, then unload it."""
+    with (
+        patch.object(
+            JungHomeDataUpdateCoordinator,
+            "_fetch_devices_from_api",
+            AsyncMock(return_value=copy.deepcopy(devices)),
+        ),
+        patch.object(
+            JungHomeDataUpdateCoordinator, "_run_websocket", _fake_run_websocket
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_legacy_entities_removed_on_second_setup(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Leftovers the migration could not re-key are removed, after two setups.
+
+    The first setup only records them (its device list may be a partial one),
+    the second removes those still absent and names them in a warning. Then
+    the scan is switched off for good.
+    """
+    ent_reg = er.async_get(hass)
+    entry = _migrated_entry(hass)
+    for platform, uid in (
+        (Platform.SENSOR, _LEGACY_DASHLESS),
+        (Platform.SENSOR, _LEGACY_DASHED),
+        (Platform.LIGHT, _LEGACY_LIGHT),
+        # A slug-keyed id that merely starts with "id" is not legacy.
+        (Platform.LIGHT, "idle_lamp_001"),
+    ):
+        ent_reg.async_get_or_create(platform, DOMAIN, uid, config_entry=entry)
+
+    await _set_up_with(hass, entry, DEVICES)
+    assert entry.data["legacy_entity_candidates"] == sorted(
+        (_LEGACY_DASHED, _LEGACY_DASHLESS, _LEGACY_LIGHT)
+    )
+    assert "legacy_entities_removed" not in entry.data
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, _LEGACY_DASHED)
+    light_entity_id = ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, _LEGACY_LIGHT)
+
+    with caplog.at_level(logging.WARNING):
+        await _set_up_with(hass, entry, DEVICES)
+    for platform, uid in (
+        (Platform.SENSOR, _LEGACY_DASHLESS),
+        (Platform.SENSOR, _LEGACY_DASHED),
+        (Platform.LIGHT, _LEGACY_LIGHT),
+    ):
+        assert ent_reg.async_get_entity_id(platform, DOMAIN, uid) is None
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, "idle_lamp_001")
+    assert entry.data["legacy_entities_removed"] is True
+    assert "legacy_entity_candidates" not in entry.data
+    assert "removed 3 entities" in caplog.text
+    assert light_entity_id in caplog.text
+
+    # Done: a leftover appearing later is no longer scanned for.
+    ent_reg.async_get_or_create(
+        Platform.SENSOR, DOMAIN, _LEGACY_DASHED, config_entry=entry
+    )
+    await _set_up_with(hass, entry, DEVICES)
+    await _set_up_with(hass, entry, DEVICES)
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, _LEGACY_DASHED)
+
+
+async def test_label_less_device_on_dashless_firmware_is_kept(
+    hass: HomeAssistant,
+) -> None:
+    """A live entity whose current unique_id has the legacy shape is never removed.
+
+    A device with no label keys on its volatile id (`device_slug`), and a
+    dash-less datapoint id is its own suffix, so the stable id reads
+    `id…_id…` — the legacy pattern. Its datapoint is in the list, so it is
+    never removed (which would drop its name, area and disabled state).
+    """
+    ent_reg = er.async_get(hass)
+    entry = _migrated_entry(hass)
+    light = copy.deepcopy(_listed("idlight1"))
+    light["id"] = "id103231114779eac"
+    light["label"] = ""
+    light["datapoints"][0]["id"] = "idf82d8e7ce4f5214"
+    uid = stable_unique_id(light, light["datapoints"][0])
+    assert uid == _LEGACY_LIGHT
+
+    await _set_up_with(hass, entry, [light])
+    entity_id = ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, uid)
+    assert entity_id is not None
+    # Home Assistant restores a re-created entity's row from its deleted
+    # entries, so watch for the removal itself rather than compare rows.
+    removals: list[str] = []
+    hass.bus.async_listen(
+        er.EVENT_ENTITY_REGISTRY_UPDATED,
+        lambda event: (
+            removals.append(event.data["entity_id"])
+            if event.data["action"] == "remove"
+            else None
+        ),
+    )
+
+    await _set_up_with(hass, entry, [light])
+    await _set_up_with(hass, entry, [light])
+    assert removals == []
+    assert ent_reg.async_get(entity_id) is not None
+    assert entry.data["legacy_entities_removed"] is True
+
+
+async def test_migration_skipping_a_missing_device_then_cleanup(
+    hass: HomeAssistant,
+) -> None:
+    """The migration and the cleanup in one setup, on a short device list.
+
+    The migration skips a device the list lacks and still finishes; the same
+    setup's cleanup only records its entity. When the device is listed again
+    the entity is re-keyed onto its stable id (same registry entry), not
+    deleted.
+    """
+    ent_reg = er.async_get(hass)
+    # A real-shaped id: the legacy pattern needs "id" + 15 hex digits.
+    hall = copy.deepcopy(_listed("idlight1"))
+    hall["id"] = "id0a1b2c3d4e5f607"
+    hall["datapoints"][0]["id"] = "id0a1b2c3d4e5f607-001"
+    full = [hall if d["id"] == "idlight1" else d for d in DEVICES]
+    short = [d for d in DEVICES if d["id"] != "idlight1"]
+    old_uid = f"{hall['id']}_{hall['datapoints'][0]['id']}"
+    holder: dict[str, str] = {}
+
+    def prepare(entry: MockConfigEntry) -> None:
+        holder["id"] = ent_reg.async_get_or_create(
+            Platform.LIGHT, DOMAIN, old_uid, config_entry=entry
+        ).id
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1.2.3.4",
+        data={CONF_HOST: "1.2.3.4", CONF_TOKEN: "tok"},
+    )
+    entry.add_to_hass(hass)
+    prepare(entry)
+    await _set_up_with(hass, entry, short)
+    assert entry.data["stable_ids_migrated"] is True
+    assert entry.data["legacy_entity_candidates"] == [old_uid]
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, old_uid)
+
+    await _set_up_with(hass, entry, full)
+    assert ent_reg.async_get_entity_id(Platform.LIGHT, DOMAIN, old_uid) is None
+    rekeyed = ent_reg.async_get(
+        ent_reg.async_get_entity_id(
+            Platform.LIGHT, DOMAIN, stable_unique_id(hall, hall["datapoints"][0])
+        )
+    )
+    assert rekeyed is not None
+    assert rekeyed.id == holder["id"]
+    assert entry.data["legacy_entities_removed"] is True
+
+
+async def test_legacy_cleanup_waits_for_a_non_empty_device_list(
+    hass: HomeAssistant,
+) -> None:
+    """An empty device list proves nothing: no candidates, no flag."""
+    ent_reg = er.async_get(hass)
+    entry = _migrated_entry(hass)
+    ent_reg.async_get_or_create(
+        Platform.SENSOR, DOMAIN, _LEGACY_DASHED, config_entry=entry
+    )
+    await _set_up_with(hass, entry, [])
+    assert "legacy_entity_candidates" not in entry.data
+    assert "legacy_entities_removed" not in entry.data
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, _LEGACY_DASHED)
+
+
+async def test_no_legacy_entities_sets_flag_at_once(hass: HomeAssistant) -> None:
+    """Nothing to clean up: the one-shot flag is set on the first setup."""
+    entry = _migrated_entry(hass)
+    await _set_up_with(hass, entry, DEVICES)
+    assert entry.data["legacy_entities_removed"] is True
+    assert "legacy_entity_candidates" not in entry.data
+
+
+async def test_legacy_entities_kept_until_migrated(hass: HomeAssistant) -> None:
+    """Before the migration has finished, an old id-based entity is left to it."""
+    ent_reg = er.async_get(hass)
+    orphan = _LEGACY_DASHLESS
+
+    def prepare(entry: MockConfigEntry) -> None:
+        ent_reg.async_get_or_create(Platform.SENSOR, DOMAIN, orphan, config_entry=entry)
+
+    with patch("custom_components.junghome._migrate_to_stable_ids", return_value=False):
+        entry = await _setup_with_registry(hass, prepare)
+    assert ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, orphan) is not None
+    assert "legacy_entity_candidates" not in entry.data
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
